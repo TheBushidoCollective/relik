@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { readFile } from 'node:fs/promises';
 import { generateRelicId } from '@relic/format';
 import { createApp } from '../src/app.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { gcsStore } from '../src/gcsstore.ts';
+import { MemoryStorage } from '../src/storage.ts';
 import { MemoryStore, type RelicRow } from '../src/store.ts';
 import { fakeGcs } from './fake-gcs.ts';
 
@@ -34,6 +36,64 @@ async function row(id: string, isPrivate = false): Promise<RelicRow> {
 }
 
 describe('live settings', () => {
+  test('settings history is covered by the private lifecycle rule', async () => {
+    const source = await readFile(
+      new URL(
+        '../../../deploy/terraform/modules/relic/resource.google_storage_bucket.relics.tf',
+        import.meta.url
+      ),
+      'utf8'
+    );
+    const privateRule = source.match(
+      /days_since_custom_time\s*=\s*1\s+matches_prefix\s*=\s*\[([\s\S]*?)\]/
+    );
+    expect(privateRule?.[1]).toMatch(/\$\{local\.store_prefix\}\/settings\//);
+  });
+
+  test('operator deletion removes settings history from fake GCS', async () => {
+    const fake = fakeGcs();
+    const store = gcsStore({
+      bucket: 'relics',
+      host: 'https://gcs.test',
+      getAccessToken: async () => 'test',
+      fetch: fake.fetch,
+    });
+    const storage = new MemoryStorage();
+    const id = generateRelicId();
+    await store.putRelic(await row(id));
+    storage.put(id, new Uint8Array([1, 2, 3]));
+    const app = createApp({
+      store,
+      storage,
+      now: () => now,
+      operatorTokens: new Map([['test', 'secret']]),
+    });
+    expect(
+      (
+        await app.fetch(
+          request(`/api/relics/${id}/settings`, {
+            publish_token: token,
+            settings: { comments: false },
+          })
+        )
+      ).status
+    ).toBe(200);
+    const under = `m/settings/${id}/`;
+    expect(
+      [...fake.objects.keys()].some((name) => name.startsWith(under))
+    ).toBe(true);
+    const deleted = await app.fetch(
+      new Request(`https://relic.example/api/relics/${id}`, {
+        method: 'DELETE',
+        headers: { authorization: 'Bearer secret' },
+      })
+    );
+    expect(deleted.status).toBe(200);
+    expect(
+      [...fake.objects.keys()].some((name) => name.startsWith(under))
+    ).toBe(false);
+  });
+
   test('a change on one instance immediately closes reader comments on another', async () => {
     const store = new MemoryStore();
     const id = generateRelicId();
@@ -135,12 +195,37 @@ describe('live settings', () => {
     expect((await set(publicId, { surprise: true })).status).toBe(400);
   });
 
+  test('settings reads have a separate larger budget from writes', async () => {
+    const store = new MemoryStore();
+    const id = generateRelicId();
+    await store.putRelic(await row(id));
+    const app = createApp({ store, now: () => now });
+    const endpoint = `/api/relics/${id}/settings`;
+    const read = () => app.fetch(request(endpoint, { publish_token: token }));
+    const write = () =>
+      app.fetch(
+        request(endpoint, {
+          publish_token: token,
+          settings: { comments: false },
+        })
+      );
+    for (let i = 0; i < 60; i++) expect((await read()).status).toBe(200);
+    expect((await read()).status).toBe(200);
+    for (let i = 0; i < 60; i++) expect((await write()).status).toBe(200);
+    const limited = await write();
+    expect(limited.status).toBe(429);
+    const limitedBody = await limited.json();
+    expect(limitedBody.code).toBe('settings_rate_limited');
+    expect((await read()).status).toBe(200);
+  });
+
   test('GCS extension moves scoped metadata and ciphertext, leaving other reliks alone', async () => {
     const fake = fakeGcs();
     const store = gcsStore({
       bucket: 'relics',
       host: 'https://gcs.test',
       getAccessToken: async () => 'test',
+      ciphertextPrefix: 'r',
       fetch: fake.fetch,
     });
     const id = generateRelicId();
@@ -149,24 +234,24 @@ describe('live settings', () => {
     const old = new Date(now + 86400000).toISOString();
     const expected = new Date(now + 3 * 86400000).toISOString();
     for (const name of [
-      id,
-      `${id}/v2`,
+      `r/${id}`,
+      `r/${id}/v2`,
       `m/wrap/${id}/1/key.json`,
       `m/grant-by-grantee/key/${id}.json`,
-      other,
+      `r/${other}`,
     ])
       fake.objects.set(name, { body: '{}', generation: 1, customTime: old });
     await store.extendPrivateLifetime(id, now + 3 * 86400000);
     for (const name of [
-      id,
-      `${id}/v2`,
+      `r/${id}`,
+      `r/${id}/v2`,
       `m/wrap/${id}/1/key.json`,
       `m/grant-by-grantee/key/${id}.json`,
     ])
       expect(fake.objects.get(name)?.customTime).toBe(expected);
-    expect(fake.objects.get(other)?.customTime).toBe(old);
+    expect(fake.objects.get(`r/${other}`)?.customTime).toBe(old);
     await store.extendPrivateLifetime(id, now + 2 * 86400000);
-    expect(fake.objects.get(id)?.customTime).toBe(expected);
+    expect(fake.objects.get(`r/${id}`)?.customTime).toBe(expected);
   });
   test('a failed GCS sweep leaves the private expiry unchanged', async () => {
     const fake = fakeGcs();

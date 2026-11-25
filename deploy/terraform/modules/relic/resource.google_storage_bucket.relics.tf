@@ -56,6 +56,7 @@ resource "google_storage_bucket" "relics" {
         "${local.store_prefix}/commenter/",
         "${local.store_prefix}/decision/",
         "${local.store_prefix}/share/",
+        "${local.store_prefix}/settings/",
         "${local.store_prefix}/optout/",
       ]
     }

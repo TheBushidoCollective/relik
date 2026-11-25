@@ -24,8 +24,9 @@ import {
 import { createApp, type RelicApp } from '../src/app.ts';
 import { verifyStoredAttestation } from '../src/private/attest.ts';
 import { MemoryStorage } from '../src/storage.ts';
-import { MemoryStore } from '../src/store.ts';
+import { MemoryStore, type RelicStore } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
+import { fakeGcs, storeOn } from './fake-gcs.ts';
 import { attestation, DAY, NOW, RELIC_ID, relic } from './private-fixtures.ts';
 
 type FakeAuthenticator = Awaited<ReturnType<typeof fakeAuthenticator>>;
@@ -37,7 +38,7 @@ const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
 
 let now = NOW;
 let app: RelicApp;
-let store: MemoryStore;
+let store: RelicStore;
 let storage: MemoryStorage;
 
 beforeEach(() => {
@@ -287,7 +288,10 @@ async function certifyDevice(
  * A private relic published by the owner's device and sealed at version 1,
  * with the owner and the device as its recipients.
  */
-async function sealedPrivateRelic(owner: Person): Promise<{
+async function sealedPrivateRelic(
+  owner: Person,
+  beforeSeal?: (publishToken: string) => Promise<void>
+): Promise<{
   deviceKeys: IdentityKeys;
   deviceId: string;
   versionKey: Uint8Array;
@@ -332,6 +336,8 @@ async function sealedPrivateRelic(owner: Person): Promise<{
 
   // The owner's store-side bytes, as the browser or the MCP would upload them.
   storage.put(RELIC_ID, content);
+  if (beforeSeal !== undefined)
+    await beforeSeal(granted.body['publish_token'] as string);
   const digest = hex(
     new Uint8Array(createHash('sha256').update(content).digest())
   );
@@ -404,6 +410,46 @@ async function wrap(
 }
 
 describe("a private relik: publish, seal and the owner's own read", () => {
+  test('a pending upload sealed after shortening keeps its original erasure time', async () => {
+    class StrictStorage extends MemoryStorage {
+      override async setCustomTime(id: string, time: number): Promise<void> {
+        const previous = this.customTimeOf(id);
+        if (previous !== undefined && time < previous)
+          throw new Error('customTime cannot move earlier');
+        return super.setCustomTime(id, time);
+      }
+    }
+    storage = new StrictStorage();
+    app = createApp({ store, storage, now: () => now });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    let original = 0;
+    await sealedPrivateRelic(owner, async (token) => {
+      original = (await store.getRelic(RELIC_ID))?.expiresAt as number;
+      await storage.setCustomTime(RELIC_ID, original);
+      expect(original).toBe(now + 30 * DAY);
+      await expect(storage.setCustomTime(RELIC_ID, now + DAY)).rejects.toThrow(
+        'cannot move earlier'
+      );
+      const changed = await send(
+        `/api/relics/${RELIC_ID}/settings`,
+        post({ publish_token: token, settings: { ttl_days: 1 } })
+      );
+      expect(changed.status).toBe(200);
+    });
+    expect(storage.customTimeOf(RELIC_ID)).toBe(original);
+    expect((await store.getRelic(RELIC_ID))?.expiresAt).toBe(now + DAY);
+    now += 2 * DAY;
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/mint`,
+          post({ version: 1 }, owner.cookie)
+        )
+      ).body['code']
+    ).toBe('relic_expired');
+  });
+
   test('the seal stores the wraps, sets the ciphertext customTime, and the owner can read the key', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
@@ -471,6 +517,100 @@ describe("a private relik: publish, seal and the owner's own read", () => {
 });
 
 describe('grant, offline re-verification, revocation and key refusal', () => {
+  test('shortened expiry closes private comment reads and writes for a grantee', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    const readerRecord = (await store.getIdentity(
+      reader.identityId as string
+    ))!;
+    const proof = await attest(owner, 'grant', RELIC_ID, [
+      {
+        kind: 'grant',
+        statement: {
+          at: now,
+          fingerprint_typed: await identityFingerprint(
+            reader.identityId as string,
+            reader.email
+          ),
+          grantee_email: reader.email,
+          grantee_identity_id: reader.identityId,
+          owner_identity_id: owner.identityId,
+          relic_id: RELIC_ID,
+          versions: [1],
+        },
+      },
+    ]);
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/grants`,
+          post(
+            {
+              attestation: proof,
+              wraps: [
+                await wrap(
+                  decodeBase64url(readerRecord.kemPublicKey),
+                  sealed.versionKey,
+                  1
+                ),
+              ],
+            },
+            owner.cookie
+          )
+        )
+      ).status
+    ).toBe(201);
+    const created = await send(
+      `/api/relics/${RELIC_ID}/comments`,
+      post({ ciphertext: 'YWJjZA', version: 1 }, reader.cookie)
+    );
+    expect(created.status).toBe(201);
+    expect(
+      (
+        await send(`/api/relics/${RELIC_ID}/comments`, {
+          cookie: reader.cookie,
+        })
+      ).status
+    ).toBe(200);
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/settings`,
+          post({
+            publish_token: sealed.publishToken,
+            settings: { ttl_days: 1 },
+          })
+        )
+      ).status
+    ).toBe(200);
+    now += 2 * DAY;
+    const get = await send(`/api/relics/${RELIC_ID}/comments`, {
+      cookie: reader.cookie,
+    });
+    expect(get.status).toBe(410);
+    expect(get.body['code']).toBe('relic_expired');
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/comments`,
+          post({ ciphertext: 'YWJjZA', version: 1 }, reader.cookie)
+        )
+      ).body['code']
+    ).toBe('relic_expired');
+    const commentId = created.body['comment_id'] as string;
+    expect(
+      (
+        await send(`/api/relics/${RELIC_ID}/comments/${commentId}`, {
+          ...post({ ciphertext: 'ZWZnaA' }, reader.cookie),
+          method: 'PATCH',
+        })
+      ).body['code']
+    ).toBe('relic_expired');
+  });
+
   test('a grant wraps the reader, re-verifies from the stored bytes alone, and revocation cuts access at once', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
@@ -598,9 +738,28 @@ describe('grant, offline re-verification, revocation and key refusal', () => {
 
 describe('owner hard delete', () => {
   test('removes the row, wraps, seals and objects, leaves an id-only tombstone, and keeps the access log', async () => {
+    const fake = fakeGcs();
+    store = storeOn(fake);
+    app = createApp({ store, storage, now: () => now });
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
-    await sealedPrivateRelic(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/settings`,
+          post({
+            publish_token: sealed.publishToken,
+            settings: { comments: false },
+          })
+        )
+      ).status
+    ).toBe(200);
+    expect(
+      [...fake.objects.keys()].some((name) =>
+        name.startsWith(`m/settings/${RELIC_ID}/`)
+      )
+    ).toBe(true);
 
     const attestation = await attest(owner, 'delete', RELIC_ID, [
       {
@@ -619,6 +778,11 @@ describe('owner hard delete', () => {
     );
     expect(deleted.status).toBe(200);
     expect(deleted.body['relic_deleted']).toBe(true);
+    expect(
+      [...fake.objects.keys()].some((name) =>
+        name.startsWith(`m/settings/${RELIC_ID}/`)
+      )
+    ).toBe(false);
 
     expect(await store.getRelic(RELIC_ID)).toBeUndefined();
     expect(await store.listWraps(RELIC_ID)).toHaveLength(0);

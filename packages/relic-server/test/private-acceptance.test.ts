@@ -1724,14 +1724,49 @@ describe('owner settings attestation', () => {
     const bundle = await attest(owner, 'relic_settings', RELIC_ID, [
       { kind: 'relic_settings', statement },
     ]);
+    const plain = await send(endpoint, {
+      ...post({ attestation: bundle }, owner.cookie),
+      headers: { 'content-type': 'text/plain' },
+    });
+    expect(plain.status).toBe(400);
+    expect((await store.getRelic(RELIC_ID))?.settings).toBeUndefined();
+    const paused = createApp({
+      store,
+      storage,
+      now: () => now,
+      config: { killSwitchEngaged: true },
+    });
+    const pausedResponse = await paused.fetch(
+      req(endpoint, post({ attestation: bundle }, owner.cookie))
+    );
+    expect(pausedResponse.status).toBe(503);
+    expect((await store.getRelic(RELIC_ID))?.settings).toBeUndefined();
     expect(
       (await send(endpoint, post({ attestation: bundle }, owner.cookie))).status
     ).toBe(200);
-    expect(
-      (await send(endpoint, post({ attestation: bundle }, owner.cookie))).body[
-        'code'
-      ]
-    ).toBe('passkey_verification_failed');
+    const challenge = encodeBase64url(
+      await attestationChallenge(decodeBase64url(bundle['nonce'] as string), [
+        statementBytes('relic_settings', statement as never),
+      ])
+    );
+    const newerAssertion = await owner.auth.assert(
+      {
+        challenge,
+        rpId: RP,
+        timeout: 300_000,
+        userVerification: 'required',
+        allowCredentials: [{ type: 'public-key', id: owner.auth.credentialId }],
+      } as RequestOptionsJSON,
+      ORIGIN
+    );
+    const { clientExtensionResults: _extensions, ...credential } =
+      newerAssertion as unknown as Record<string, unknown>;
+    const replay = await send(
+      endpoint,
+      post({ attestation: { ...bundle, credential } }, owner.cookie)
+    );
+    expect(replay.body['code']).toBe('passkey_verification_failed');
+    expect(replay.body['passkey_check']).toBe('nonce');
     expect(
       (
         await send(

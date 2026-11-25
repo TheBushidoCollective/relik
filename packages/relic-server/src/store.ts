@@ -617,6 +617,7 @@ export interface DedupEntry {
 export interface RelicStore {
   getRelic(id: string): Promise<RelicRow | undefined>;
   appendSettingsChange(id: string, row: SettingsChangeRow): Promise<void>;
+  deleteSettingsChanges(id: string): Promise<void>;
   extendPrivateLifetime(id: string, expiresAt: number): Promise<void>;
   putRelic(row: RelicRow): Promise<void>;
   /** Atomically reserve a relic ID without replacing an existing row. */
@@ -909,6 +910,9 @@ export class MemoryStore implements RelicStore {
     const changes = this.settingsChanges.get(id) ?? [];
     changes.push(row);
     this.settingsChanges.set(id, changes);
+  }
+  async deleteSettingsChanges(id: string): Promise<void> {
+    this.settingsChanges.delete(id);
   }
 
   async extendPrivateLifetime(_id: string, _expiresAt: number): Promise<void> {

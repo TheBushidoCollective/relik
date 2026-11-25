@@ -21,7 +21,7 @@
 
 import { normalizeEmail, type RendererClass } from '@relic/format';
 
-import { sha256Hex } from './gcs.ts';
+import { gcsObjectName, sha256Hex } from './gcs.ts';
 import { ProblemError } from './problems.ts';
 import {
   type AbuseReport,
@@ -63,6 +63,8 @@ export interface GcsStoreOptions {
   readonly bucket: string;
   /** Key prefix for metadata objects. Kept clear of the ciphertext prefix. */
   readonly prefix?: string;
+  /** Prefix used by the ciphertext object store. */
+  readonly ciphertextPrefix?: string;
   readonly getAccessToken: () => Promise<string>;
   readonly host?: string;
   readonly fetch?: typeof globalThis.fetch;
@@ -477,6 +479,12 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       throw new Error('Could not append settings change');
     },
 
+    async deleteSettingsChanges(id: string): Promise<void> {
+      for (const name of await listObjectNames(`${key('settings', id)}/`)) {
+        await remove(name);
+      }
+    },
+
     async extendPrivateLifetime(id: string, expiresAt: number): Promise<void> {
       const scoped = [
         'comment',
@@ -502,8 +510,10 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         }
       }
       names.add(key('relic', `${id}.json`));
-      names.add(id);
-      for (const name of await listObjectNames(`${id}/`)) names.add(name);
+      const ciphertext = gcsObjectName(options.ciphertextPrefix, id);
+      names.add(ciphertext);
+      for (const name of await listObjectNames(`${ciphertext}/`))
+        names.add(name);
       const customTime = new Date(expiresAt).toISOString();
       for (const name of names) {
         const url = `${host}/storage/v1/b/${encodeURIComponent(options.bucket)}/o/${encodeURIComponent(name)}`;
