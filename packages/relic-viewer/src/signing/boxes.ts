@@ -25,7 +25,9 @@ export function mountSigningBoxes(input: {
     if (overlay?.parentElement !== parent) {
       overlay?.remove();
       overlay = document.createElement('div');
-      overlay.className = 'signing-box-overlay';
+      overlay.className = input.editable
+        ? 'signing-box-overlay is-editable'
+        : 'signing-box-overlay';
       parent.appendChild(overlay);
       overlay.addEventListener('pointerdown', start);
       overlay.addEventListener('pointerup', finish);

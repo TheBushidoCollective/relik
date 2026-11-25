@@ -10,7 +10,9 @@ export function openSigningStatus(input: {
   readonly request: SigningRequestJSON;
   readonly private: boolean;
   readonly owner: boolean;
+  readonly onSignIn?: () => void;
   readonly onSign?: () => void;
+  readonly onRequest?: () => void;
   readonly onCertificate: () => void;
   readonly onChanged: () => void;
 }): HTMLElement {
@@ -34,7 +36,7 @@ export function openSigningStatus(input: {
   body.className = 'panel-body';
   const lead = document.createElement('p');
   lead.className = 'panel-lead';
-  lead.textContent = `${input.request.owner.identity.email} asked ${input.request.signers.length} people to sign version ${input.request.version}.`;
+  lead.textContent = `${input.request.owner.identity.email} (claimed) asked ${input.request.signers.length} people to sign version ${input.request.version}.`;
   body.appendChild(lead);
   const list = document.createElement('ul');
   list.className = 'status-list';
@@ -63,6 +65,28 @@ export function openSigningStatus(input: {
   notice.className = 'panel-notice';
   notice.setAttribute('role', 'status');
   body.appendChild(notice);
+  if (input.onSignIn && input.request.status === 'open') {
+    const signIn = document.createElement('button');
+    signIn.type = 'button';
+    signIn.className = 'btn primary';
+    signIn.textContent = 'Sign in to sign';
+    signIn.addEventListener('click', () => {
+      panel.remove();
+      input.onSignIn?.();
+    });
+    body.appendChild(signIn);
+  }
+  if (input.onRequest && input.request.status === 'cancelled') {
+    const request = document.createElement('button');
+    request.type = 'button';
+    request.className = 'btn primary';
+    request.textContent = 'Request signatures';
+    request.addEventListener('click', () => {
+      panel.remove();
+      input.onRequest?.();
+    });
+    body.appendChild(request);
+  }
   if (input.onSign && input.request.status === 'open') {
     const sign = document.createElement('button');
     sign.type = 'button';

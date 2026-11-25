@@ -1024,9 +1024,19 @@ The pin is set at first open and never changes. A pin mismatch is a hard refusal
 
 The owner can open Settings from the band and change suggested edits, comments, decisions, signing, notification emails and lifetime with one passkey attestation. The public mint supplies settings, and a signed-in public reader's access response identifies whether they can manage them. Private readers receive settings with their access response.
 
-Closing comments hides the reader's composer and reply and edit actions. The owner can still comment. Turning off suggested edits removes the suggesting controls when the relik is opened; an already open page can still send a suggestion until it reloads. Existing suggestions remain readable. Signing is stored as a switch but is not yet enforced.
+Closing comments hides the reader's composer and reply and edit actions. The owner can still comment. Turning off suggested edits removes the suggesting controls when the relik is opened; an already open page can still send a suggestion until it reloads. Existing suggestions remain readable. Turning off signing hides the signing controls.
 
 Private lifetimes are limited to 365 days from the change. Shortening ends access sooner but, inferred from GCS customTime semantics, does not move stored-copy erasure earlier. Production GCS lifetime extension behaviour has not been proven locally.
+
+### 6.15 Signing a version
+
+An owner can request signatures from named addresses. The request is bound to the current version's ciphertext and decrypted content. The viewer verifies the owner's signed request and the content before offering a signature; private readers also compare the owner identity with their pinned owner. A mismatch refuses signing.
+
+PDF signature boxes use coordinates relative to the rendered page. A signer without a box signs in the block after the document, outside any sandboxed frame. The signer types a name, may draw a mark, agrees to sign electronically, and approves with a passkey. The mark is encrypted before it leaves the browser.
+
+After a private version's seal, key commitment and ciphertext are checked, the reader signs an opened receipt with the unlocked identity. A receipt failure does not prevent reading. The owner can inspect the service's delivered record and the reader's signed opened record separately.
+
+The completion certificate can be downloaded with the signing key for offline verification. Owner email is a claim; a certificate is valid only when the caller supplies a trusted owner identity. Relik does not verify identity or state that an electronic signature is legally binding.
 
 ## 7. Routed to `shape`
 

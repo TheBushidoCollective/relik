@@ -31,8 +31,13 @@ export function createMarkPad(onChange: () => void): {
       context.lineWidth = 3;
       context.lineCap = 'round';
       context.strokeStyle = 'currentColor';
-      if (active.length === 0) context.beginPath(), context.moveTo(px, py);
-      else context.lineTo(px, py), context.stroke();
+      if (active.length === 0) {
+        context.beginPath();
+        context.moveTo(px, py);
+      } else {
+        context.lineTo(px, py);
+        context.stroke();
+      }
     }
     active.push(x, y);
     points++;

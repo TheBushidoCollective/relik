@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { SigningRequestJSON } from '@relic/format/signing';
+import { buildCertificate, RELIC_ID, VERSION } from '../../relic-format/test/support/signing-builder.ts';
 import { contentFromBytes } from '../src/content.ts';
 import { signingApi, signingContent, verifyViewerSigningRequest } from '../src/signing/api.ts';
 import type { ViewerDeps } from '../src/viewer.ts';
@@ -52,4 +53,32 @@ test('signing content uses the complete stored content', async () => {
   const chunks = [];
   for await (const chunk of signingContent(content)) chunks.push(...chunk);
   expect(chunks).toEqual([1, 2, 3]);
+});
+
+test('a valid signed request opens its layout and rejects changed content', async () => {
+  const built = await buildCertificate({ access: 'public', signers: 1 });
+  const payload = built.cert.request as SigningRequestJSON['request'];
+  const statement = payload.statement;
+  const request = {
+    request_id: statement['request_id'],
+    version: VERSION,
+    request: payload,
+    owner: built.cert.owner,
+  } as SigningRequestJSON;
+  const input = {
+    request,
+    relicId: RELIC_ID,
+    version: VERSION,
+    digest: built.cert.ciphertext_sha256 as string,
+    content: contentFromBytes(built.content),
+    signingKey: built.signingKey,
+    access: 'public' as const,
+    origin: built.origin,
+    pdf: true,
+  };
+  expect((await verifyViewerSigningRequest(input)).boxes).toHaveLength(1);
+  await expect(verifyViewerSigningRequest({
+    ...input,
+    content: contentFromBytes(new Uint8Array([1, 2, 3])),
+  })).rejects.toThrow('signing_content_mismatch');
 });
