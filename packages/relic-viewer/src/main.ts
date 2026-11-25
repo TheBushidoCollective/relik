@@ -11988,7 +11988,8 @@ export function renderReady(
         // would discard selection, scroll and half-painted marks for no change.
         if (
           access.manage !== true &&
-          JSON.stringify(access.settings) === JSON.stringify(activeView.settings)
+          JSON.stringify(access.settings) ===
+            JSON.stringify(activeView.settings)
         )
           return;
         showSingle({
