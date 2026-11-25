@@ -20,6 +20,12 @@ export interface LimitVerdict {
   readonly retryAfterSeconds: number;
 }
 
+const ALLOWED: LimitVerdict = { allowed: true, retryAfterSeconds: 0 };
+
+function refused(seconds: number): LimitVerdict {
+  return { allowed: false, retryAfterSeconds: Math.max(1, seconds) };
+}
+
 export interface RateLimiterOptions {
   readonly maxEntries?: number;
   readonly sweepInterval?: number;
@@ -195,27 +201,36 @@ export class RateLimiter {
     return this.windows.size;
   }
 
-  peek(key: string, config: RateLimitConfig, now: number): LimitVerdict {
+  /**
+   * Whether `units` more fit in the window, without charging them. A batch
+   * larger than the whole budget never fits.
+   */
+  peek(
+    key: string,
+    config: RateLimitConfig,
+    now: number,
+    units = 1
+  ): LimitVerdict {
     const window = this.windows.get(key);
     if (window === undefined || now >= window.resetAt) {
       if (window !== undefined) {
         this.windows.delete(key);
       }
-      return { allowed: true, retryAfterSeconds: 0 };
+      return units > config.limit ? refused(config.windowSeconds) : ALLOWED;
     }
-    if (window.count >= config.limit) {
-      return {
-        allowed: false,
-        retryAfterSeconds: Math.max(
-          1,
-          Math.ceil((window.resetAt - now) / 1000)
-        ),
-      };
+    if (window.count + units > config.limit) {
+      return refused(Math.ceil((window.resetAt - now) / 1000));
     }
-    return { allowed: true, retryAfterSeconds: 0 };
+    return ALLOWED;
   }
 
-  check(key: string, config: RateLimitConfig, now: number): LimitVerdict {
+  /** Charges `units` of the window, or charges nothing and refuses. */
+  check(
+    key: string,
+    config: RateLimitConfig,
+    now: number,
+    units = 1
+  ): LimitVerdict {
     this.callsSinceSweep += 1;
     if (
       this.callsSinceSweep >= this.sweepInterval ||
@@ -227,6 +242,7 @@ export class RateLimiter {
     const window = this.windows.get(key);
 
     if (window === undefined || now >= window.resetAt) {
+      if (units > config.limit) return refused(config.windowSeconds);
       if (this.windows.size >= this.maxEntries && !this.windows.has(key)) {
         const oldest = this.windows.keys().next().value;
         if (oldest !== undefined) {
@@ -234,24 +250,18 @@ export class RateLimiter {
         }
       }
       this.windows.set(key, {
-        count: 1,
+        count: units,
         resetAt: now + config.windowSeconds * 1000,
       });
-      return { allowed: true, retryAfterSeconds: 0 };
+      return ALLOWED;
     }
 
-    if (window.count >= config.limit) {
-      return {
-        allowed: false,
-        retryAfterSeconds: Math.max(
-          1,
-          Math.ceil((window.resetAt - now) / 1000)
-        ),
-      };
+    if (window.count + units > config.limit) {
+      return refused(Math.ceil((window.resetAt - now) / 1000));
     }
 
-    window.count += 1;
-    return { allowed: true, retryAfterSeconds: 0 };
+    window.count += units;
+    return ALLOWED;
   }
 
   /**

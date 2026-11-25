@@ -35,6 +35,14 @@ export const DAY_MS = 86_400_000;
 /** The Crockford-style alphabet relic ids and fingerprints use (plan 4.2). */
 const B32 = '0123456789abcdefghjkmnpqrstvwxyz';
 
+/** One budget charge in a batch. */
+export interface BudgetCharge {
+  readonly scope: string;
+  readonly key: string;
+  readonly budget: RateLimitConfig;
+  readonly units: number;
+}
+
 export interface PrivateEnv {
   readonly store: RelicStore;
   readonly storage: ObjectStorage;
@@ -49,8 +57,21 @@ export interface PrivateEnv {
     completion: boolean,
     build: (stopUrl: string) => OutboundMail
   ) => Promise<void>;
-  /** Spends one unit of the named budget, or throws `private_rate_limited`. */
-  readonly limit: (scope: string, key: string, budget: RateLimitConfig) => void;
+  /**
+   * Spends `units` of the named budget, or throws `private_rate_limited`. A
+   * budget counts addresses, so a batch passes its number of addresses.
+   */
+  readonly limit: (
+    scope: string,
+    key: string,
+    budget: RateLimitConfig,
+    units?: number
+  ) => void;
+  /**
+   * Spends several budgets at once, all units or none: every budget is
+   * peeked before any is charged, so a refusal charges nothing (plan 3.5).
+   */
+  readonly limitAll: (charges: readonly BudgetCharge[]) => void;
   /** The storage key a relic version's ciphertext lives under. */
   readonly objectKey: (relicId: string, version: number) => string;
   /**

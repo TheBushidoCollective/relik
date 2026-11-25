@@ -418,6 +418,9 @@ export interface AccessEvent {
   readonly kind:
     | 'request'
     | 'grant'
+    | 'share'
+    | 'invite'
+    | 'claim'
     | 'revoke'
     | 'wrap_fetch'
     | 'delete'

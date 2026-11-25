@@ -106,10 +106,14 @@ export interface GrantWireJSON extends GrantJSON {
 }
 
 function grantJson(grant: GrantRow, grantee: IdentityRecord): GrantWireJSON {
+  const signed = grant.attestation.statements.find(
+    (item) =>
+      item.kind === 'grant' &&
+      item.statement['grantee_identity_id'] === grant.granteeIdentityId
+  );
   return {
-    statement: grant.attestation.statements[0]?.statement ?? {},
-    identity_signature:
-      grant.attestation.statements[0]?.identitySignature ?? '',
+    statement: signed?.statement ?? {},
+    identity_signature: signed?.identitySignature ?? '',
     granted_at: iso(grant.grantedAt),
     revoked_at: grant.revokedAt === undefined ? null : iso(grant.revokedAt),
     revocation: signedStatementJson(grant.revocation),
@@ -338,13 +342,17 @@ async function ownedPrivate(env: PrivateEnv, email: string, relicId: string) {
 // ---------------------------------------------------------------- grants
 
 /**
- * Grants an identity the listed sealed versions. The owner types the
- * grantee's fingerprint and signs the grant; the wraps must cover exactly
- * the listed versions for the grantee's key.
+ * Grants a batch of identities the listed sealed versions (plan 3.3 B). One
+ * owner attestation names 1 to privateShareMaxPerCall grants. Each grant
+ * wraps its versions to the grantee's key. It is logged as `grant` when it
+ * answers a pending request, and as `share` otherwise.
  *
- * Order matters for the race with seals: the wraps and the grant record are
- * written first, and only then is the epoch bumped under compare-and-swap.
- * A seal that read the epoch before the bump fails its own CAS and retries.
+ * The order is the race story. Every refusal that does not depend on who is
+ * registered comes first, then the direct-share budget, then the refusals
+ * that do. Wraps and grant rows are written next, and one epoch
+ * compare-and-swap follows. A seal that read the epoch before the bump fails
+ * its own CAS and retries. Any failure rolls back what this call wrote; see
+ * `rollback` for what that means when another grant or seal raced it.
  */
 export async function grantAccess(
   env: PrivateEnv,
@@ -355,7 +363,7 @@ export async function grantAccess(
     readonly attestation: unknown;
     readonly wraps: unknown;
   }
-): Promise<{ status: 201; grant: GrantJSON }> {
+): Promise<{ status: 201; grants: GrantWireJSON[] }> {
   const { row, owner } = await ownedPrivate(env, input.email, input.relicId);
   const verified = await verifyAttestation(env, {
     bundle: input.attestation,
@@ -365,117 +373,248 @@ export async function grantAccess(
     signerKey: identitySigner(owner),
     relicId: row.id,
   });
-  const s = statementOf(verified, 0);
-  if (s['owner_identity_id'] !== owner.identityId)
-    refuseStatement('owner_identity_id');
+  const statements = verified.statements.map((item) => item.statement);
 
-  const granteeId = String(s['grantee_identity_id']);
-  const grantee = await env.store.getIdentity(granteeId);
-  if (
-    grantee === undefined ||
-    grantee.retiredAt !== undefined ||
-    grantee.email !== normalizeEmail(String(s['grantee_email']))
-  ) {
-    refuseStatement('grantee');
-  }
-
-  const typed = parseTypedFingerprint(String(s['fingerprint_typed']));
-  const computed = await identityFingerprint(grantee.identityId, grantee.email);
-  if (typed === undefined || !fingerprintsEqual(typed, computed)) {
-    throw new ProblemError('fingerprint_mismatch');
-  }
-
-  const versions = s['versions'] as number[];
-  for (const version of versions) {
-    if (isDeleted(row, version))
-      throw new ProblemError('version_deleted', { version });
+  // Checks that do not depend on who is registered (plan 3.3 B.4).
+  const granteeIds = new Set<string>();
+  for (const s of statements) {
+    if (s['owner_identity_id'] !== owner.identityId) {
+      refuseStatement('owner_identity_id');
+    }
+    const granteeId = String(s['grantee_identity_id']);
+    if (granteeIds.has(granteeId)) refuseStatement('grantee');
+    granteeIds.add(granteeId);
+    const versions = s['versions'] as number[];
+    for (const version of versions) {
+      if (isDeleted(row, version)) {
+        throw new ProblemError('version_deleted', { version });
+      }
+      if (
+        version > (row.sealedVersion ?? 0) ||
+        (await env.store.getSeal(row.id, version)) === undefined
+      ) {
+        throw new ProblemError('private_seal_required', { version });
+      }
+    }
     if (
-      version > (row.sealedVersion ?? 0) ||
-      (await env.store.getSeal(row.id, version)) === undefined
+      row.sealedVersion === undefined ||
+      !versions.includes(row.sealedVersion)
     ) {
-      throw new ProblemError('private_seal_required', { version });
+      throw new ProblemError('grant_stale_version', {
+        current_version: row.version,
+      });
     }
   }
 
-  // The wraps must cover exactly versions x grantee key, no more and no less.
+  // Who has a pending request decides how each grant is logged. A grant with
+  // no pending request spends the owner's direct-share budget (plan 3.3 B.5).
+  const pending = new Map<string, boolean>();
+  for (const s of statements) {
+    const granteeId = String(s['grantee_identity_id']);
+    const request = await env.store.getAccessRequest(row.id, granteeId);
+    pending.set(granteeId, request?.status === 'pending');
+  }
+  const direct = statements.filter(
+    (s) => pending.get(String(s['grantee_identity_id'])) !== true
+  ).length;
+  env.limit(
+    'direct-share',
+    owner.identityId,
+    env.config.directShareRateLimit,
+    direct
+  );
+
+  // Checks that depend on who is registered (plan 3.3 B.6).
+  const planned: PlannedGrant[] = [];
+  for (const s of statements) {
+    const granteeId = String(s['grantee_identity_id']);
+    const grantee = await env.store.getIdentity(granteeId);
+    if (
+      grantee === undefined ||
+      grantee.retiredAt !== undefined ||
+      grantee.identityId === owner.identityId ||
+      grantee.email !== normalizeEmail(String(s['grantee_email']))
+    ) {
+      refuseStatement('grantee');
+    }
+    const typed = parseTypedFingerprint(String(s['fingerprint_typed']));
+    const computed = await identityFingerprint(
+      grantee.identityId,
+      grantee.email
+    );
+    if (typed === undefined || !fingerprintsEqual(typed, computed)) {
+      throw new ProblemError('fingerprint_mismatch', {
+        grantee_identity_id: grantee.identityId,
+      });
+    }
+    const prior = await env.store.getGrant(row.id, grantee.identityId);
+    if (prior !== undefined && prior.revokedAt === undefined) {
+      throw new ProblemError('grant_exists', {
+        grantee_identity_id: grantee.identityId,
+      });
+    }
+    planned.push({
+      grantee,
+      versions: [...(s['versions'] as number[])],
+      prior,
+      pending: pending.get(granteeId) === true,
+    });
+  }
+
+  // The wraps must cover exactly grantee keys x versions (plan 3.3 B.7).
   if (!Array.isArray(input.wraps)) throw new ProblemError('invalid_wrap');
   const wraps = (input.wraps as unknown[]).map(parseWrapItem);
-  const expected = new Set(versions.map((v) => `${v}:${grantee.kemKeyId}`));
+  const expected = new Set<string>();
+  for (const p of planned) {
+    for (const v of p.versions) expected.add(`${v}:${p.grantee.kemKeyId}`);
+  }
   const seen = new Set(wraps.map((w) => `${w.version}:${w.recipientKeyId}`));
   if (
-    wraps.length !== versions.length ||
-    seen.size !== versions.length ||
+    wraps.length > env.config.privateBackfillMaxWraps ||
+    seen.size !== wraps.length ||
+    wraps.length !== expected.size ||
     [...seen].some((k) => !expected.has(k))
   ) {
     throw new ProblemError('invalid_wrap', {
       detail: 'Wraps must cover the granted versions.',
     });
   }
-
-  const written: WrapRow[] = [];
   for (const wrap of wraps) {
     if (wrap.relicId !== undefined && wrap.relicId !== row.id) {
       throw new ProblemError('invalid_wrap');
     }
-    const row2: WrapRow = {
-      relicId: row.id,
-      version: wrap.version,
-      recipientKeyId: wrap.recipientKeyId,
-      enc: wrap.enc,
-      ct: wrap.ct,
-      createdAt: env.now,
-      source: 'grant',
-    };
-    if (await env.store.putWrap(row2)) written.push(row2);
   }
 
-  const prior = await env.store.getGrant(row.id, grantee.identityId);
-  const grantRow: GrantRow = {
-    relicId: row.id,
-    granteeIdentityId: grantee.identityId,
-    ownerIdentityId: owner.identityId,
-    versions: [...versions],
-    grantedAt: env.now,
-    attestation: verified.attestation,
+  const granteeByKey = new Map(
+    planned.map((p) => [p.grantee.kemKeyId, p.grantee.identityId] as const)
+  );
+  const writtenWraps: WrapRow[] = [];
+  const created: string[] = [];
+  const replaced: { granteeId: string; prior: GrantRow }[] = [];
+  const writtenGrants = new Map<string, GrantRow>();
+
+  /** Whether a live grant of this relik, read now, covers a version for a grantee. */
+  const covers = async (granteeId: string, version: number) => {
+    const live = await env.store.getGrant(row.id, granteeId);
+    return (
+      live !== undefined &&
+      live.revokedAt === undefined &&
+      live.versions.includes(version)
+    );
   };
-  const rollback = async () => {
-    for (const w of written) {
+
+  /**
+   * Undoes what this call wrote and nothing it did not write.
+   *
+   * A grant row this call created is removed, and a revoked row it replaced
+   * is restored. A wrap this call wrote is removed, unless another role keeps
+   * its key current or a live grant covers its version. A wrap that was
+   * already there (`putWrap` returned false) is never removed: a wrap for the
+   * same version and key opens the same content whoever wrote it. When a
+   * seal raced this call (`sealRace`), a key left with no live grant also
+   * loses the wraps the seal made for it.
+   */
+  const rollback = async (sealRace: boolean) => {
+    for (const granteeId of created) {
+      await env.store.deleteGrant(row.id, granteeId);
+    }
+    for (const r of replaced) {
+      await env.store.updateGrant(row.id, r.granteeId, () => r.prior);
+    }
+    const keptElsewhere = new Map<string, boolean>();
+    for (const p of planned) {
+      const keys = await recipientKeys(env, row, owner, {
+        exceptGrantee: p.grantee.identityId,
+      });
+      keptElsewhere.set(p.grantee.kemKeyId, keys.includes(p.grantee.kemKeyId));
+    }
+    for (const wrap of writtenWraps) {
+      if (keptElsewhere.get(wrap.recipientKeyId) === true) continue;
+      const granteeId = granteeByKey.get(wrap.recipientKeyId);
+      if (granteeId !== undefined && (await covers(granteeId, wrap.version))) {
+        continue;
+      }
       await env.store.deleteWraps(row.id, {
-        version: w.version,
-        recipientKeyId: w.recipientKeyId,
+        version: wrap.version,
+        recipientKeyId: wrap.recipientKeyId,
       });
     }
-    if (prior === undefined) {
-      // A fresh grantee has no earlier wraps. A seal that landed while this
-      // grant was in flight may have wrapped it, and a refused grant must not
-      // leave any of them behind. A key another role keeps current keeps them.
-      const keptElsewhere = (
-        await recipientKeys(env, row, owner, {
-          exceptGrantee: grantee.identityId,
-        })
-      ).includes(grantee.kemKeyId);
-      if (!keptElsewhere) {
+    if (sealRace) {
+      for (const p of planned) {
+        if (keptElsewhere.get(p.grantee.kemKeyId) === true) continue;
+        const live = await env.store.getGrant(row.id, p.grantee.identityId);
+        if (live !== undefined && live.revokedAt === undefined) continue;
         await env.store.deleteWraps(row.id, {
-          recipientKeyId: grantee.kemKeyId,
+          recipientKeyId: p.grantee.kemKeyId,
         });
       }
-
-      await env.store.deleteGrant(row.id, grantee.identityId);
-    } else {
-      await env.store.updateGrant(row.id, grantee.identityId, () => prior);
     }
   };
-  if (prior === undefined) {
-    await env.store.putGrant(grantRow);
-  } else {
-    await env.store.updateGrant(row.id, grantee.identityId, () => grantRow);
-  }
 
+  let epochStarted = false;
   try {
+    for (const wrap of wraps) {
+      const record: WrapRow = {
+        relicId: row.id,
+        version: wrap.version,
+        recipientKeyId: wrap.recipientKeyId,
+        enc: wrap.enc,
+        ct: wrap.ct,
+        createdAt: env.now,
+        source: 'grant',
+      };
+      if (await env.store.putWrap(record)) writtenWraps.push(record);
+    }
+
+    for (const p of planned) {
+      const granteeId = p.grantee.identityId;
+      const grantRow: GrantRow = {
+        relicId: row.id,
+        granteeIdentityId: granteeId,
+        ownerIdentityId: owner.identityId,
+        versions: [...p.versions],
+        grantedAt: env.now,
+        attestation: verified.attestation,
+      };
+      if (p.prior === undefined) {
+        // A concurrent grant to this grantee may have won. Its row and its
+        // wraps stay; this call's own wraps are rolled back above.
+        if (!(await env.store.putGrant(grantRow))) {
+          throw new ProblemError('grant_exists', {
+            grantee_identity_id: granteeId,
+          });
+        }
+        created.push(granteeId);
+      } else {
+        const prior = p.prior;
+        const updated = await env.store.updateGrant(
+          row.id,
+          granteeId,
+          (cur) => {
+            if (cur.revokedAt === undefined) {
+              throw new ProblemError('grant_exists', {
+                grantee_identity_id: granteeId,
+              });
+            }
+            return grantRow;
+          }
+        );
+        if (updated === undefined) {
+          throw new ProblemError('grant_exists', {
+            grantee_identity_id: granteeId,
+          });
+        }
+        replaced.push({ granteeId, prior });
+      }
+      writtenGrants.set(granteeId, grantRow);
+    }
+
+    epochStarted = true;
     await env.store.updateRelic(row.id, (cur) => {
+      const sealed = cur.sealedVersion;
       if (
-        cur.sealedVersion === undefined ||
-        !versions.includes(cur.sealedVersion)
+        sealed === undefined ||
+        planned.some((p) => !p.versions.includes(sealed))
       ) {
         throw new ProblemError('grant_stale_version', {
           current_version: cur.version,
@@ -484,37 +623,59 @@ export async function grantAccess(
       return { ...cur, accessEpoch: (cur.accessEpoch ?? 0) + 1 };
     });
   } catch (error) {
-    await rollback();
+    await rollback(epochStarted).catch((rollbackError: unknown) => {
+      console.error('relic: grant rollback failed:', rollbackError);
+    });
     throw error;
   }
 
-  await env.store
-    .updateAccessRequest(row.id, grantee.identityId, (r) => ({
-      ...r,
-      status: 'granted',
-      decidedAt: env.now,
-    }))
-    .catch(() => undefined);
-  await logAccess(env, owner.identityId, row.id, 'grant', {
-    actorIdentityId: owner.identityId,
-    version: Math.max(...versions),
-    subjectIdentityId: grantee.identityId,
-  });
-  try {
-    await env.sendMail(
-      grantee.email,
-      accessGrantedMail({
-        relicUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}`,
-      })
+  const grants: GrantWireJSON[] = [];
+  for (const p of planned) {
+    const granteeId = p.grantee.identityId;
+    if (p.pending) {
+      await env.store
+        .updateAccessRequest(row.id, granteeId, (r) => ({
+          ...r,
+          status: 'granted',
+          decidedAt: env.now,
+        }))
+        .catch(() => undefined);
+    }
+    await logAccess(
+      env,
+      owner.identityId,
+      row.id,
+      p.pending ? 'grant' : 'share',
+      {
+        actorIdentityId: owner.identityId,
+        version: Math.max(...p.versions),
+        subjectIdentityId: granteeId,
+      }
     );
-  } catch (error) {
-    console.error('relic: access grant notice failed:', error);
+    try {
+      await env.sendMail(
+        p.grantee.email,
+        accessGrantedMail({
+          relicUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}`,
+        })
+      );
+    } catch (error) {
+      console.error('relic: access grant notice failed:', error);
+    }
+    const stored = await env.store.getGrant(row.id, granteeId);
+    grants.push(grantJson(stored ?? writtenGrants.get(granteeId)!, p.grantee));
   }
-  const stored = await env.store.getGrant(row.id, grantee.identityId);
-  return {
-    status: 201,
-    grant: grantJson(stored ?? grantRow, grantee),
-  };
+  return { status: 201, grants };
+}
+
+/** One grant of a batch, once the checks that depend on who is registered have passed. */
+interface PlannedGrant {
+  readonly grantee: IdentityRecord;
+  readonly versions: readonly number[];
+  /** The grant row this grantee already had, when it was revoked. */
+  readonly prior: GrantRow | undefined;
+  /** True when the grantee has a pending request this grant answers. */
+  readonly pending: boolean;
 }
 
 export async function listGrants(

@@ -55,6 +55,17 @@ export const PURPOSE_KINDS: Readonly<
   owner_publish: ['owner_publish'],
 };
 
+/**
+ * Purposes whose one attestation signs a batch: each listed kind may repeat,
+ * in any order, up to `privateShareMaxPerCall` statements (plan 3.4). Every
+ * other purpose keeps its exact kinds and count.
+ */
+export const PURPOSE_REPEAT: Partial<
+  Record<AttestPurpose, readonly StatementKind[]>
+> = {
+  grant: ['grant'],
+};
+
 /** A statement as it was verified: its kind, its parsed fields and its signature. */
 export interface VerifiedStatement {
   readonly kind: StatementKind;
@@ -274,12 +285,24 @@ export async function verifyAttestation(
     refuseStatement('prf_output');
   }
 
-  const expected = PURPOSE_KINDS[input.purpose];
-  if (
-    bundle.statements.length !== expected.length ||
-    bundle.statements.some((s, i) => s.kind !== expected[i])
-  ) {
-    refuseStatement('kinds');
+  const repeat = PURPOSE_REPEAT[input.purpose];
+  if (repeat === undefined) {
+    const expected = PURPOSE_KINDS[input.purpose];
+    if (
+      bundle.statements.length !== expected.length ||
+      bundle.statements.some((s, i) => s.kind !== expected[i])
+    ) {
+      refuseStatement('kinds');
+    }
+  } else {
+    if (bundle.statements.length > env.config.privateShareMaxPerCall) {
+      refuseStatement('count');
+    }
+    if (
+      bundle.statements.some((s) => !repeat.includes(s.kind as StatementKind))
+    ) {
+      refuseStatement('kinds');
+    }
   }
 
   const parsed: { kind: StatementKind; statement: Record<string, unknown> }[] =

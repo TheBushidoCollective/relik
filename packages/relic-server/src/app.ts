@@ -810,12 +810,41 @@ export function createApp(options: AppOptions = {}): RelicApp {
           );
         }
       },
-      limit: (scope, key, budget) => {
-        const verdict = limiter.check(rateLimitKey(scope, key), budget, now);
+      limit: (scope, key, budget, units = 1) => {
+        const verdict = limiter.check(
+          rateLimitKey(scope, key),
+          budget,
+          now,
+          units
+        );
         if (!verdict.allowed) {
           throw new ProblemError('private_rate_limited', {
             retry_after_seconds: verdict.retryAfterSeconds,
           });
+        }
+      },
+      limitAll: (charges) => {
+        // Peek every budget before charging any, so a refusal charges nothing.
+        const totals = new Map<
+          string,
+          { budget: (typeof charges)[number]['budget']; units: number }
+        >();
+        for (const charge of charges) {
+          if (charge.units < 1) continue;
+          const id = rateLimitKey(charge.scope, charge.key);
+          const sum = totals.get(id)?.units ?? 0;
+          totals.set(id, { budget: charge.budget, units: sum + charge.units });
+        }
+        for (const [id, total] of totals) {
+          const verdict = limiter.peek(id, total.budget, now, total.units);
+          if (!verdict.allowed) {
+            throw new ProblemError('private_rate_limited', {
+              retry_after_seconds: verdict.retryAfterSeconds,
+            });
+          }
+        }
+        for (const [id, total] of totals) {
+          limiter.check(id, total.budget, now, total.units);
         }
       },
       objectKey,
@@ -1283,7 +1312,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
             attestation: body['attestation'],
             wraps: body['wraps'],
           });
-          return Response.json({ grant: result.grant }, { status: 201 });
+          return Response.json(
+            {
+              grant: result.grants.length === 1 ? result.grants[0] : null,
+              grants: result.grants,
+              invites: [],
+            },
+            { status: 201 }
+          );
         }
         if (third === 'grants' && fourth === undefined && get) {
           if (session === undefined) return refuse('sign_in_required');
