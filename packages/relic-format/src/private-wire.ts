@@ -187,7 +187,10 @@ export interface InviteOpenJSON {
   readonly versions: readonly number[];
   readonly sealed_version: number | null;
   readonly owner: PartyJSON;
-  readonly invite: { readonly statement: Record<string, unknown>; readonly identity_signature: string };
+  readonly invite: {
+    readonly statement: Record<string, unknown>;
+    readonly identity_signature: string;
+  };
   readonly claimed_by_identity_id: string | null;
 }
 

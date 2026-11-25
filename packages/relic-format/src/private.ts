@@ -742,30 +742,56 @@ export async function generateInviteKeyPair(): Promise<{
   d: Uint8Array;
 }> {
   const pair = await crypto.subtle.generateKey(
-    { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits']
   );
-  const publicKey = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+  const publicKey = new Uint8Array(
+    await crypto.subtle.exportKey('raw', pair.publicKey)
+  );
   const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
   if (!jwk.d) throw new RelicFormatError('missing invitation private key');
   return { publicKey, d: decodeBase64url(jwk.d) };
 }
 
-export async function inviteRecipient(d: Uint8Array, publicKey: Uint8Array): Promise<HpkeRecipient> {
+export async function inviteRecipient(
+  d: Uint8Array,
+  publicKey: Uint8Array
+): Promise<HpkeRecipient> {
   requireLength(d, 32, 'invitation private key');
   requireLength(publicKey, 65, 'invitation public key');
-  if (publicKey[0] !== 4) throw new RelicFormatError('invalid invitation public key');
-  const key = await crypto.subtle.importKey('jwk', {
-    kty: 'EC', crv: 'P-256', d: encodeBase64url(d),
-    x: encodeBase64url(publicKey.subarray(1, 33)),
-    y: encodeBase64url(publicKey.subarray(33, 65)),
-  }, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+  if (publicKey[0] !== 4)
+    throw new RelicFormatError('invalid invitation public key');
+  const key = await crypto.subtle.importKey(
+    'jwk',
+    {
+      kty: 'EC',
+      crv: 'P-256',
+      d: encodeBase64url(d),
+      x: encodeBase64url(publicKey.subarray(1, 33)),
+      y: encodeBase64url(publicKey.subarray(33, 65)),
+    },
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    ['deriveBits']
+  );
   return {
     publicKey: publicKey.slice(),
     async dh(peer) {
       const peerKey = await crypto.subtle.importKey(
-        'raw', peer.slice().buffer, { name: 'ECDH', namedCurve: 'P-256' }, false, []
+        'raw',
+        peer.slice().buffer,
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,
+        []
       );
-      return new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: peerKey }, key, 256));
+      return new Uint8Array(
+        await crypto.subtle.deriveBits(
+          { name: 'ECDH', public: peerKey },
+          key,
+          256
+        )
+      );
     },
   };
 }

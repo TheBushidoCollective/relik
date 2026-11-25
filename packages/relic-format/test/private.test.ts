@@ -88,7 +88,8 @@ const STATEMENT_SHA256: { readonly [K in StatementKind]: string } = {
     '336c1a39f01ec70b323fa4b5c9c2e3da76f5fb38d4e8e4629a363e4bad998a56',
   grant: '34562fdb5e1fdfd87a55f6ec02a757411dba9d86348fbb435d41d2dcf6990c6b',
   invite: 'feb312a2c1edade238f1098701108ca27abc7b78b54682d89ee43d0680bbe14d',
-  invite_claim: 'ad2a84c13245f304e12b88b25377647c67d2fc16de7edc98153b220c214a6384',
+  invite_claim:
+    'ad2a84c13245f304e12b88b25377647c67d2fc16de7edc98153b220c214a6384',
   revocation:
     '738a07dab901939870b67ee6f0ecaa5469176c943bf8550bdaa26a81e78a8ec6',
   republish: '8fd76c5a6a3a4e6f1cead1c7a24cc032d74a5decbecd6343ea438b0dcf974af3',
