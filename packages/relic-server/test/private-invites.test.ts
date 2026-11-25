@@ -20,7 +20,8 @@ import {
 } from '@relic/format/private';
 import { encryptedSize, type RequestOptionsJSON } from '@relic/format';
 import { createApp, type RelicApp } from '../src/app.ts';
-import type { Mailer, OutboundMail } from '../src/mail.ts';
+import type { OutboundMail } from '../src/mail.ts';
+import type { Mailer } from '../src/app.ts';
 import { MemoryStorage } from '../src/storage.ts';
 import { MemoryStore } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
