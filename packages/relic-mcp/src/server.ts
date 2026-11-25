@@ -757,7 +757,7 @@ export const SHARE_TOOL_DEFINITION = {
   name: SHARE_TOOL_NAME,
   title: 'Share a relik with people',
   description:
-    'For a public relik, register addresses for comment and change notices and compose a share email with the full key-bearing link for the owner to send. The service stores the addresses linked to the relik. For a private relik, relic_share grants and invites nothing, because both need the owner\'s passkey: it returns grant_url, which opens the owner\'s Share form in their browser with these addresses filled in. Relik looks each one up; the owner grants registered addresses and invites the rest with one passkey tap, and sends each invitation link from their own mailbox because it holds a key. This private call sends nothing to the service. Takes the relik id, never the share URL. Up to 20 addresses per call.',
+    "For a public relik, register addresses for comment and change notices and compose a share email with the full key-bearing link for the owner to send. The service stores the addresses linked to the relik. For a private relik, relic_share grants and invites nothing, because both need the owner's passkey: it returns grant_url, which opens the owner's Share form in their browser with these addresses filled in. Relik looks each one up; the owner grants registered addresses and invites the rest with one passkey tap, and sends each invitation link from their own mailbox because it holds a key. This private call sends nothing to the service. Takes the relik id, never the share URL. Up to 20 addresses per call.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -770,8 +770,7 @@ export const SHARE_TOOL_DEFINITION = {
         items: { type: 'string' },
         minItems: 1,
         maxItems: 20,
-        description:
-          'Up to 20 email addresses to share with.',
+        description: 'Up to 20 email addresses to share with.',
       },
     },
     required: ['relic_id', 'emails'],
@@ -816,7 +815,8 @@ export const SHARE_TOOL_DEFINITION = {
       },
       grant_url: {
         type: 'string',
-        description: 'For a private relik, the owner Share form with addresses in the fragment.',
+        description:
+          'For a private relik, the owner Share form with addresses in the fragment.',
       },
       mailto_url: { type: 'string' },
     },
@@ -2587,7 +2587,7 @@ async function callTool(
             'the stop link; the email names the title and version and never carries the key; ' +
             'at most one email per person per relik per 10 minutes, and one stop link stops every email about that relik',
           sharing:
-            'For a public relik, relic_share sends addresses to the service and composes the key-bearing share email locally for the owner to send. On a private relik, relic_share composes grant_url for the owner\'s browser; grants and invitations always need the owner\'s passkey. The private call sends nothing to the service.',
+            "For a public relik, relic_share sends addresses to the service and composes the key-bearing share email locally for the owner to send. On a private relik, relic_share composes grant_url for the owner's browser; grants and invitations always need the owner's passkey. The private call sends nothing to the service.",
           service_origin: deps.serviceOrigin,
         },
         isError: false,
