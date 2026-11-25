@@ -98,6 +98,14 @@ export interface RelicRow {
    * verdict. Absent on legacy rows, which stay closed until republished.
    */
   readonly decisionsOpen?: boolean | undefined;
+  readonly settings?: {
+    readonly suggestions: boolean;
+    readonly comments: boolean;
+    readonly signing: boolean;
+    readonly notifications: boolean;
+  };
+  readonly settingsChangedAt?: number;
+  readonly settingsChangedBy?: 'publisher' | 'owner';
   /**
    * Number of enrolled share addresses reserved against the per-relic cap.
    * Advanced atomically via compare-and-swap when reserving share capacity.
@@ -107,12 +115,24 @@ export interface RelicRow {
   /** Private relics only: the access mode the server declares. Absent on public relics. */
   readonly access?: 'private' | undefined;
   readonly ownerIdentityId?: string | undefined;
+  /** Latest private lifecycle deadline, which cannot move earlier on shortening. */
+  readonly privateErasureAt?: number;
   /** Bumped by every grant and revocation. A seal or grant that read an older value loses. */
   readonly accessEpoch?: number | undefined;
   /** The highest version whose seal the server recorded. It is provisional until the owner-epoch recheck passes. */
   readonly sealedVersion?: number | undefined;
   /** Versions the owner deleted. The row keeps the number so it is never reused. */
   readonly deletedVersions?: readonly number[] | undefined;
+}
+
+export interface SettingsChangeRow {
+  readonly at: number;
+  readonly by: 'publisher' | 'owner';
+  readonly settings: NonNullable<RelicRow['settings']> & {
+    readonly decisions: boolean;
+  };
+  readonly expiresAt: number | undefined;
+  readonly attestation?: StoredAttestation;
 }
 
 export interface DecisionRow {
@@ -312,7 +332,13 @@ export interface AccessEvent {
   readonly ownerIdentityId: string;
   readonly relicId: string;
   readonly at: number;
-  readonly kind: 'request' | 'grant' | 'revoke' | 'wrap_fetch' | 'delete';
+  readonly kind:
+    | 'request'
+    | 'grant'
+    | 'revoke'
+    | 'wrap_fetch'
+    | 'delete'
+    | 'settings';
   readonly version?: number | undefined;
   readonly actorIdentityId?: string | undefined;
   readonly actorDeviceId?: string | undefined;
@@ -590,6 +616,9 @@ export interface DedupEntry {
  */
 export interface RelicStore {
   getRelic(id: string): Promise<RelicRow | undefined>;
+  appendSettingsChange(id: string, row: SettingsChangeRow): Promise<void>;
+  deleteSettingsChanges(id: string): Promise<void>;
+  extendPrivateLifetime(id: string, expiresAt: number): Promise<void>;
   putRelic(row: RelicRow): Promise<void>;
   /** Atomically reserve a relic ID without replacing an existing row. */
   createRelic(row: RelicRow): Promise<boolean>;
@@ -874,7 +903,23 @@ export interface RelicStore {
 }
 
 export class MemoryStore implements RelicStore {
+  async appendSettingsChange(
+    id: string,
+    row: SettingsChangeRow
+  ): Promise<void> {
+    const changes = this.settingsChanges.get(id) ?? [];
+    changes.push(row);
+    this.settingsChanges.set(id, changes);
+  }
+  async deleteSettingsChanges(id: string): Promise<void> {
+    this.settingsChanges.delete(id);
+  }
+
+  async extendPrivateLifetime(_id: string, _expiresAt: number): Promise<void> {
+    // The in-memory store does not attach lifecycle metadata to objects.
+  }
   private readonly relics = new Map<string, RelicRow>();
+  private readonly settingsChanges = new Map<string, SettingsChangeRow[]>();
   private readonly tombstones = new Map<string, Tombstone>();
   private readonly challenges = new Map<string, Challenge>();
   private readonly mintLog: MintLogEntry[] = [];

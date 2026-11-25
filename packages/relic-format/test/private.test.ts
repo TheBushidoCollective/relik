@@ -106,6 +106,9 @@ const STATEMENT_SHA256: { readonly [K in StatementKind]: string } = {
     '8b28eacc8c614029e6c3d3d4f496a3a2453a4655f598e4c527ae591fee743f5e',
   owner_publish:
     '9783c6c37e58b0e2cbc853716b9644cb35d7a26d25a38aee1c382013b5cea508',
+  // Computed in Python (hashlib over sorted-key compact JSON), separately from statementBytes.
+  relic_settings:
+    '2d9e8e4ffc1af00a58b164cd44b11a56157e552add916a82b9bd264bb8b2a783',
 };
 
 const H = KAT.identityId;
@@ -233,6 +236,17 @@ const SAMPLES: { readonly [K in StatementKind]: StatementMap[K] } = {
     owner_identity_id: H,
     relic_id: RELIC,
   },
+  relic_settings: {
+    at: 1767225600017,
+    comments: false,
+    decisions: true,
+    lifetime: 30,
+    notifications: false,
+    owner_identity_id: H,
+    relic_id: RELIC,
+    signing: true,
+    suggestions: false,
+  },
 };
 
 const sha256Hex = async (bytes: Uint8Array): Promise<string> =>
@@ -318,7 +332,8 @@ describe('statementBytes', () => {
   test('covers every statement kind in the contract', () => {
     const expected: string[] = Object.keys(STATEMENT_SHA256).sort();
     expect([...STATEMENT_KINDS].map(String).sort()).toEqual(expected);
-    expect(STATEMENT_KINDS.length).toBe(17);
+    // 17 until relic_settings (live per-relik settings) joined the contract.
+    expect(STATEMENT_KINDS.length).toBe(18);
   });
 });
 
@@ -519,6 +534,26 @@ describe('parseStatement', () => {
         challenge_nonce: NONCE_B64,
       })
     ).not.toThrow();
+  });
+
+  test('relic_settings takes booleans for the switches and keep, never or a day count for the lifetime', () => {
+    const ok = (patch: Record<string, unknown>) =>
+      expect(() =>
+        parseStatement('relic_settings', {
+          ...sampleOf('relic_settings'),
+          ...patch,
+        })
+      ).not.toThrow();
+    ok({ lifetime: 'keep' });
+    ok({ lifetime: 'never' });
+    ok({ lifetime: 365 });
+    const refused = (patch: Record<string, unknown>) =>
+      refusal('relic_settings', { ...sampleOf('relic_settings'), ...patch });
+    expect(refused({ comments: 'yes' })).toBe('type');
+    expect(refused({ suggestions: 1 })).toBe('type');
+    expect(refused({ lifetime: 0 })).toBe('range');
+    expect(refused({ lifetime: 1.5 })).toBe('type');
+    expect(refused({ lifetime: 'forever' })).toBe('type');
   });
 
   test('private_publish refuses an empty, over-long, padded, or non-alphabet challenge', () => {

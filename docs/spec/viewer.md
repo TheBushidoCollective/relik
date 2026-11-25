@@ -1020,6 +1020,14 @@ The pin is set at first open and never changes. A pin mismatch is a hard refusal
 
 **Every top bar ends in Upload.** The relik's bar, the loading bar the server draws before any script runs, the dashboard, the policy page, the unopenable-relic page, the publish page and the homepage each end their actions row with an Upload action, the rightmost control on the bar (`upload-button.ts`). It is a link to `/publish`; a plain click is taken over by one delegated handler, which asks for a file and opens the dialog, and a modified or non-primary click is left to the link so open-in-new-tab still works. Delegating is what lets the relik's bar be rebuilt on every count change without the new copy needing wiring. On the publish page the same button chooses the file for the publisher already there. At narrow widths the label collapses to the icon like the other actions and the accessible name, "Upload a file", carries the meaning; it stays on the row down to 320px.
 
+### 6.14 Live settings
+
+The owner can open Settings from the band and change suggested edits, comments, decisions, signing, notification emails and lifetime with one passkey attestation. The public mint supplies settings, and a signed-in public reader's access response identifies whether they can manage them. Private readers receive settings with their access response.
+
+Closing comments hides the reader's composer and reply and edit actions. The owner can still comment. Turning off suggested edits removes the suggesting controls when the relik is opened; an already open page can still send a suggestion until it reloads. Existing suggestions remain readable. Signing is stored as a switch but is not yet enforced.
+
+Private lifetimes are limited to 365 days from the change. Shortening ends access sooner but, inferred from GCS customTime semantics, does not move stored-copy erasure earlier. Production GCS lifetime extension behaviour has not been proven locally.
+
 ## 7. Routed to `shape`
 
 Five items, and only these five.

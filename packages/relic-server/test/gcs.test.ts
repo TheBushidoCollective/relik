@@ -17,6 +17,7 @@ import {
   toTimestamp,
 } from '../src/gcs.ts';
 import { MemoryStorage } from '../src/storage.ts';
+import { fakeGcs } from './fake-gcs.ts';
 
 const NOW = Date.parse('2026-08-04T09:15:30.000Z');
 const EMAIL = 'relic@relic-prod.iam.gserviceaccount.com';
@@ -403,6 +404,38 @@ async function digestFixture(options: {
 }
 
 describe('the storage adapter', () => {
+  test('customTime preserves a later stored deadline and extends it when needed', async () => {
+    const fake = fakeGcs();
+    const prior = NOW + 30 * 86400000;
+    fake.objects.set('r/abc', {
+      body: '{}',
+      generation: 1,
+      customTime: new Date(prior).toISOString(),
+    });
+    const storage = gcsStorage({
+      bucket: 'relics',
+      prefix: 'r',
+      signer: { clientEmail: EMAIL, sign: async () => new Uint8Array([1]) },
+      getAccessToken: async () => 'test',
+      metadataFetch: fake.fetch,
+    });
+    await storage.setCustomTime('abc', NOW + 86400000);
+    expect(fake.objects.get('r/abc')?.customTime).toBe(
+      new Date(prior).toISOString()
+    );
+    expect(
+      fake.requests.some((request) => request.init.method === 'PATCH')
+    ).toBe(false);
+    const later = NOW + 40 * 86400000;
+    await storage.setCustomTime('abc', later);
+    expect(fake.objects.get('r/abc')?.customTime).toBe(
+      new Date(later).toISOString()
+    );
+    expect(
+      fake.requests.some((request) => request.init.method === 'PATCH')
+    ).toBe(true);
+  });
+
   const storage = () =>
     gcsStorage({
       bucket: 'relic-objects',

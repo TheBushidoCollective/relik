@@ -144,7 +144,8 @@ export class MemoryStorage implements ObjectStorage {
     if (!this.objects.has(relicId)) {
       throw new Error(`no object to set a customTime on: ${relicId}`);
     }
-    this.customTimes.set(relicId, customTime);
+    const existing = this.customTimes.get(relicId);
+    this.customTimes.set(relicId, Math.max(existing ?? customTime, customTime));
   }
 
   /** The customTime an object carries, as the lifecycle rule will read it. */

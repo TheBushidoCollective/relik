@@ -21,7 +21,8 @@ export type AttestPurpose =
   | 'device_approve'
   | 'device_revoke'
   | 'recovery_designate'
-  | 'owner_publish';
+  | 'owner_publish'
+  | 'relic_settings';
 
 export interface SignedStatementJSON {
   readonly kind: StatementKind;
@@ -180,18 +181,49 @@ export interface PrivateAccessJSON {
     readonly readable_versions: readonly number[];
     readonly deleted_versions: readonly number[];
   };
+  /** The relik's live settings. Null for a caller with no standing to read it. */
+  readonly settings: RelicSettingsJSON | null;
 }
 
 export interface PublicAccessJSON {
   readonly access: 'public';
   readonly relic_id: string;
   readonly owned_by_me: boolean;
+  /**
+   * True when the signed-in session is the relik's owner identity, so it can
+   * change settings. False for a relik with no owner and for everyone else.
+   */
+  readonly manage: boolean;
+  readonly settings: RelicSettingsJSON;
+}
+
+/**
+ * A relik's live settings as the service reports them. A setting nobody has
+ * changed is on, except `decisions`, which is off until the author opens it.
+ */
+export interface RelicSettingsJSON {
+  readonly suggestions: boolean;
+  readonly comments: boolean;
+  readonly decisions: boolean;
+  readonly signing: boolean;
+  readonly notifications: boolean;
+  /** When the owner or publisher last changed one; null if never. */
+  readonly changed_at: string | null;
+  readonly changed_by: 'publisher' | 'owner' | null;
+  /** The relik's expiry, or null when it never expires. */
+  readonly expires_at: string | null;
 }
 
 export interface AccessEventJSON {
   readonly event_id: string;
   readonly at: string;
-  readonly kind: 'request' | 'grant' | 'revoke' | 'wrap_fetch' | 'delete';
+  readonly kind:
+    | 'request'
+    | 'grant'
+    | 'revoke'
+    | 'wrap_fetch'
+    | 'delete'
+    | 'settings';
   readonly relic_id: string;
   readonly version: number | null;
   readonly actor: {

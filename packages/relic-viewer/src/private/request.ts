@@ -4,7 +4,7 @@
  * that tap and signs the access request with it.
  */
 
-import type { AccessRole } from '@relic/format/private';
+import type { AccessRole, RelicSettingsJSON } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
 import {
   nowMs,
@@ -23,6 +23,7 @@ export interface AccessView {
   readonly currentVersion: number;
   readonly sealedVersion: number | null;
   readonly readableVersions: readonly number[];
+  readonly settings: RelicSettingsJSON | null;
 }
 
 function nullableNumber(value: unknown): number | null {
@@ -77,6 +78,7 @@ export async function loadAccess(
     readableVersions: readable.filter(
       (version): version is number => typeof version === 'number'
     ),
+    settings: (readField(body, 'settings') as RelicSettingsJSON | null) ?? null,
   };
 }
 

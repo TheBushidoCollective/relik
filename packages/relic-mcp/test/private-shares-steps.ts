@@ -111,7 +111,7 @@ export interface PrivateShareEnv {
 }
 
 /** A person's browser and what the steps learn about that person. */
-interface Actor {
+export interface Actor {
   readonly name: string;
   readonly email: string;
   readonly browser: RunningProofBrowser;
@@ -2209,6 +2209,13 @@ export async function runPrivateFolderRekey(
 }
 
 export {
+  approveDeviceFromProcess,
+  bootstrapOwner,
+  inPage,
+  nodeSignIn,
+  pageCreatePasskey,
+  sessionCookieParams,
+  waitForOpened,
   callMcpRaw,
   click,
   currentVersion,

@@ -177,6 +177,29 @@ export function fakeGcs(): FakeGcs {
     const objectMatch = /^\/storage\/v1\/b\/[^/]+\/o\/(.+)$/.exec(url.pathname);
     if (objectMatch?.[1] !== undefined) {
       const name = decodeURIComponent(objectMatch[1]);
+      if (method === 'PATCH') {
+        const existing = objects.get(name);
+        if (existing === undefined)
+          return new Response('not found', { status: 404 });
+        const metadata = JSON.parse(String(init?.body ?? '{}')) as {
+          customTime?: string;
+        };
+        if (
+          metadata.customTime === undefined ||
+          (existing.customTime !== undefined &&
+            metadata.customTime < existing.customTime)
+        ) {
+          return new Response('invalid customTime', { status: 400 });
+        }
+        objects.set(name, { ...existing, customTime: metadata.customTime });
+        return Response.json({ name, customTime: metadata.customTime });
+      }
+      if (method === 'GET' && url.searchParams.get('alt') !== 'media') {
+        const existing = objects.get(name);
+        if (existing === undefined)
+          return new Response('not found', { status: 404 });
+        return Response.json({ name, customTime: existing.customTime });
+      }
 
       if (method === 'DELETE') {
         const precondition = url.searchParams.get('ifGenerationMatch');

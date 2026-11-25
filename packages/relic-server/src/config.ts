@@ -110,6 +110,9 @@ export interface RelicConfig {
   readonly passkeyChallengeTtlSeconds: number;
   /** Decision mutations per IP. */
   readonly decisionRateLimit: RateLimitConfig;
+  readonly settingsRateLimit: RateLimitConfig;
+  readonly settingsReadRateLimit: RateLimitConfig;
+  readonly settingsMinLifetimeSeconds: number;
   /** Decision read queries per IP. */
   readonly decisionReadRateLimit: RateLimitConfig;
   /** Passkey operations per IP. */
@@ -247,6 +250,9 @@ export const DEFAULT_CONFIG: RelicConfig = {
   sessionTtlSeconds: 30 * 24 * 3600,
   passkeyChallengeTtlSeconds: 300,
   decisionRateLimit: { limit: 30, windowSeconds: 3600 },
+  settingsRateLimit: { limit: 60, windowSeconds: 3600 },
+  settingsReadRateLimit: { limit: 600, windowSeconds: 3600 },
+  settingsMinLifetimeSeconds: 3600,
   decisionReadRateLimit: { limit: 600, windowSeconds: 3600 },
   passkeyRateLimit: { limit: 20, windowSeconds: 3600 },
   passkeySignInOptionsRateLimit: { limit: 240, windowSeconds: 3600 },
@@ -305,6 +311,15 @@ export function assertConfig(config: RelicConfig): void {
   if (config.uploadUrlValiditySeconds * 250_000 < config.ciphertextCapBytes) {
     throw new Error(
       'upload URL validity cannot carry the ciphertext cap at 2 Mbit/s'
+    );
+  }
+  if (
+    !Number.isSafeInteger(config.settingsMinLifetimeSeconds) ||
+    config.settingsMinLifetimeSeconds < 1 ||
+    config.settingsMinLifetimeSeconds >= config.privateMaxTtlDays * 86400
+  ) {
+    throw new Error(
+      'settingsMinLifetimeSeconds must be positive and below the private maximum lifetime'
     );
   }
   if (config.minViableValiditySeconds > config.urlValiditySeconds) {

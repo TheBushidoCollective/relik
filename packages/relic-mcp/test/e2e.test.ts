@@ -948,6 +948,7 @@ describe('the MCP surface', () => {
       'relic_resolve_comment',
       'relic_describe_client',
       'relic_read_decisions',
+      'relic_settings',
       'relic_enroll_device',
       'relic_confirm_device',
       'relic_bind_owner',

@@ -384,3 +384,24 @@ The five negatives are: a version that differs only in core.xml shows no text ch
 Two inputs are simulated, and the run output says which one each frame used. Under Chrome for Testing in `--headless=new`, a wheel turn over a grid or over an out-of-process frame reaches the document rather than the element, so the stage sets that element's scroll position itself. The scroll event is the one a reader's wheel fires, and the sync listens for it. In-process frames take a real wheel turn.
 
 Not proven here: Safari and Firefox, touch and IME input, phone memory, a reader's wheel over an out-of-process frame in headed Chrome, and the live service. `version-compare-live-probe.ts`, described in `packages/relic-mcp/PATH.md`, checks the live service after a deploy and is run by hand, not in CI.
+
+# Live settings
+
+The loopback path publishes through MCP and exercises settings against two app
+instances sharing a prefixed fake GCS metadata store and captured mail.
+
+```sh
+bun run --cwd packages/relic-viewer build
+bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=<owned-headless-shell> bun packages/relic-mcp/test/settings-path.ts
+```
+
+Success prints `01_COMMENTS_CLOSED`, `02_COMMENTS_REOPENED`, `03_NOTIFICATIONS`,
+`04_OWNER_SETTINGS`, `05_PRIVATE_LIFETIME`, `06_PAUSED_SETTINGS` and
+`SETTINGS_PATH_OK`. The lifetime check models ciphertext metadata in fake GCS
+while the ciphertext bytes reside in loopback memory storage. It does not prove
+production GCS lifecycle behavior or real mail delivery.
+
+Mutation controls in a scratch checkout rejected a disabled comments guard
+(`201` instead of `409`), a removed viewer owner gate (reader saw Settings),
+and a pause check moved after attestation (replay returned `403`, not `200`).

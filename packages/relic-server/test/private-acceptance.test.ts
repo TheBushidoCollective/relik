@@ -1659,3 +1659,121 @@ describe('the roster statements (plan 4.7)', () => {
     expect(context.body['owner_epoch']).toBe(await epoch());
   });
 });
+
+describe('owner settings attestation', () => {
+  test('only the owner can change settings and a nonce cannot be replayed', async () => {
+    const owner = await person('owner@example.test');
+    const stranger = await person('stranger@example.test');
+    const noIdentity = await person('no-key@example.test');
+    await registerIdentity(owner);
+    await registerIdentity(stranger);
+    await store.putRelic({
+      id: RELIC_ID,
+      publishIp: '198.51.100.1',
+      grantedAt: now,
+      expiresAt: undefined,
+      rendererClass: 'markdown',
+      publishingClient: 'test',
+      declaredSizeBytes: 10,
+      version: 1,
+      publishTokenHash: '0'.repeat(64),
+      mintsUsed: 0,
+      ownerIdentityId: owner.identityId,
+    });
+    const endpoint = `/api/relics/${RELIC_ID}/settings`;
+    expect(
+      (await send(endpoint, post({ attestation: {} }, noIdentity.cookie))).body[
+        'code'
+      ]
+    ).toBe('identity_required');
+    expect(
+      (await send(endpoint, post({ attestation: {} }, stranger.cookie))).body[
+        'code'
+      ]
+    ).toBe('owner_required');
+    expect(
+      (
+        await send(
+          '/api/attest/nonce',
+          post(
+            { purpose: 'relic_settings', relic_id: RELIC_ID },
+            stranger.cookie
+          )
+        )
+      ).body['code']
+    ).toBe('owner_required');
+    const ownerAccess = await send(`/api/relics/${RELIC_ID}/access`, {
+      cookie: owner.cookie,
+    });
+    const strangerAccess = await send(`/api/relics/${RELIC_ID}/access`, {
+      cookie: stranger.cookie,
+    });
+    expect(ownerAccess.body['manage']).toBe(true);
+    expect(strangerAccess.body['manage']).toBe(false);
+    const statement = {
+      at: now,
+      relic_id: RELIC_ID,
+      owner_identity_id: owner.identityId,
+      suggestions: true,
+      comments: false,
+      decisions: false,
+      signing: true,
+      notifications: true,
+      lifetime: 'keep',
+    };
+    const bundle = await attest(owner, 'relic_settings', RELIC_ID, [
+      { kind: 'relic_settings', statement },
+    ]);
+    const plain = await send(endpoint, {
+      ...post({ attestation: bundle }, owner.cookie),
+      headers: { 'content-type': 'text/plain' },
+    });
+    expect(plain.status).toBe(400);
+    expect((await store.getRelic(RELIC_ID))?.settings).toBeUndefined();
+    const paused = createApp({
+      store,
+      storage,
+      now: () => now,
+      config: { killSwitchEngaged: true },
+    });
+    const pausedResponse = await paused.fetch(
+      req(endpoint, post({ attestation: bundle }, owner.cookie))
+    );
+    expect(pausedResponse.status).toBe(503);
+    expect((await store.getRelic(RELIC_ID))?.settings).toBeUndefined();
+    expect(
+      (await send(endpoint, post({ attestation: bundle }, owner.cookie))).status
+    ).toBe(200);
+    const challenge = encodeBase64url(
+      await attestationChallenge(decodeBase64url(bundle['nonce'] as string), [
+        statementBytes('relic_settings', statement as never),
+      ])
+    );
+    const newerAssertion = await owner.auth.assert(
+      {
+        challenge,
+        rpId: RP,
+        timeout: 300_000,
+        userVerification: 'required',
+        allowCredentials: [{ type: 'public-key', id: owner.auth.credentialId }],
+      } as RequestOptionsJSON,
+      ORIGIN
+    );
+    const { clientExtensionResults: _extensions, ...credential } =
+      newerAssertion as unknown as Record<string, unknown>;
+    const replay = await send(
+      endpoint,
+      post({ attestation: { ...bundle, credential } }, owner.cookie)
+    );
+    expect(replay.body['code']).toBe('passkey_verification_failed');
+    expect(replay.body['passkey_check']).toBe('nonce');
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/comments`,
+          post({ ciphertext: 'abcd' }, owner.cookie)
+        )
+      ).status
+    ).toBe(201);
+  });
+});

@@ -11,6 +11,7 @@
  */
 
 import type { PasskeyRecord } from '../store.ts';
+import { settingsView } from '../settings.ts';
 import {
   decodeBase64url,
   fingerprintsEqual,
@@ -176,6 +177,12 @@ export async function privateAccessView(
     expires_at: iso(row.expiresAt ?? 0),
     owner: seesOwner ? partyJson(owner) : null,
     recovery,
+    settings:
+      standing.role === 'owner' ||
+      standing.role === 'grantee' ||
+      standing.role === 'recovery'
+        ? settingsView(row)
+        : null,
     me: {
       role: standing.role,
       identity: me === undefined ? null : identityPublic(me),
@@ -1121,6 +1128,7 @@ export async function deleteRelic(
     await env.store.deleteSharesForRelic(row.id);
     await env.store.deleteOptOutsForRelic(row.id);
     await env.store.deleteDecisionsForRelic(row.id);
+    await env.store.deleteSettingsChanges(row.id);
     await env.store.deleteWraps(row.id, {});
     await env.store.deleteSeals(row.id);
     await env.store.deleteGrantsForRelic(row.id);

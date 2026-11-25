@@ -37,6 +37,7 @@ export const PURPOSE_KINDS: Readonly<
   identity_register: ['identity_register'],
   identity_bind: ['identity_bind'],
   identity_settings: ['identity_settings'],
+  relic_settings: ['relic_settings'],
   access_request: ['access_request'],
   grant: ['grant'],
   revoke: ['revocation', 'republish'],
@@ -122,8 +123,8 @@ export async function issueAttestNonce(
       });
     }
   }
-  if (input.purpose === 'owner_publish') {
-    const bound = new Set(input.allowedCredentialIds ?? []);
+  if (input.allowedCredentialIds !== undefined) {
+    const bound = new Set(input.allowedCredentialIds);
     allowed = allowed.filter((credential) =>
       bound.has(credential.credentialId)
     );

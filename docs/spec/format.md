@@ -428,6 +428,7 @@ Each bound passkey has its own bundle, and a bundle opens only under that passke
 | `identity_register`, `identity_bind`, `identity_settings` | the identity | yes |
 | `access_request` | the requester's identity | yes |
 | `grant`, `revocation`, `republish`, `delete`, `device_cert`, `device_revocation`, `recovery_designation` | the owner's identity | yes |
+| `relic_settings` | the owner's identity, on a private or a public relik | yes |
 | `seal` | an owner device or the owner's identity | no |
 | `device_enroll`, `device_request`, `owner_bind`, `private_publish` | a device | no |
 

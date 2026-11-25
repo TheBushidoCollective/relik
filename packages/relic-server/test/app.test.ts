@@ -1344,6 +1344,33 @@ describe('the grant', () => {
 });
 
 describe('the mint', () => {
+  test('mint exposes the current settings', async () => {
+    const { id, grant } = await publish();
+    const settings = await app.fetch(
+      req(`/api/relics/${id}/settings`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          publish_token: grant['publish_token'],
+          settings: { suggestions: false },
+        }),
+      })
+    );
+    expect(settings.status).toBe(200);
+    const response = await app.fetch(
+      req(`/api/relics/${id}/mint`, { method: 'POST', ip: '203.0.113.5' })
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      settings: { suggestions: boolean; comments: boolean; decisions: boolean };
+    };
+    expect(body.settings).toMatchObject({
+      suggestions: false,
+      comments: true,
+      decisions: false,
+    });
+  });
+
   test('omitting version signs the current object for version 1', async () => {
     const { id } = await publish();
     const body = (await app
@@ -1405,7 +1432,7 @@ describe('the mint', () => {
     expect(body['current_version']).toBe(5);
   });
 
-  test('returns the eight fields the viewer consumes', async () => {
+  test('returns the nine fields the viewer consumes', async () => {
     const { id } = await publish();
     const body = (await app
       .fetch(
@@ -1419,6 +1446,7 @@ describe('the mint', () => {
       'object_crc32c',
       'object_length',
       'relic_expires_at',
+      'settings',
       'url',
       'url_expires_at',
       'version',
