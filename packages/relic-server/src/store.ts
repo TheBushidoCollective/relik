@@ -158,6 +158,8 @@ export interface SigningRequestRow {
     readonly attestation?: StoredAttestation;
   };
   readonly completionMailedAt?: number;
+  /** Signatures admitted by the request CAS; unlisted signature objects are orphans. */
+  readonly signedBy?: readonly number[];
 }
 
 export interface ReceiptRow {

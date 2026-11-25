@@ -67,6 +67,10 @@ import {
   cancelSigningRequest,
   createSigningRequest,
   readSigningState,
+  readSigningCertificate,
+  postOpenedReceipt,
+  recordSignature,
+  signingOptions,
 } from './signing.ts';
 import { RateLimiter, rateLimitKey } from './ratelimit.ts';
 import { MemoryStorage, type ObjectStorage } from './storage.ts';
@@ -687,7 +691,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       first === 'relics' &&
       second !== undefined &&
       third === 'signing' &&
-      (fourth === 'requests' || fourth === 'cancel' || fourth === 'read') &&
+      (fourth === 'requests' || fourth === 'cancel' || fourth === 'read' || fourth === 'options' || fourth === 'signatures' || fourth === 'certificate') &&
       rest[4] === undefined &&
       request.method === 'POST'
     ) {
@@ -695,6 +699,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
         postSigningRequest(second, request, ip, now, fourth)
       );
     }
+
+    if (first === 'relics' && second !== undefined && third === 'receipts' &&
+        fourth === 'opened' && rest[4] === undefined && request.method === 'POST')
+      return guarded(() => postSigningRequest(second, request, ip, now, 'opened'));
 
     // Passkeys:
     // - auth/passkeys: POST register; POST .../options; otherwise 405.
@@ -4741,6 +4749,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
     return promise;
   }
 
+  async function digestStoredVersion(row: RelicRow, version: number): Promise<string> {
+    const digest = await singleFlightDigest(row.id, version);
+    if (digest === undefined)
+      throw new ProblemError('relic_not_yet_published', { relic_id: row.id, retry_after_seconds: 5 });
+    return digest;
+  }
+
   async function digestOnRecord(
     row: RelicRow,
     version: number
@@ -4880,13 +4895,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
     request: Request,
     ip: string,
     now: number,
-    operation: 'requests' | 'cancel' | 'read'
+    operation: 'requests' | 'cancel' | 'read' | 'options' | 'signatures' | 'opened' | 'certificate'
   ): Promise<Response> {
-    if (operation !== 'read' && config.killSwitchEngaged)
+    const isRead = operation === 'read' || operation === 'certificate';
+    if (!isRead && config.killSwitchEngaged)
       throw new ProblemError('service_paused', { retry_after_seconds: 300 });
     const verdict = limiter.check(
-      rateLimitKey(operation === 'read' ? 'signing-read' : 'signing-write', ip),
-      operation === 'read'
+      rateLimitKey(isRead ? 'signing-read' : 'signing-write', ip),
+      isRead
         ? config.signingReadRateLimit
         : config.signingRateLimit,
       now
@@ -4924,9 +4940,24 @@ export function createApp(options: AppOptions = {}): RelicApp {
       });
     const env = privateEnv(now);
     const session = await sessionOf(request, now);
+    if (operation === 'opened') {
+      const result = await postOpenedReceipt(env, row, session, body);
+      return Response.json(result.body, { status: result.created ? 201 : 200 });
+    }
     if (operation === 'read')
       return Response.json(
         await readSigningState(env, row, session, body, checkShareProof)
+      );
+    if (operation === 'certificate')
+      return Response.json(await readSigningCertificate(env, row, session, body, checkShareProof));
+    if (operation === 'options')
+      return Response.json(
+        await signingOptions(env, row, session, body, checkShareProof, digestStoredVersion)
+      );
+    if (operation === 'signatures')
+      return Response.json(
+        await recordSignature(env, row, session, body, checkShareProof, digestStoredVersion),
+        { status: 201 }
       );
     const result =
       operation === 'cancel'
