@@ -818,6 +818,26 @@ test('ambiguous creation CAS preserves a request completed before the error retu
   expect(await store.getCertificate(RELIC_ID, requestId)).toEqual({
     marker: 'complete',
   });
+  const read = await a.fetch(
+    new Request(`https://relic.example/api/relics/${RELIC_ID}/signing/read`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ publish_token: token }),
+    })
+  );
+  expect((await read.json()).requests[0].status).toBe('complete');
+  const certificate = await a.fetch(
+    new Request(
+      `https://relic.example/api/relics/${RELIC_ID}/signing/certificate`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ publish_token: token, request_id: requestId }),
+      }
+    )
+  );
+  expect(certificate.status).toBe(200);
+  expect((await certificate.json()).marker).toBe('complete');
 });
 
 test('another instance sees signing disabled and expired reads remain available', async () => {
