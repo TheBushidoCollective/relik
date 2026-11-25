@@ -185,6 +185,7 @@ test('fresh and stored signing attestations reject signed trailing data, while i
       purpose: 'attest',
       attestPurpose: entry.purpose,
       relicId: RELIC_ID,
+      ...(entry.purpose === 'sign' ? { signingRequestId: requestId } : {}),
       expiresAt: now + 60_000,
     });
     const bytes = statementBytes(entry.kind, entry.statement as never);
@@ -244,7 +245,9 @@ test('fresh and stored signing attestations reject signed trailing data, while i
       passkeys,
       signerKey: () => keys.sigPublicKey,
       relicId: RELIC_ID,
-      ...(entry.purpose === 'sign' ? { identityFree: true } : {}),
+      ...(entry.purpose === 'sign'
+        ? { identityFree: true, signingRequestId: requestId }
+        : {}),
     };
     const stored = {
       statements: [

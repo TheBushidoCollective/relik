@@ -5232,7 +5232,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         (cur.expiresAt === undefined || nextExpiry < cur.expiresAt)
       )
         throw new ProblemError('version_locked', {
-          locked_version: cur.lockedVersions?.[0],
+          locked_version: cur.lockedVersions![0]!,
         });
       const privateErasureAt =
         cur.access === 'private' && nextExpiry !== undefined

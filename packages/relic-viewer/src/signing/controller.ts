@@ -347,6 +347,7 @@ export function mountSigning(input: {
         private: view.access === 'private',
         owner,
         verifiedSignatures,
+        withheldSignatures,
         ...(canSign ? { onSign: sign } : {}),
         ...(signerIndex === undefined ? {} : { signerIndex }),
         ...(signerIndex === undefined && session.kind !== 'verified'

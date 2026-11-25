@@ -11,6 +11,7 @@ export function openSigningStatus(input: {
   readonly private: boolean;
   readonly owner: boolean;
   readonly verifiedSignatures: ReadonlySet<number>;
+  readonly withheldSignatures?: ReadonlySet<number>;
   readonly signerIndex?: number;
   readonly onSignIn?: () => void;
   readonly onSign?: () => void;
@@ -86,9 +87,11 @@ export function openSigningStatus(input: {
     const status = document.createElement('span');
     status.textContent =
       signer.status === 'signed'
-        ? input.verifiedSignatures.has(signer.index)
-          ? 'Signed'
-          : 'Signature unverified'
+        ? input.withheldSignatures?.has(signer.index)
+          ? 'Signed (receipt withheld)'
+          : input.verifiedSignatures.has(signer.index)
+            ? 'Signed'
+            : 'Signature unverified'
         : signer.status === 'waiting'
           ? 'Waiting'
           : signer.status === 'needs_access'
