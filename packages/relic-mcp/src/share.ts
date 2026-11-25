@@ -9,6 +9,7 @@
  */
 
 import {
+  composePrivateInvitation,
   composeShareEmail,
   decodeKey,
   isValidRelicId,
@@ -50,17 +51,10 @@ export { composeShareEmail, shareMailtoUrl, type ShareEmail, type ShareSender };
  * the link opens the file.
  */
 function privateInvitation(input: ShareInput, deps: PublishDeps): ShareResult {
-  const email: ShareEmail = {
-    to: [...input.emails],
-    subject: 'A private file shared with you on Relik',
-    text: [
-      "I've shared a private file with you on Relik. Open the link below and sign in. The link alone opens nothing: ask for access on the page, and I will grant it.",
-      '',
-      `${deps.relicOrigin}/${input.relic_id}`,
-      '',
-      'Relik emails you about activity on the file. Those emails never name the file or who wrote on it, and they have a link to stop them.',
-    ].join('\n'),
-  };
+  const email = composePrivateInvitation({
+    to: input.emails,
+    url: `${deps.relicOrigin}/${input.relic_id}`,
+  });
   return {
     relic_id: input.relic_id,
     registered: [],

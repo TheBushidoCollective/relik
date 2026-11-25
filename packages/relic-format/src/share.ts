@@ -114,6 +114,42 @@ export function composeShareEmail(p: {
   return { to: [...p.to], subject, text };
 }
 
+/** Compose a keyless private-share invitation for the owner's mailbox. */
+export function composePrivateInvitation(p: {
+  readonly url: string;
+  readonly to: readonly string[];
+}): ShareEmail {
+  return {
+    to: [...p.to],
+    subject: 'A private file shared with you on Relik',
+    text: [
+      "I've shared a private file with you on Relik. Open the link below and sign in. The link alone opens nothing: ask for access on the page, and I will grant it.",
+      '',
+      p.url,
+      '',
+      'Relik emails you about activity on the file. Those emails never name the file or who wrote on it, and they have a link to stop them.',
+    ].join('\n'),
+  };
+}
+
+export function composeInviteEmail(p: {
+  readonly url: string;
+  readonly to: readonly string[];
+  readonly expiresAt: string;
+}): ShareEmail {
+  return {
+    to: [...p.to],
+    subject: 'Invitation to a private file on Relik',
+    text: [
+      "I've invited you to a private file on Relik. Open this link and confirm your address with the code Relik emails you, then set up a passkey there to keep access.",
+      '',
+      p.url,
+      '',
+      `The link holds the key to the file, so don't forward it. It works until ${p.expiresAt}.`,
+    ].join('\n'),
+  };
+}
+
 /**
  * A `mailto:` URL that opens the share email as a draft in the sharer's mail
  * app. CRLF line endings, as RFC 6068 requires in a body, and `@` left

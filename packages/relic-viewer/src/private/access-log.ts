@@ -57,6 +57,9 @@ export function describeVersions(versions: readonly number[]): string {
 const KIND_LABEL: Readonly<Record<AccessEventJSON['kind'], string>> = {
   request: 'Access requested',
   grant: 'Access granted',
+  share: 'Shared directly',
+  invite: 'Invited',
+  claim: 'Invitation accepted',
   revoke: 'Access revoked',
   wrap_fetch: 'Key fetched',
   delete: 'Deleted',
