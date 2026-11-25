@@ -7021,7 +7021,9 @@ export function buildThread(
   onViewOriginal?: (version: number) => void,
   onFileCounts?: (counts: ReadonlyMap<string, number>) => void
 ): ThreadHandle {
-  const canComment = view.settings?.comments !== false || view.manage === true;
+  const canComment =
+    view.viewOnly !== true &&
+    (view.settings?.comments !== false || view.manage === true);
   const canSuggest = view.settings?.suggestions !== false && canComment;
   const section = document.createElement('aside');
   section.className = 'thread';
@@ -11647,10 +11649,15 @@ export function renderReady(
           showComparison(pair.left, pair.right);
         }
       },
-      onShare: (opener) => {
-        openSharePanel(activeView, relicId, deps, opener);
-      },
-      ...(activeView.settings?.decisions === false
+      ...(activeView.viewOnly === true
+        ? {}
+        : {
+            onShare: (opener: HTMLElement) => {
+              openSharePanel(activeView, relicId, deps, opener);
+            },
+          }),
+      ...(activeView.settings?.decisions === false ||
+      activeView.viewOnly === true
         ? {}
         : { onDecide: toggleDecisions }),
       ...(decisionTally === undefined ? {} : { decisionTally }),
@@ -11825,7 +11832,13 @@ export function renderReady(
     trackRenderState(stage, wrap, viewToShow.route, viewToShow.documentKind);
     void import('./signing/controller.ts')
       .then(({ mountSigning }) => {
-        if (disposed || activeView !== viewToShow || !stage.isConnected) return;
+        if (
+          disposed ||
+          activeView !== viewToShow ||
+          viewToShow.viewOnly === true ||
+          !stage.isConnected
+        )
+          return;
         disposeSigning = mountSigning({
           view: viewToShow,
           relicId,

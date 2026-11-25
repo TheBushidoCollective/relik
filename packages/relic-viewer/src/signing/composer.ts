@@ -1,5 +1,11 @@
 import { normalizeEmail } from '@relic/format';
-import { encodeBase64url, SIGN_CONSENT_ID } from '@relic/format/private';
+import {
+  encodeBase64url,
+  formatFingerprint,
+  SIGN_CONSENT_ID,
+  wrapVersionKey,
+  type WrapJSON,
+} from '@relic/format/private';
 import {
   contentMac,
   layoutCiphertextSha256,
@@ -7,11 +13,92 @@ import {
   type SigningBox,
 } from '@relic/format/signing';
 import type { RelicContent } from '../content.ts';
-import { nowMs } from '../private/keys.ts';
+import {
+  nowMs,
+  signStatements,
+  statementBytesOf,
+  type StatementDraft,
+} from '../private/keys.ts';
 import { privateKeysOf } from '../private/ops.ts';
+import { type GrantTarget, lookupShares } from '../private/direct-share.ts';
+import { verifiedPartyKeys } from '../private/rekey.ts';
 import type { ViewerDeps } from '../viewer.ts';
 import { signingApi, signingContent } from './api.ts';
 import { mountSigningBoxes } from './boxes.ts';
+
+/** The scope a send resolves signers within: who may already open the relik, and the owner. */
+export interface SignerScope {
+  readonly deps: ViewerDeps;
+  readonly relicId: string;
+  readonly grants: readonly {
+    readonly email: string;
+    readonly identityId: string;
+  }[];
+  readonly owner?: { readonly identityId: string; readonly email: string };
+}
+
+/** The signers a send resolved: granted people carry their verified party. */
+export interface Resolved {
+  readonly signers: { email: string; identity_id: string | null }[];
+  readonly grants: readonly GrantTarget[];
+}
+
+export type Resolution =
+  | ({ readonly kind: 'ready' } & Resolved)
+  | { readonly kind: 'refused'; readonly message: string };
+
+/**
+ * Resolves each typed address to a signer. A signer with access keeps it; a
+ * registered or invited address is granted in the same tap; anything else is
+ * refused, so no request names a signer who could never open the relik.
+ */
+export async function resolveSigners(
+  scope: SignerScope,
+  names: readonly string[]
+): Promise<Resolution> {
+  const known = new Map<string, string>(
+    scope.grants.map((grant) => [normalizeEmail(grant.email), grant.identityId])
+  );
+  if (scope.owner !== undefined) {
+    known.set(normalizeEmail(scope.owner.email), scope.owner.identityId);
+  }
+  const unknown = names.filter((email) => !known.has(email));
+  const looked =
+    unknown.length === 0
+      ? []
+      : await lookupShares(
+          scope.deps,
+          scope.relicId,
+          unknown,
+          new Set(scope.grants.map((grant) => grant.identityId))
+        );
+  const signers: { email: string; identity_id: string | null }[] = [];
+  const grants: GrantTarget[] = [];
+  for (const email of names) {
+    const identityId = known.get(email);
+    if (identityId !== undefined) {
+      signers.push({ email, identity_id: identityId });
+      continue;
+    }
+    const row = looked.find((entry) => normalizeEmail(entry.email) === email);
+    if (row?.kind === 'registered' || row?.kind === 'invited') {
+      grants.push({ party: row.party, fingerprint: row.fingerprint });
+      signers.push({ email, identity_id: row.party.identity.identity_id });
+      continue;
+    }
+    return {
+      kind: 'refused',
+      message: `${email} can't open this relik yet, so they can't be asked to sign. Invite them in Access first.`,
+    };
+  }
+  return { kind: 'ready', signers, grants };
+}
+
+/** The notice that names each person a send will grant, with the fingerprint to check. */
+export function grantNotice(grants: readonly GrantTarget[]): string {
+  if (grants.length === 0) return '';
+  return `Relik will grant ${grants.map((grant) => grant.party.email).join(', ')} access when you send. Check each fingerprint first: ${grants.map((grant) => formatFingerprint(grant.fingerprint)).join('; ')}.`;
+}
 
 /** Owner-only composer. Private signer identities come from the owner's verified grants. */
 export function openSigningComposer(input: {
@@ -23,6 +110,8 @@ export function openSigningComposer(input: {
   readonly signingKey: Uint8Array;
   readonly private: boolean;
   readonly grants: readonly { email: string; identityId: string }[];
+  /** The owner's own identity, so the owner can be added as a private signer. */
+  readonly owner?: { readonly identityId: string; readonly email: string };
   readonly pdf: boolean;
   readonly stage: HTMLElement;
   readonly shareUrl: string;
@@ -258,6 +347,7 @@ export function openSigningComposer(input: {
     pageEvents.abort();
     panel.remove();
   });
+  let resolved: Resolved | undefined;
   send.addEventListener('click', () => {
     const names = emails.map((field) => normalizeEmail(field.value));
     if (
@@ -268,28 +358,39 @@ export function openSigningComposer(input: {
       notice.textContent = 'Enter a different email address for each signer.';
       return;
     }
-    const signers = names.map((email) => ({
-      email,
-      identity_id: input.private
-        ? (input.grants.find((grant) => normalizeEmail(grant.email) === email)
-            ?.identityId ?? null)
-        : null,
-    }));
-    if (
-      input.private &&
-      signers.some((signer) => signer.identity_id === null)
-    ) {
-      notice.textContent =
-        'A signer cannot open this relik yet. Grant access first.';
+    if (send.dataset['confirmed'] !== 'true') {
+      send.disabled = true;
+      void resolveSigners(
+        {
+          deps: input.deps,
+          relicId: input.relicId,
+          grants: input.grants,
+          ...(input.owner === undefined ? {} : { owner: input.owner }),
+        },
+        names
+      )
+        .then((next) => {
+          send.disabled = false;
+          if (next.kind === 'refused') {
+            notice.textContent = next.message;
+            return;
+          }
+          resolved = next;
+          notice.textContent = grantNotice(next.grants);
+          send.dataset['confirmed'] = 'true';
+          send.textContent = 'Send with passkey';
+        })
+        .catch(() => {
+          send.disabled = false;
+          notice.textContent =
+            'Relik could not check those addresses. Try again.';
+        });
       return;
     }
+    if (resolved === undefined) return;
+    const { signers, grants } = resolved;
     notice.textContent =
       "Each signer confirms with a passkey on their own device. Relik records which passkey approved which version, and when. It doesn't verify anyone's identity.";
-    if (send.dataset['confirmed'] !== 'true') {
-      send.dataset['confirmed'] = 'true';
-      send.textContent = 'Send with passkey';
-      return;
-    }
     send.disabled = true;
     void (async () => {
       const requestId = encodeBase64url(
@@ -331,9 +432,60 @@ export function openSigningComposer(input: {
           },
         ],
       });
+      const at = nowMs(input.deps);
+      const grantDrafts: StatementDraft[] = grants.map((grant) => ({
+        kind: 'grant',
+        statement: {
+          at,
+          fingerprint_typed: grant.fingerprint,
+          grantee_email: grant.party.email,
+          grantee_identity_id: grant.party.identity.identity_id,
+          owner_identity_id: tapped.identity.identityId,
+          relic_id: input.relicId,
+          versions: [input.version],
+        },
+      }));
+      const signedGrants = await signStatements(
+        (message) => tapped.identity.sign(message),
+        grantDrafts,
+        statementBytesOf(grantDrafts)
+      );
+      const wraps: WrapJSON[] = [];
+      if (grants.length > 0) {
+        const fetched = await privateKeysOf(input.deps).fetchVersionKey(
+          input.deps,
+          input.relicId,
+          input.version,
+          tapped.identity
+        );
+        for (const grant of grants) {
+          const keys = await verifiedPartyKeys(grant.party);
+          const wrap = await wrapVersionKey({
+            recipientPublicKey: keys.kemPublicKey,
+            relicId: input.relicId,
+            version: input.version,
+            key: fetched.key,
+          });
+          wraps.push({
+            recipient_key_id: wrap.recipientKeyId,
+            version: input.version,
+            enc: wrap.enc,
+            ct: wrap.ct,
+          });
+        }
+      }
       await signingApi(input.deps, input.relicId).request(
         tapped.bundle,
-        layout
+        layout,
+        grants.length === 0
+          ? undefined
+          : {
+              grants: signedGrants.map((grant) => ({
+                statement: grant.statement,
+                identity_signature: grant.identity_signature,
+              })),
+              wraps,
+            }
       );
       dispose();
       pageEvents.abort();

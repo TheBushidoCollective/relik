@@ -173,6 +173,11 @@ export interface ReadyView {
   readonly access?: 'private';
   readonly settings?: RelicSettingsJSON | null | undefined;
   readonly manage?: boolean;
+  /**
+   * A temporary invitee's view (D14): the file, view and download only. No
+   * comments, decisions, signing or sharing, whatever the relik's settings say.
+   */
+  readonly viewOnly?: boolean;
   /** Available only while a private reader's identity is unlocked in this page. */
   readonly signingIdentity?: UnlockedIdentity;
   /** Resolves the key for one retained version of a private relic. */
@@ -947,7 +952,8 @@ export async function load(
 export async function mint(
   rawRelicId: string,
   deps: ViewerDeps,
-  requestedVersion?: number
+  requestedVersion?: number,
+  inviteId?: string
 ): Promise<{ mint: MintResponse } | { dead: DeadView }> {
   let relicId: string;
   try {
@@ -964,7 +970,11 @@ export async function mint(
         : {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ version: requestedVersion }),
+            body: JSON.stringify(
+              inviteId === undefined
+                ? { version: requestedVersion }
+                : { version: requestedVersion, invite_id: inviteId }
+            ),
           }
     );
   } catch {
