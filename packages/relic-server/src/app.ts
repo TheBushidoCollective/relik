@@ -63,7 +63,7 @@ import {
 } from './mail.ts';
 import { newOccurrenceId, ProblemError, problemResponse } from './problems.ts';
 import { settingsView } from './settings.ts';
-import { createSigningRequest } from './signing.ts';
+import { cancelSigningRequest, createSigningRequest } from './signing.ts';
 import { RateLimiter, rateLimitKey } from './ratelimit.ts';
 import { MemoryStorage, type ObjectStorage } from './storage.ts';
 import {
@@ -683,11 +683,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
       first === 'relics' &&
       second !== undefined &&
       third === 'signing' &&
-      fourth === 'requests' &&
+      (fourth === 'requests' || fourth === 'cancel') &&
       rest[4] === undefined &&
       request.method === 'POST'
     ) {
-      return guarded(() => postSigningRequest(second, request, ip, now));
+      return guarded(() =>
+        postSigningRequest(second, request, ip, now, fourth === 'cancel')
+      );
     }
 
     // Passkeys:
@@ -4867,7 +4869,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
     rawId: string,
     request: Request,
     ip: string,
-    now: number
+    now: number,
+    cancel: boolean
   ): Promise<Response> {
     if (config.killSwitchEngaged)
       throw new ProblemError('service_paused', { retry_after_seconds: 300 });
@@ -4906,14 +4909,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
       throw new ProblemError('invalid_signing_request', {
         signing_check: 'shape',
       });
-    const result = await createSigningRequest(
-      privateEnv(now),
-      row,
-      await sessionOf(request, now),
-      body,
-      digestOnRecord
-    );
-    return Response.json(result, { status: 201 });
+    const env = privateEnv(now);
+    const session = await sessionOf(request, now);
+    const result = cancel
+      ? await cancelSigningRequest(env, row, session, body)
+      : await createSigningRequest(env, row, session, body, digestOnRecord);
+    return Response.json(result, { status: cancel ? 200 : 201 });
   }
 
   async function changeSettings(

@@ -4,6 +4,7 @@ import {
   parseStatement,
   statementBytes,
   verifyStatement,
+  type SigningCancelStatement,
   type SigningRequestStatement,
 } from '@relic/format/private';
 import {
@@ -354,4 +355,129 @@ export async function createSigningRequest(
     );
     throw error;
   }
+}
+
+export async function cancelSigningRequest(
+  env: PrivateEnv,
+  row: RelicRow,
+  session: SessionRow | undefined,
+  body: Record<string, unknown>
+): Promise<SigningRequestJSON> {
+  const owner = await ownerRecord(env, row);
+  let statement: SigningCancelStatement;
+  let signature: string;
+  let signerKind: 'identity' | 'device';
+  let attestation: StoredAttestation | undefined;
+  if ('publish_token' in body) {
+    if (!(await publishTokenOk(row, body.publish_token)))
+      throw new ProblemError('invalid_publish_token');
+    const value = body.cancel;
+    if (value === null || typeof value !== 'object' || Array.isArray(value))
+      throw new ProblemError('invalid_statement', { statement_check: 'shape' });
+    const input = value as Record<string, unknown>;
+    try {
+      statement = parseStatement('signing_cancel', input.statement);
+    } catch {
+      throw new ProblemError('invalid_statement', { statement_check: 'shape' });
+    }
+    if (
+      input.signer_kind !== 'device' ||
+      typeof input.device_id !== 'string' ||
+      input.device_id !== statement.signer_id ||
+      typeof input.signature !== 'string'
+    )
+      throw new ProblemError('invalid_device');
+    const device = await env.store.getDevice(input.device_id);
+    if (device === undefined) throw new ProblemError('device_not_found');
+    if (
+      device.ownerIdentityId !== owner.identityId ||
+      statement.owner_identity_id !== owner.identityId
+    )
+      throw new ProblemError('owner_required');
+    if (device.revokedAt !== undefined || device.notAfter < env.now)
+      throw new ProblemError('device_revoked');
+    if (
+      statement.relic_id !== row.id ||
+      Math.abs(env.now - statement.at) >
+        env.config.passkeyChallengeTtlSeconds * 1000
+    )
+      throw new ProblemError('invalid_statement', { statement_check: 'stale' });
+    if (
+      !(await verifyStatement(
+        decodeBase64url(device.sigPublicKey),
+        statementBytes('signing_cancel', statement),
+        input.signature
+      ))
+    )
+      throw new ProblemError('invalid_statement', {
+        statement_check: 'signature',
+      });
+    signature = input.signature;
+    signerKind = 'device';
+  } else {
+    if (session === undefined) throw new ProblemError('sign_in_required');
+    const identity = await currentIdentity(env, normalizeEmail(session.email));
+    if (identity === undefined) throw new ProblemError('identity_required');
+    if (identity.identityId !== owner.identityId)
+      throw new ProblemError('owner_required');
+    const verified = await verifyAttestation(env, {
+      bundle: body.attestation,
+      purpose: 'signing_cancel',
+      email: identity.email,
+      passkeys: await env.store.getPasskeys(identity.email),
+      signerKey: identitySigner(identity),
+      relicId: row.id,
+    });
+    if (
+      !identity.credentials.some(
+        (c) => c.credentialId === verified.credentialId
+      )
+    )
+      throw new ProblemError('passkey_verification_failed', {
+        passkey_check: 'credential',
+      });
+    statement = parseStatement(
+      'signing_cancel',
+      verified.statements[0]?.statement
+    );
+    if (
+      statement.owner_identity_id !== owner.identityId ||
+      statement.signer_id !== owner.identityId
+    )
+      throw new ProblemError('owner_required');
+    signature = verified.statements[0]!.identitySignature;
+    signerKind = 'identity';
+    attestation = verified.attestation;
+  }
+  if (row.expiresAt !== undefined && row.expiresAt <= env.now)
+    throw new ProblemError('relic_expired', { relic_id: row.id });
+  const updated = await env.store.updateSigningRequest(
+    row.id,
+    statement.request_id,
+    (current) => {
+      if (current.status === 'cancelled') return current;
+      if (current.status !== 'open')
+        throw new ProblemError('signing_request_closed');
+      return {
+        ...current,
+        status: 'cancelled',
+        cancelledAt: env.now,
+        cancellation: {
+          statement: statement as unknown as Record<string, unknown>,
+          signature,
+          signerKind,
+          ...(attestation === undefined ? {} : { attestation }),
+        },
+      };
+    }
+  );
+  if (updated === undefined)
+    throw new ProblemError('signing_request_not_found');
+  const next = await env.store.updateRelic(row.id, (current) => {
+    if (current.signingOpen?.requestId !== statement.request_id) return current;
+    const { signingOpen: _open, ...rest } = current;
+    return rest;
+  });
+  if (next === undefined) throw new ProblemError('relic_not_found');
+  return signingRequestView(env, next, updated);
 }

@@ -95,10 +95,40 @@ async function setup(store: RelicStore) {
       layout_ciphertext: layout,
     };
   };
+  const cancel = async (requestId: string) => {
+    const statement = {
+      at: NOW,
+      owner_identity_id: OWNER_ID,
+      relic_id: RELIC_ID,
+      request_id: requestId,
+      signer_id: deviceId,
+    };
+    const signature = await signStatement(
+      async (bytes) =>
+        new Uint8Array(
+          await crypto.subtle.sign(
+            { name: 'ECDSA', hash: 'SHA-256' },
+            keys.sig.privateKey,
+            bytes as BufferSource
+          )
+        ),
+      statementBytes('signing_cancel', statement)
+    );
+    return {
+      publish_token: token,
+      cancel: {
+        statement,
+        signature,
+        signer_kind: 'device',
+        device_id: deviceId,
+      },
+    };
+  };
   return {
     a: createApp({ store, now: () => NOW }),
     b: createApp({ store, now: () => NOW }),
     make,
+    cancel,
   };
 }
 
@@ -133,6 +163,38 @@ describe.each(['memory', 'gcs'] as const)(
             key.startsWith(`tenant/m/signing/${RELIC_ID}/`)
           )
         ).toBe(true);
+    });
+    test('cancels idempotently and permits a new request', async () => {
+      const fake = fakeGcs();
+      const store =
+        backend === 'memory'
+          ? new MemoryStore()
+          : gcsStore({
+              bucket: 'relics',
+              prefix: 'tenant/m',
+              host: 'https://gcs.test',
+              getAccessToken: async () => 'test',
+              fetch: fake.fetch,
+            });
+      const { a, b, make, cancel } = await setup(store);
+      const request = await make();
+      expect((await a.fetch(post(request))).status).toBe(201);
+      const cancellation = await cancel(request.request.statement.request_id);
+      const submit = () =>
+        new Request(
+          `https://relic.example/api/relics/${RELIC_ID}/signing/cancel`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(cancellation),
+          }
+        );
+      const first = await b.fetch(submit());
+      expect(first.status).toBe(200);
+      expect((await first.json()).status).toBe('cancelled');
+      expect((await a.fetch(submit())).status).toBe(200);
+      expect((await store.getRelic(RELIC_ID))?.signingOpen).toBeUndefined();
+      expect((await b.fetch(post(await make()))).status).toBe(201);
     });
   }
 );
