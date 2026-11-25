@@ -231,7 +231,8 @@ async function fixture(store: RelicStore = new MemoryStore()) {
   async function open(
     order: 'parallel' | 'sequential' = 'parallel',
     isPrivate = false,
-    requireOpened = false
+    requireOpened = false,
+    version = 1
   ) {
     const nonce = await post(
       a,
@@ -263,7 +264,7 @@ async function fixture(store: RelicStore = new MemoryStore()) {
           identity_id: isPrivate ? second.identityId : null,
         },
       ],
-      version: 1,
+      version,
     };
     const result = await post(
       a,
@@ -1135,4 +1136,69 @@ test('a revoked signer cannot read unrelated requests or their certificates', as
     f.first.cookie
   );
   expect(certificate.body.code).toBe('private_access_denied');
+});
+
+test('current grantees can sign a newly sealed version without regranting', async () => {
+  const f = await fixture();
+  await f.enablePrivate();
+  await f.store.beginVersion(RELIC_ID, 'html', 42);
+  const first = await f.store.getIdentity(f.first.identityId);
+  const second = await f.store.getIdentity(f.second.identityId);
+  await f.store.putSeal({
+    ...seal(2),
+    statement: {
+      ciphertext_sha256: await f.storage.digest(RELIC_ID),
+      key_commitment: 'c'.repeat(64),
+    },
+  });
+  await f.store.putWrap(wrap(first!.kemKeyId, 2));
+  await f.store.putWrap(wrap(second!.kemKeyId, 2));
+  f.storage.put(
+    `${RELIC_ID}/v2`,
+    new TextEncoder().encode('signed ciphertext')
+  );
+  await f.store.updateRelic(RELIC_ID, (row) => ({
+    ...row,
+    publishedAt: NOW,
+    sealedVersion: 2,
+  }));
+  const request = await f.open('parallel', true, false, 2);
+  expect(request.version).toBe(2);
+});
+
+test('recovery access does not let a revoked grantee sign', async () => {
+  const f = await fixture();
+  await f.enablePrivate();
+  const request = await f.open('parallel', true);
+  const prepared = await f.prepare(f.first, request);
+  await f.store.updateIdentity(f.owner.identityId, (owner) => ({
+    ...owner,
+    recovery: {
+      recoveryIdentityId: f.first.identityId,
+      recoveryEmail: f.first.email,
+      designatedAt: NOW,
+      attestation: attestation(),
+    },
+  }));
+  await f.store.updateGrant(RELIC_ID, f.first.identityId, (row) => ({
+    ...row,
+    revokedAt: NOW,
+  }));
+  expect(
+    (await f.post(f.a, `${root}/versions/1/key`, {}, f.first.cookie)).status
+  ).toBe(200);
+  const options = await f.post(
+    f.a,
+    `${root}/signing/options`,
+    { request_id: request.request_id },
+    f.first.cookie
+  );
+  expect(options.body.code).toBe('private_access_denied');
+  const signing = await f.post(
+    f.b,
+    `${root}/signing/signatures`,
+    prepared,
+    f.first.cookie
+  );
+  expect(signing.body.code).toBe('private_access_denied');
 });

@@ -778,6 +778,48 @@ test('ambiguous CAS failure does not cancel a request that actually opened', asy
   ).toBe('open');
 });
 
+test('ambiguous creation CAS preserves a request completed before the error returns', async () => {
+  class CompletedStore extends MemoryStore {
+    failAfterCommit = false;
+    override async updateRelic(
+      id: string,
+      change: (row: RelicRow) => RelicRow
+    ): Promise<RelicRow | undefined> {
+      const result = await super.updateRelic(id, change);
+      if (this.failAfterCommit && result?.signingOpen !== undefined) {
+        this.failAfterCommit = false;
+        const requestId = result.signingOpen.requestId;
+        await super.updateSigningRequest(id, requestId, (row) => ({
+          ...row,
+          status: 'complete',
+          completedAt: NOW,
+        }));
+        await super.updateRelic(id, (row) => {
+          const { signingOpen: _open, ...rest } = row;
+          return { ...rest, lockedVersions: [1] };
+        });
+        await super.putCertificate(id, requestId, { marker: 'complete' });
+        throw new Error('response lost after completion');
+      }
+      return result;
+    }
+  }
+  const store = new CompletedStore();
+  const { a, make } = await setup(store);
+  const request = await make();
+  store.failAfterCommit = true;
+  await expect(a.fetch(post(request))).rejects.toThrow(
+    'response lost after completion'
+  );
+  const requestId = request.request.statement.request_id;
+  expect((await store.getSigningRequest(RELIC_ID, requestId))?.status).toBe(
+    'complete'
+  );
+  expect(await store.getCertificate(RELIC_ID, requestId)).toEqual({
+    marker: 'complete',
+  });
+});
+
 test('another instance sees signing disabled and expired reads remain available', async () => {
   const store = new MemoryStore();
   const { a, b, make } = await setup(store);
@@ -891,4 +933,25 @@ test('sequential requests show only the first unsigned signer ready', async () =
   expect(
     result.signers.map((signer: { status: string }) => signer.status)
   ).toEqual(['ready', 'waiting']);
+});
+
+test('a retired owner device cannot create or cancel requests', async () => {
+  const store = new MemoryStore();
+  const { a, make, cancel } = await setup(store);
+  const request = await make();
+  expect((await a.fetch(post(request))).status).toBe(201);
+  await store.updateIdentity(OWNER_ID, (owner) => ({
+    ...owner,
+    retiredAt: NOW,
+  }));
+  const cancellation = await a.fetch(
+    new Request(`https://relic.example/api/relics/${RELIC_ID}/signing/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(await cancel(request.request.statement.request_id)),
+    })
+  );
+  expect((await cancellation.json()).code).toBe('owner_required');
+  const creation = await a.fetch(post(await make()));
+  expect((await creation.json()).code).toBe('owner_required');
 });

@@ -241,6 +241,11 @@ export async function createSigningRequest(
   let signerKind: 'identity' | 'device';
   let attestation: StoredAttestation | undefined;
   if ('publish_token' in body) {
+    if (
+      owner.retiredAt !== undefined ||
+      (await currentIdentity(env, owner.email))?.identityId !== owner.identityId
+    )
+      throw new ProblemError('owner_required');
     const signed = body.request;
     if (signed === null || typeof signed !== 'object' || Array.isArray(signed))
       throw new ProblemError('invalid_statement', { statement_check: 'shape' });
@@ -405,11 +410,7 @@ export async function createSigningRequest(
         });
       seen.add(identity.identityId);
       const grant = await env.store.getGrant(row.id, identity.identityId);
-      if (
-        grant === undefined ||
-        grant.revokedAt !== undefined ||
-        !grant.versions.includes(statement.version)
-      ) {
+      if (grant === undefined || grant.revokedAt !== undefined) {
         throw new ProblemError('signer_without_access', {
           signer_email: signer.email,
         });
@@ -485,7 +486,10 @@ export async function createSigningRequest(
       await env.store.updateSigningRequest(
         row.id,
         statement.request_id,
-        (current) => ({ ...current, status: 'cancelled', cancelledAt: env.now })
+        (current) =>
+          current.status === 'open'
+            ? { ...current, status: 'cancelled', cancelledAt: env.now }
+            : current
       );
     }
     throw error;
@@ -530,6 +534,11 @@ export async function cancelSigningRequest(
   let signerKind: 'identity' | 'device';
   let attestation: StoredAttestation | undefined;
   if ('publish_token' in body) {
+    if (
+      owner.retiredAt !== undefined ||
+      (await currentIdentity(env, owner.email))?.identityId !== owner.identityId
+    )
+      throw new ProblemError('owner_required');
     const value = body.cancel;
     if (value === null || typeof value !== 'object' || Array.isArray(value))
       throw new ProblemError('invalid_statement', { statement_check: 'shape' });
@@ -802,6 +811,9 @@ export async function signingOptions(
     if (identity === undefined) throw new ProblemError('identity_required');
     if (identity.identityId !== statement.signers[index]?.identity_id)
       throw new ProblemError('signer_identity_changed');
+    const grant = await env.store.getGrant(row.id, identity.identityId);
+    if (grant === undefined || grant.revokedAt !== undefined)
+      throw new ProblemError('private_access_denied');
     await requireRead(
       env,
       row,
@@ -914,6 +926,9 @@ export async function recordSignature(
   if (identity !== undefined) {
     if (identity.identityId !== statement.signers[index]?.identity_id)
       throw new ProblemError('signer_identity_changed');
+    const grant = await env.store.getGrant(row.id, identity.identityId);
+    if (grant === undefined || grant.revokedAt !== undefined)
+      throw new ProblemError('private_access_denied');
     await requireRead(
       env,
       row,
