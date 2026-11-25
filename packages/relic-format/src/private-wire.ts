@@ -150,6 +150,58 @@ export interface GrantJSON {
   readonly grantee: PartyJSON;
 }
 
+export interface InviteSummaryJSON {
+  readonly invite_id: string;
+  readonly expires_at: string;
+}
+
+export interface GrantLookupResultJSON {
+  readonly email: string;
+  readonly party: PartyJSON | null;
+  readonly standing: AccessRole | null;
+  readonly invites: readonly InviteSummaryJSON[];
+}
+
+export interface GrantLookupJSON {
+  readonly results: readonly GrantLookupResultJSON[];
+}
+
+export interface InviteJSON {
+  readonly invite_id: string;
+  readonly invited_email: string;
+  readonly versions: readonly number[];
+  readonly created_at: string;
+  readonly expires_at: string;
+  readonly status: 'open' | 'claimed' | 'confirmed' | 'expired' | 'revoked';
+  readonly claimed_by: PartyJSON | null;
+  readonly claimed_at: string | null;
+  readonly statement: Record<string, unknown>;
+  readonly identity_signature: string;
+}
+
+export interface InviteOpenJSON {
+  readonly relic_id: string;
+  readonly invite_id: string;
+  readonly status: 'open' | 'claimed' | 'expired' | 'revoked';
+  readonly expires_at: string;
+  readonly versions: readonly number[];
+  readonly sealed_version: number | null;
+  readonly owner: PartyJSON;
+  readonly invite: { readonly statement: Record<string, unknown>; readonly identity_signature: string };
+  readonly claimed_by_identity_id: string | null;
+}
+
+export interface GrantsJSON {
+  readonly grant: GrantJSON | null;
+  readonly grants: readonly GrantJSON[];
+  readonly invites: readonly InviteJSON[];
+}
+
+export interface SigningGrantJSON {
+  readonly statement: Record<string, unknown>;
+  readonly identity_signature: string;
+}
+
 export interface KeyJSON {
   readonly relic_id: string;
   readonly version: number;
@@ -164,6 +216,7 @@ export interface KeyJSON {
 export type AccessRole =
   | 'owner'
   | 'grantee'
+  | 'invited'
   | 'recovery'
   | 'revoked'
   | 'requested'
@@ -230,6 +283,9 @@ export interface AccessEventJSON {
   readonly kind:
     | 'request'
     | 'grant'
+    | 'share'
+    | 'invite'
+    | 'claim'
     | 'revoke'
     | 'wrap_fetch'
     | 'delete'
@@ -242,4 +298,5 @@ export interface AccessEventJSON {
     readonly device_id: string | null;
   };
   readonly subject_identity_id: string | null;
+  readonly subject_email: string | null;
 }
