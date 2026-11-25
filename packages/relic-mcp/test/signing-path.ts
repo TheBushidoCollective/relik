@@ -8,16 +8,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeKey, deriveShareProof, encodeKey } from '@relic/format';
+import { deriveSigningKey, type SigningRequestJSON } from '@relic/format/signing';
+import { contentFromBytes } from '../../relic-viewer/src/content.ts';
+import { verifyViewerSigningRequest } from '../../relic-viewer/src/signing/api.ts';
 import { identityFingerprint } from '@relic/format/private';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import { callMcp } from './decision-proof-steps.ts';
+import { clickPrivateControl } from './confirmation-private-proof.ts';
 import {
   approveDeviceFromProcess, bootstrapOwner, goto, inPage, launchActor,
   nodeSignIn, pageCreatePasskey, poll, sessionCookieParams, click, waitForState, waitForOpened,
-  stepsFourAndFive, stepSeven, type Actor, type CapturedMail, type PrivateShareEnv,
+  stepsFourAndFive, stepSeven, openPanel, callMcpRaw, type Actor, type CapturedMail, type PrivateShareEnv,
 } from './private-shares-steps.ts';
 
 const chromePath = process.env['RELIC_CHROME_PATH'];
@@ -42,12 +46,24 @@ const options = {
   },
 };
 const apps = [createApp(options), createApp(options)];
+const pausedApp = createApp({ ...options, config: { serviceOrigin: origin, killSwitchEngaged: true } });
+let pauseSignature = false;
+let pausedSignature: Request | undefined;
+let pausedSignatureStatus = 0;
 let next = 0;
 let denyOpenedFor = '';
+let deleteStatus = 0;
 handler = async request => {
   const url = new URL(request.url);
   if (denyOpenedFor && url.pathname === `/api/relics/${denyOpenedFor}/receipts/opened`) {
     return Response.json({code: 'service_paused'}, {status:503});
+  }
+  if (pauseSignature && url.pathname.endsWith('/signing/signatures')) {
+    pauseSignature = false;
+    pausedSignature = request.clone();
+    const response = await pausedApp.fetch(request);
+    pausedSignatureStatus = response.status;
+    return response;
   }
   if (url.pathname.startsWith('/__storage/upload/') && request.method === 'PUT') {
     storage.put(url.pathname.slice('/__storage/upload/'.length), new Uint8Array(await request.arrayBuffer()));
@@ -57,7 +73,9 @@ handler = async request => {
     const data = await storage.read(url.pathname.slice('/__storage/o/'.length));
     return data ? new Response(Buffer.from(data)) : new Response('not found', { status: 404 });
   }
-  return apps[(next++ % 2)]!.fetch(request);
+  const response = await apps[(next++ % 2)]!.fetch(request);
+  if (url.pathname.endsWith('/delete')) deleteStatus = response.status;
+  return response;
 };
 const mcp = (name: string, args: Record<string, unknown>) => callMcp(['node', bundle], scratch, statePath, origin, name, args);
 const env: PrivateShareEnv = {
@@ -84,6 +102,7 @@ try {
   await Bun.write(file, 'Signing acceptance path\n');
   const published = await mcp('relic_publish', { path: file, title: 'Signing acceptance', cover: false });
   const id = text(published.relic_id);
+  const publicMailStart = mails.length;
   const request = await mcp('relic_request_signatures', { relic_id: id, signers: [{ email: env.reader }, { email: env.third }], order: 'sequential' });
   assert.equal(request.status, 'open');
   assert.equal(request.order, 'sequential');
@@ -99,6 +118,20 @@ try {
   await goto(ben.browser, text(published.url));
   const localState = JSON.parse(await readFile(statePath, 'utf8'));
   const proof = encodeKey(await deriveShareProof(decodeKey(localState.relics[id].key)));
+  const requestRead = await fetch(`${origin}/api/relics/${id}/signing/read`, {
+    method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({share_proof:proof}),
+  });
+  assert.equal(requestRead.status, 200);
+  const wire = await requestRead.json() as { requests: SigningRequestJSON[] };
+  const signedRequest = wire.requests[0]!;
+  await assert.rejects(verifyViewerSigningRequest({
+    request:signedRequest, relicId:id, version:1,
+    digest: text(signedRequest.request.statement.ciphertext_sha256),
+    content:contentFromBytes(new TextEncoder().encode('A swapped document')),
+    signingKey:await deriveSigningKey(decodeKey(localState.relics[id].key)),
+    access:'public', origin, pdf:false,
+  }), /signing_content_mismatch/);
+  console.log('VIEWER_CONTENT_MAC swapped_content=refused');
   const refusal = await ben.browser.evaluate<{ status: number; code: string }>(`(async () => {
     const response = await fetch(${JSON.stringify(`/api/relics/${id}/signing/options`)}, {
       method: 'POST', headers: {'content-type': 'application/json'},
@@ -136,13 +169,27 @@ try {
   await poll('signature prepared', 15000, async () => (await reader.browser.evaluate<boolean>(`!!document.querySelector('.signing-panel .sign-row button.primary:not(:disabled)')`)) ? true : undefined).catch(async error => {
     throw new Error(`${error.message}: ${await reader.browser.evaluate<string>('document.body.innerText')}`);
   });
+  pauseSignature = true;
   await reader.browser.evaluate(`document.querySelector('.signing-panel .sign-row button.primary').click()`);
+  await poll('paused signature response', 15000, async () => pausedSignatureStatus ? true : undefined);
+  assert.equal(pausedSignatureStatus, 503);
+  assert.ok(pausedSignature);
+  const resumedSignature = await apps[0]!.fetch(pausedSignature);
+  assert.equal(resumedSignature.status, 201, await resumedSignature.clone().text());
+  console.log('SIGNING_KILL_SWITCH refused=503 challenge_preserved=true');
   await poll('first signature', 15000, async () => {
     const result = await mcp('relic_read_signing', { relic_id: id });
     const requests = result.requests as Array<{ signers: Array<{ status: string }> }>;
     return requests[0]?.signers[0]?.status === 'signed' ? true : undefined;
   });
+  assert.ok(mails.slice(publicMailStart).some(mail => mail.to === env.third && mail.subject.includes('turn to sign')));
   console.log('PUBLIC_SIGNER_1 signed=true');
+  await Bun.write(file, 'Changed signing acceptance content\n');
+  const openRepublish = await callMcpRaw(env, 'relic_republish', {relic_id: id, path: file, cover: false});
+  assert.equal(openRepublish.isError, true);
+  assert.equal(openRepublish.structured.code, 'signing_in_progress');
+  await Bun.write(file, 'Signing acceptance path\n');
+  console.log('SIGNING_STEP_6_REPUBLISH_WHILE_OPEN 409 signing_in_progress');
   await goto(ben.browser, `${origin}/${id}?refresh=1${new URL(text(published.url)).hash}`);
   await poll('ben sign here button', 15000, async () => (await ben.browser.evaluate<boolean>(`Array.from(document.querySelectorAll('button')).some(b => b.textContent === 'Sign here')`)) ? true : undefined);
   await ben.browser.evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Sign here').click()`);
@@ -166,6 +213,10 @@ try {
     const requests = result.requests as Array<{ status: string }>;
     return requests[0]?.status === 'complete' ? true : undefined;
   });
+  const completionMails = mails.slice(publicMailStart).filter(mail => mail.subject.startsWith('Everyone signed'));
+  assert.equal(completionMails.length, 3);
+  assert.ok(completionMails.every(mail => Array.isArray(Reflect.get(mail, 'attachments')) && Reflect.get(mail, 'attachments').length === 1));
+  assert.ok(mails.slice(publicMailStart).filter(mail => mail.subject.includes('sign')).every(mail => !mail.text.includes('#')));
   console.log('PUBLIC_SIGNER_2 complete=true drawn=true');
   await goto(ben.browser, `${origin}/${id}?refresh=2${new URL(text(published.url)).hash}`);
   await ben.browser.waitForSelector('[data-action="open-signing"]', 25000);
@@ -186,7 +237,22 @@ try {
   assert.equal(unchecked.valid, false);
   assert.equal((unchecked.trust as { owner: string }).owner, 'unchecked');
   console.log('PUBLIC_CERTIFICATE downloaded=true trusted=valid untrusted=unchecked content=match');
+  await Bun.write(file, 'Changed signing acceptance content\n');
+  const lockedRepublish = await callMcpRaw(env, 'relic_republish', {relic_id: id, path: file, cover: false});
+  assert.equal(lockedRepublish.isError, true);
+  assert.equal(lockedRepublish.structured.code, 'version_locked');
+  const mismatched = await mcp('relic_verify_certificate', {certificate_path: certificatePath, file_path: file, trusted_owner_identity_id: ownerKeys.identityId});
+  assert.equal(mismatched.content, 'mismatch');
+  assert.equal(mismatched.valid, false);
+  const tamperedCertificate = JSON.parse(await readFile(certificatePath, 'utf8'));
+  tamperedCertificate.signatures[0].statement.signer_email = 'changed@example.test';
+  const tamperedPath = join(scratch, 'tampered-signing.json');
+  await Bun.write(tamperedPath, JSON.stringify(tamperedCertificate));
+  const tampered = await mcp('relic_verify_certificate', {certificate_path: tamperedPath, trusted_owner_identity_id: ownerKeys.identityId});
+  assert.equal(tampered.valid, false);
+  console.log('PUBLIC_LOCK republish=409 content_swap=mismatch field_flip=invalid');
   const privateFile = join(scratch, 'private-proof.txt');
+  const privateMailStart = mails.length;
   await Bun.write(privateFile, 'Private signing acceptance path\n');
   const privatePublished = await mcp('relic_publish', { path: privateFile, private: true });
   const privateId = text(privatePublished.relic_id);
@@ -261,7 +327,45 @@ try {
   assert.equal(parsedPrivateCert.signatures.length, 2);
   assert.ok(parsedPrivateCert.signatures.every((s: {identity_signature: string; receipts: {opened: unknown}}) => s.identity_signature && s.receipts.opened));
   console.log('PRIVATE_COMPLETE signers=2 identity_signatures=2 opened_receipts=2 certificate=valid');
-  throw new Error('remaining lock and negative controls not yet exercised');
+  const privateMails = mails.slice(privateMailStart).filter(mail => mail.subject !== 'sign-in');
+  assert.ok(privateMails.length > 0);
+  assert.ok(privateMails.every(mail => !JSON.stringify(mail).includes('private-proof.txt')));
+  const comments = await mcp('relic_read_comments', { relic_id: privateId });
+  assert.ok(Array.isArray(comments.comments));
+  for (const comment of comments.comments) {
+    const status = await privateReader.browser.evaluate<number>(`fetch(${JSON.stringify(`/api/relics/${privateId}/comments/`)} + ${JSON.stringify(comment.comment_id)}, {method:'PATCH', headers:{'content-type':'application/json'}, body:JSON.stringify({resolved:true})}).then(r => r.status)`);
+    assert.equal(status, 200);
+  }
+  await Bun.write(privateFile, 'Private signing acceptance path version two\n');
+  const republished = await mcp('relic_republish', { relic_id: privateId, path: privateFile });
+  assert.equal(republished.version, 2);
+  await openPanel(owner, privateUrl);
+  await clickPrivateControl(owner.browser, '[data-action="delete-relic"]');
+  await owner.browser.waitForSelector('#delete-dialog[open]', 25000);
+  await owner.browser.evaluate(`document.querySelector('input[data-delete-version="1"]').click()`);
+  await click(owner.browser, '[data-action="confirm-delete"]');
+  await poll('private locked version refusal', 15000, async () => deleteStatus ? true : undefined);
+  assert.equal(deleteStatus, 409);
+  assert.ok((await store.getRelic(privateId))?.lockedVersions?.includes(1));
+  console.log('PRIVATE_LOCK republish=2 delete_locked_version=409 mails_name_title=false');
+  const cancelFile = join(scratch, 'cancel-proof.txt');
+  await Bun.write(cancelFile, 'Cancellation acceptance path\n');
+  const cancelPublished = await mcp('relic_publish', { path: cancelFile, cover: false });
+  const cancelId = text(cancelPublished.relic_id);
+  const cancelRequest = await mcp('relic_request_signatures', { relic_id: cancelId, signers: [{email: env.reader}] });
+  await mcp('relic_cancel_signing', { relic_id: cancelId, request_id: cancelRequest.request_id });
+  const cancelState = JSON.parse(await readFile(statePath, 'utf8'));
+  const cancelProof = encodeKey(await deriveShareProof(decodeKey(cancelState.relics[cancelId].key)));
+  const cancelRefusal = await reader.browser.evaluate<{status: number; code: string}>(`(async () => {
+    const response = await fetch(${JSON.stringify(`/api/relics/${cancelId}/signing/options`)}, {
+      method:'POST', headers:{'content-type':'application/json'},
+      body:JSON.stringify({request_id:${JSON.stringify(cancelRequest.request_id)}, share_proof:${JSON.stringify(cancelProof)}})
+    });
+    return {status:response.status, code:(await response.json()).code};
+  })()`);
+  assert.deepEqual(cancelRefusal, {status:409, code:'signing_request_closed'});
+  console.log('SIGNING_CANCEL options=409 code=signing_request_closed');
+  throw new Error('remaining negative controls not yet exercised');
 } catch (error) {
   console.error(`SIGNING_PATH_BLOCKED ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
