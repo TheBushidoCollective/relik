@@ -443,7 +443,7 @@ class PrivateReader {
   private pendingVersion = 0;
   private panelHost: HTMLElement | undefined;
   private requestCount: HTMLElement | undefined;
-  private sharePrefill: readonly string[] = [];
+  private detached = false;
   private inviteRef: { readonly inviteId: string; readonly d: Uint8Array | undefined } | undefined;
   private invitation: VerifiedInvitation | undefined;
   private verifiedAt: number | undefined;
@@ -479,6 +479,11 @@ class PrivateReader {
   }
 
   private show(stage: ReaderStage): void {
+    // The ready view replaced the page, so a stage shown after it puts the host back.
+    if (this.detached) {
+      this.detached = false;
+      document.body.replaceChildren(this.host);
+    }
     for (const note of this.host.querySelectorAll('.ceremony-note')) {
       note.remove();
     }
@@ -1261,6 +1266,7 @@ class PrivateReader {
     decorate: (page: HTMLElement) => void = (page) => this.decorateReady(page)
   ): void {
     this.host.remove();
+    this.detached = true;
     this.mount.renderReady(
       view,
       this.mount.relicId,
