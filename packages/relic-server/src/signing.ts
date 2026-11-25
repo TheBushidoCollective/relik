@@ -494,6 +494,19 @@ export async function createSigningRequest(
     }
     throw error;
   }
+  const activeRequest = await env.store.getSigningRequest(
+    row.id,
+    statement.request_id
+  );
+  if (activeRequest?.status === 'cancelled') {
+    await env.store.updateRelic(row.id, (current) => {
+      if (current.signingOpen?.requestId !== statement.request_id)
+        return current;
+      const { signingOpen: _open, ...rest } = current;
+      return rest;
+    });
+    throw new ProblemError('signing_request_closed');
+  }
   if ((await env.store.getTombstone(row.id)) !== undefined) {
     await env.store.deleteSigningForRelic(row.id);
     throw new ProblemError('relic_removed', { relic_id: row.id });
@@ -841,6 +854,7 @@ export async function signingOptions(
   const options = await issueAttestNonce(env, {
     email,
     purpose: 'sign',
+    signingRequestId: requestId,
     relicId: row.id,
     passkeys: await env.store.getPasskeys(email),
     ...(identity === undefined
@@ -900,6 +914,7 @@ export async function recordSignature(
   const verified = await verifyAttestation(env, {
     bundle: body.attestation,
     purpose: 'sign',
+    signingRequestId: requestId,
     email,
     passkeys: await env.store.getPasskeys(email),
     signerKey:
@@ -1196,7 +1211,10 @@ export async function finishCompletion(
         .join(', ')}`
     );
   await env.store.putCertificate(row.id, statement.request_id, certificate);
-  await sendCompletionNotices(env, row, request, certificate);
+  const stored = await env.store.getCertificate(row.id, statement.request_id);
+  if (stored === undefined)
+    throw new Error('stored signing certificate missing');
+  await sendCompletionNotices(env, row, request, stored);
 }
 
 export async function postOpenedReceipt(

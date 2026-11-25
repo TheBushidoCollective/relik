@@ -955,3 +955,35 @@ test('a retired owner device cannot create or cancel requests', async () => {
   const creation = await a.fetch(post(await make()));
   expect((await creation.json()).code).toBe('owner_required');
 });
+
+test('cancellation racing staged creation cannot leave an open pointer', async () => {
+  class PausedStore extends MemoryStore {
+    readonly inserted = Promise.withResolvers<void>();
+    readonly resume = Promise.withResolvers<void>();
+    override async putSigningRequest(
+      ...args: Parameters<MemoryStore['putSigningRequest']>
+    ) {
+      const result = await super.putSigningRequest(...args);
+      this.inserted.resolve();
+      await this.resume.promise;
+      return result;
+    }
+  }
+  const store = new PausedStore();
+  const { a, b, make, cancel } = await setup(store);
+  const request = await make();
+  const creating = a.fetch(post(request));
+  await store.inserted.promise;
+  const cancelled = await b.fetch(
+    new Request(`https://relic.example/api/relics/${RELIC_ID}/signing/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(await cancel(request.request.statement.request_id)),
+    })
+  );
+  expect(cancelled.status).toBe(200);
+  store.resume.resolve();
+  const creation = await creating;
+  expect((await creation.json()).code).toBe('signing_request_closed');
+  expect((await store.getRelic(RELIC_ID))?.signingOpen).toBeUndefined();
+});

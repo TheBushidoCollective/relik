@@ -257,6 +257,7 @@ export interface WebauthnChallengeRow {
   readonly userHandle?: string;
   readonly assertedBy?: string;
   readonly relicId?: string;
+  readonly signingRequestId?: string;
   readonly version?: number;
   readonly verdict?: DecisionVerdict;
   /** Set when `purpose` is `attest`: the statement family the challenge answers. */

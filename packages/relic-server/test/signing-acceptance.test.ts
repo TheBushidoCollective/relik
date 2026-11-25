@@ -1202,3 +1202,91 @@ test('recovery access does not let a revoked grantee sign', async () => {
   );
   expect(signing.body.code).toBe('private_access_denied');
 });
+
+test('completion mail attaches the winning stored certificate', async () => {
+  const f = await fixture();
+  const request = await f.open();
+  const first = await f.prepare(f.first, request);
+  const second = await f.prepare(f.second, request);
+  const put = f.store.putCertificate.bind(f.store);
+  f.store.putCertificate = async (id, requestId, certificate) => {
+    await put(id, requestId, { ...certificate, title: 'concurrent winner' });
+    return false;
+  };
+  expect(
+    (await f.post(f.a, `${root}/signing/signatures`, first, f.first.cookie))
+      .status
+  ).toBe(201);
+  expect(
+    (await f.post(f.b, `${root}/signing/signatures`, second, f.second.cookie))
+      .status
+  ).toBe(201);
+  const stored = await f.store.getCertificate(RELIC_ID, request.request_id);
+  const message = f.mails.find(
+    ({ email, mail }) =>
+      email === f.owner.email && mail.subject.startsWith('Everyone signed')
+  );
+  expect(message?.mail.attachments).toHaveLength(1);
+  const attached = JSON.parse(
+    new TextDecoder().decode(message!.mail.attachments![0]!.content)
+  );
+  expect(attached).toEqual(stored);
+});
+
+test('an unused nonce cannot authorize a replacement request', async () => {
+  const f = await fixture();
+  const oldRequest = await f.open();
+  const unused = await f.prepare(f.first, oldRequest);
+  const cancellation = await f.cancel(oldRequest);
+  expect(
+    (await f.post(f.a, `${root}/signing/cancel`, cancellation, f.owner.cookie))
+      .status
+  ).toBe(200);
+  const replacement = await f.open();
+  const fresh = await f.prepare(f.first, replacement);
+  const oldNonceAttestation = await f.assertion(
+    f.first,
+    unused.attestation.nonce,
+    'signature',
+    fresh.attestation.statements[0]!.statement,
+    false
+  );
+  const result = await f.post(
+    f.b,
+    `${root}/signing/signatures`,
+    { ...fresh, attestation: oldNonceAttestation },
+    f.first.cookie
+  );
+  expect(result.body.code).toBe('passkey_verification_failed');
+  expect(result.body.passkey_check).toBe('nonce');
+});
+
+test('a signed relik cannot have its lifetime shortened', async () => {
+  const f = await fixture();
+  const deadline = NOW + 3 * 86400000;
+  const tokenHash = await sha256Hex('settings-token');
+  await f.store.updateRelic(RELIC_ID, (row) => ({
+    ...row,
+    expiresAt: deadline,
+    publishTokenHash: tokenHash,
+  }));
+  const request = await f.open();
+  const first = await f.prepare(f.first, request);
+  const second = await f.prepare(f.second, request);
+  expect(
+    (await f.post(f.a, `${root}/signing/signatures`, first, f.first.cookie))
+      .status
+  ).toBe(201);
+  expect(
+    (await f.post(f.b, `${root}/signing/signatures`, second, f.second.cookie))
+      .status
+  ).toBe(201);
+  const result = await f.post(
+    f.a,
+    `${root}/settings`,
+    { publish_token: 'settings-token', settings: { ttl_days: 1 } },
+    f.owner.cookie
+  );
+  expect(result.body.code).toBe('version_locked');
+  expect((await f.store.getRelic(RELIC_ID))?.expiresAt).toBe(deadline);
+});

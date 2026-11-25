@@ -95,6 +95,7 @@ export async function issueAttestNonce(
     readonly purpose: AttestPurpose;
     readonly passkeys: PasskeyRecord | undefined;
     readonly relicId?: string | undefined;
+    readonly signingRequestId?: string | undefined;
     readonly credentialId?: string | undefined;
     readonly allowedCredentialIds?: readonly string[] | undefined;
   }
@@ -112,6 +113,8 @@ export async function issueAttestNonce(
     }[];
   };
 }> {
+  if (input.purpose === 'sign' && input.signingRequestId === undefined)
+    throw new ProblemError('invalid_statement', { statement_check: 'purpose' });
   const passkeys = input.passkeys;
   if (passkeys === undefined || passkeys.credentials.length === 0) {
     throw new ProblemError('passkey_required');
@@ -146,6 +149,9 @@ export async function issueAttestNonce(
     purpose: 'attest',
     attestPurpose: input.purpose,
     ...(input.relicId === undefined ? {} : { relicId: input.relicId }),
+    ...(input.signingRequestId === undefined
+      ? {}
+      : { signingRequestId: input.signingRequestId }),
     ...(input.credentialId === undefined
       ? {}
       : { credentialId: input.credentialId }),
@@ -247,6 +253,7 @@ export async function verifyAttestation(
     readonly passkeys: PasskeyRecord | undefined;
     readonly signerKey: SignerKey;
     readonly relicId?: string;
+    readonly signingRequestId?: string;
     readonly identityFree?: boolean;
   }
 ): Promise<VerifiedAttestation> {
@@ -315,6 +322,9 @@ export async function verifyAttestation(
     row.email !== input.email ||
     row.expiresAt < env.now ||
     (row.relicId !== undefined && row.relicId !== input.relicId) ||
+    (input.purpose === 'sign' &&
+      (input.signingRequestId === undefined ||
+        row.signingRequestId !== input.signingRequestId)) ||
     (row.credentialId !== undefined &&
       !sameString(row.credentialId, String(bundle.credential['id'] ?? '')))
   ) {

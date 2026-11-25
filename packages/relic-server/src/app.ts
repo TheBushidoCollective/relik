@@ -5221,6 +5221,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const updated = await store.updateRelic(relicId, (cur) => {
       const current = settingsView(cur);
       const nextExpiry = 'ttl_days' in changes ? expiresAt : cur.expiresAt;
+      if (
+        (cur.lockedVersions?.length ?? 0) > 0 &&
+        nextExpiry !== undefined &&
+        (cur.expiresAt === undefined || nextExpiry < cur.expiresAt)
+      )
+        throw new ProblemError('version_locked', {
+          locked_version: cur.lockedVersions?.[0],
+        });
       const privateErasureAt =
         cur.access === 'private' && nextExpiry !== undefined
           ? Math.max(
