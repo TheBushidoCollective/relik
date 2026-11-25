@@ -691,7 +691,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
       first === 'relics' &&
       second !== undefined &&
       third === 'signing' &&
-      (fourth === 'requests' || fourth === 'cancel' || fourth === 'read' || fourth === 'options' || fourth === 'signatures' || fourth === 'certificate') &&
+      (fourth === 'requests' ||
+        fourth === 'cancel' ||
+        fourth === 'read' ||
+        fourth === 'options' ||
+        fourth === 'signatures' ||
+        fourth === 'certificate') &&
       rest[4] === undefined &&
       request.method === 'POST'
     ) {
@@ -700,9 +705,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
       );
     }
 
-    if (first === 'relics' && second !== undefined && third === 'receipts' &&
-        fourth === 'opened' && rest[4] === undefined && request.method === 'POST')
-      return guarded(() => postSigningRequest(second, request, ip, now, 'opened'));
+    if (
+      first === 'relics' &&
+      second !== undefined &&
+      third === 'receipts' &&
+      fourth === 'opened' &&
+      rest[4] === undefined &&
+      request.method === 'POST'
+    )
+      return guarded(() =>
+        postSigningRequest(second, request, ip, now, 'opened')
+      );
 
     // Passkeys:
     // - auth/passkeys: POST register; POST .../options; otherwise 405.
@@ -756,19 +769,39 @@ export function createApp(options: AppOptions = {}): RelicApp {
         const addressHash = await sha256Hex(normalized);
         if (await store.isOptedOut(relicId, addressHash)) return;
         const key = `signing ${relicId} ${normalized}`;
-        if (!limiter.peek(key, config.signingMailRateLimit, now).allowed ||
-            !limiter.peek('change-notice', config.changeNoticeRateLimit, now).allowed) return;
+        if (
+          !limiter.peek(key, config.signingMailRateLimit, now).allowed ||
+          !limiter.peek('change-notice', config.changeNoticeRateLimit, now)
+            .allowed
+        )
+          return;
         const row = await store.getRelic(relicId);
-        if (row === undefined || (row.expiresAt !== undefined && row.expiresAt <= now) ||
-            await store.getTombstone(relicId) !== undefined) return;
+        if (
+          row === undefined ||
+          (row.expiresAt !== undefined && row.expiresAt <= now) ||
+          (await store.getTombstone(relicId)) !== undefined
+        )
+          return;
         const secret = await store.unsubscribeKey();
-        const mac = await hmacSha256(secret, `relic-unsubscribe:v1:${parseRelicId(relicId)}:${addressHash}`);
+        const mac = await hmacSha256(
+          secret,
+          `relic-unsubscribe:v1:${parseRelicId(relicId)}:${addressHash}`
+        );
         const stopUrl = `${config.serviceOrigin}/api/relics/${relicId}/unsubscribe?addr=${addressHash}&token=${Buffer.from(mac).toString('base64url')}`;
         if (await store.isOptedOut(relicId, addressHash)) return;
-        if (!limiter.check(key, config.signingMailRateLimit, now).allowed ||
-            !limiter.check('change-notice', config.changeNoticeRateLimit, now).allowed) return;
-        try { await mailer.sendMail(normalized, build(stopUrl)); }
-        catch (error) { console.error(`relic: signing notice failed: ${sanitizeMailError(error, normalized)}`); }
+        if (
+          !limiter.check(key, config.signingMailRateLimit, now).allowed ||
+          !limiter.check('change-notice', config.changeNoticeRateLimit, now)
+            .allowed
+        )
+          return;
+        try {
+          await mailer.sendMail(normalized, build(stopUrl));
+        } catch (error) {
+          console.error(
+            `relic: signing notice failed: ${sanitizeMailError(error, normalized)}`
+          );
+        }
       },
       limit: (scope, key, budget) => {
         const verdict = limiter.check(rateLimitKey(scope, key), budget, now);
@@ -4769,10 +4802,16 @@ export function createApp(options: AppOptions = {}): RelicApp {
     return promise;
   }
 
-  async function digestStoredVersion(row: RelicRow, version: number): Promise<string> {
+  async function digestStoredVersion(
+    row: RelicRow,
+    version: number
+  ): Promise<string> {
     const digest = await singleFlightDigest(row.id, version);
     if (digest === undefined)
-      throw new ProblemError('relic_not_yet_published', { relic_id: row.id, retry_after_seconds: 5 });
+      throw new ProblemError('relic_not_yet_published', {
+        relic_id: row.id,
+        retry_after_seconds: 5,
+      });
     return digest;
   }
 
@@ -4915,16 +4954,21 @@ export function createApp(options: AppOptions = {}): RelicApp {
     request: Request,
     ip: string,
     now: number,
-    operation: 'requests' | 'cancel' | 'read' | 'options' | 'signatures' | 'opened' | 'certificate'
+    operation:
+      | 'requests'
+      | 'cancel'
+      | 'read'
+      | 'options'
+      | 'signatures'
+      | 'opened'
+      | 'certificate'
   ): Promise<Response> {
     const isRead = operation === 'read' || operation === 'certificate';
     if (!isRead && config.killSwitchEngaged)
       throw new ProblemError('service_paused', { retry_after_seconds: 300 });
     const verdict = limiter.check(
       rateLimitKey(isRead ? 'signing-read' : 'signing-write', ip),
-      isRead
-        ? config.signingReadRateLimit
-        : config.signingRateLimit,
+      isRead ? config.signingReadRateLimit : config.signingRateLimit,
       now
     );
     if (!verdict.allowed)
@@ -4969,14 +5013,30 @@ export function createApp(options: AppOptions = {}): RelicApp {
         await readSigningState(env, row, session, body, checkShareProof)
       );
     if (operation === 'certificate')
-      return Response.json(await readSigningCertificate(env, row, session, body, checkShareProof));
+      return Response.json(
+        await readSigningCertificate(env, row, session, body, checkShareProof)
+      );
     if (operation === 'options')
       return Response.json(
-        await signingOptions(env, row, session, body, checkShareProof, digestStoredVersion)
+        await signingOptions(
+          env,
+          row,
+          session,
+          body,
+          checkShareProof,
+          digestStoredVersion
+        )
       );
     if (operation === 'signatures')
       return Response.json(
-        await recordSignature(env, row, session, body, checkShareProof, digestStoredVersion),
+        await recordSignature(
+          env,
+          row,
+          session,
+          body,
+          checkShareProof,
+          digestStoredVersion
+        ),
         { status: 201 }
       );
     const result =
