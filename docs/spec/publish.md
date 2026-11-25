@@ -223,7 +223,7 @@ Success returns `structuredContent` with seven members, all required, plus `gran
 - `share_limit`: maximum shared addresses allowed per relik (50), or `null` on a private relik.
 - `email`: a `ShareEmail` object with `to`, `subject`, and `text`.
 - `mailto_url`: a pre-populated `mailto:` link opening a draft in the user's mail client.
-- `grant_url`: present only for a private relik. The owner's Share form, `{origin}/{relic_id}?access=share#to=<addresses>`, with the addresses comma-joined and percent-encoded in the fragment. The fragment never leaves the browser, so this call makes no request and the service never sees the addresses. Opening it needs the owner's sign-in and passkey. On a private relik `registered` is empty and `added` and `shared_count` are 0.
+- `grant_url`: present only for a private relik. The owner's Share form, `{origin}/{relic_id}?access=share#to=<addresses>`, with the addresses comma-joined and percent-encoded in the fragment. This call makes no service request; the owner's browser sends addresses for lookup after the form opens. On a private relik `registered` is empty and `added` and `shared_count` are 0.
 
 **The email is composed on the client, and the service never sends it.** For a public relik, the share URL carries the decryption key in its fragment, and the fragment must never reach the service, so the share email cannot be sent by Relik. The client composes the email locally for the sharer to draft and send from their own mailbox. Calling `relic_share` for a public relik discloses the full link into the session transcript, so the key enters the transcript at share time. For a private relik, `relic_share` composes the keyless invitation draft with `composePrivateInvitation` and returns it beside `grant_url`, so no key enters the transcript and no request is made. The service stores only the email addresses in the clear, linked to the relik id, to deliver comment and change notices.
 
@@ -366,7 +366,7 @@ Every code names its leg in its prefix. `source_*` is the local read path with n
 | `owner_pin_mismatch` | The service names a different owner than the one this device was certified by, or the local record is for another owner. No key is wrapped. | none |
 | `recipient_key_mismatch` | An identity or device the service named does not hash to the id or keys it claims. | none |
 | `recipient_uncertified_device` | A device is not certified by the pinned owner. | none |
-| `recipient_forged_grant` | A signer holds no grant for this relik, or a grant is not signed by the pinned owner. No key is wrapped for that signer. The refusal's details are `signer_email` and `grant_url`: the owner's Share form with that address filled in (plan 3.9). The signing request is not posted. | `signer_email`, `grant_url` |
+| `recipient_forged_grant` | A grant is not signed by the pinned owner, or a named signer holds no live grant. No key is wrapped for an invalid grant. For a signer without a grant, the signing refusal includes `signer_email` and `grant_url`, and no signing request is posted. | `signer_email`, `grant_url` for a signer without a grant; otherwise none |
 | `recovery_unsigned` | The recovery designation is not signed by the pinned owner. | none |
 | `recovery_ambiguous` | Two recovery designations carry the same time and name different holders, so neither is trusted. | none |
 | `recipients_stale` | The service answered with an older view of the owner than this machine has already accepted. Nothing is wrapped to it. | none |
