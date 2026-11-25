@@ -533,7 +533,7 @@ describe('invitation creation (plan 3.3 B)', () => {
     expect(lookup.body['code']).toBe('private_rate_limited');
   });
 
-  test('invitation lifetimes outside 1 to 30 days, or past the relic, are refused as expires_at', async () => {
+  test('invitation lifetimes outside 1 to 30 days, or past the relik, are refused as expires_at', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     await sealedPrivateRelic(owner);
@@ -970,7 +970,7 @@ describe('the invitee reads (plan 3.3 G, H, I)', () => {
     });
   });
 
-  test('an expired invitation reads as expired and loses its wraps; the relic expiry refuses first', async () => {
+  test('an expired invitation reads as expired and loses its wraps; the relik expiry refuses first', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     const { versionKey } = await sealedPrivateRelic(owner);

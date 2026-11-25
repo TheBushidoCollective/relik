@@ -229,7 +229,7 @@ describe('tool descriptions and instructions', () => {
     INSTRUCTIONS,
   ];
 
-  test('use the product word Relik, never Relic, and keep identifiers', () => {
+  test('use the product word Relik, never the old spelling, and keep identifiers', () => {
     for (const text of described) {
       expect(text).not.toMatch(/\bRelic\b/);
       expect(text).not.toMatch(/\bRELIC\b/);
