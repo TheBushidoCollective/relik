@@ -496,7 +496,7 @@ describe("a private relik: publish, seal and the owner's own read", () => {
     );
     expect(firstReceipt).toEqual({
       version: 1,
-      identityId: owner.identityId,
+      identityId: owner.identityId as string,
       kind: 'served',
       at: now,
     });
@@ -507,7 +507,7 @@ describe("a private relik: publish, seal and the owner's own read", () => {
       post({}, owner.cookie)
     );
     expect(again.status).toBe(200);
-    expect(await store.listReceipts(RELIC_ID, 1)).toEqual([firstReceipt]);
+    expect(await store.listReceipts(RELIC_ID, 1)).toEqual([firstReceipt!]);
 
     expect(storage.customTimeOf(RELIC_ID)).toBe(
       (await store.getRelic(RELIC_ID))!.expiresAt
