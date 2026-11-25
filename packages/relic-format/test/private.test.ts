@@ -26,6 +26,7 @@ import {
   PRF_SALT,
   parseStatement,
   parseTypedFingerprint,
+  SIGN_CONSENT_ID,
   signStatement,
   STATEMENT_KINDS,
   type StatementKind,
@@ -109,6 +110,14 @@ const STATEMENT_SHA256: { readonly [K in StatementKind]: string } = {
   // Computed in Python (hashlib over sorted-key compact JSON), separately from statementBytes.
   relic_settings:
     '2d9e8e4ffc1af00a58b164cd44b11a56157e552add916a82b9bd264bb8b2a783',
+  // Python hashlib over canonical JSON, the same run as the samples in test/signing.test.ts.
+  signing_request:
+    '3205f8c9486b52cc748f0f14ca27cb530f472e0bc316e2b3c7e3d7c8a693d53b',
+  signing_cancel:
+    '2b36d531f7a73a5c3bf12cb7b509fa061673eda2bf1e4cfe3671d48dfeefe8f2',
+  signature: '24f9a82a12dcf3dbe9e3660a0d954aa945bc16407f4d199693ce8f3e4b5d0955',
+  open_receipt:
+    'dc60cc9d6bcfad6f1b76a9805c3de49b129a4a59ac60212f743e62e84b5ffa06',
 };
 
 const H = KAT.identityId;
@@ -117,6 +126,9 @@ const PK_KEM = Buffer.from(KEM_PUB).toString('base64url');
 const PK_SIG = Buffer.from(SIG_PUB).toString('base64url');
 const NONCE_B64 = Buffer.from(NONCE).toString('base64url');
 const CRED_B64 = Buffer.from(CRED).toString('base64url');
+const REQUEST_ID = Buffer.from(
+  Array.from({ length: 16 }, (_, i) => 0xa0 + i)
+).toString('base64url');
 
 /** One valid sample per kind. The same values the Python run hashed. */
 const SAMPLES: { readonly [K in StatementKind]: StatementMap[K] } = {
@@ -247,6 +259,54 @@ const SAMPLES: { readonly [K in StatementKind]: StatementMap[K] } = {
     signing: true,
     suggestions: false,
   },
+  signing_request: {
+    at: 1767225600018,
+    ciphertext_sha256: KAT.kemKeyId,
+    consent: SIGN_CONSENT_ID,
+    content_mac: KAT.attestationChallenge,
+    layout_sha256: KAT.sealKeyCommitment,
+    order: 'sequential',
+    owner_identity_id: H,
+    relic_id: RELIC,
+    request_id: REQUEST_ID,
+    require_opened: false,
+    signer_id: H,
+    signers: [
+      { email: 'ana@harbor.studio', identity_id: null },
+      { email: 'ben@harbor.studio', identity_id: null },
+    ],
+    version: 3,
+  },
+  signing_cancel: {
+    at: 1767225600019,
+    owner_identity_id: H,
+    relic_id: RELIC,
+    request_id: REQUEST_ID,
+    signer_id: H,
+  },
+  signature: {
+    at: 1767225600020,
+    ciphertext_sha256: KAT.kemKeyId,
+    consent: SIGN_CONSENT_ID,
+    content_mac: KAT.attestationChallenge,
+    mark_sha256: KAT.deviceId,
+    opened_receipt_sha256: null,
+    relic_id: RELIC,
+    request_id: REQUEST_ID,
+    request_sha256: KAT.identityId,
+    signer_email: 'ana@harbor.studio',
+    signer_identity_id: null,
+    signer_index: 0,
+    version: 3,
+  },
+  open_receipt: {
+    at: 1767225600021,
+    ciphertext_sha256: KAT.kemKeyId,
+    key_commitment: KAT.sealKeyCommitment,
+    reader_identity_id: H,
+    relic_id: RELIC,
+    version: 3,
+  },
 };
 
 const sha256Hex = async (bytes: Uint8Array): Promise<string> =>
@@ -332,8 +392,8 @@ describe('statementBytes', () => {
   test('covers every statement kind in the contract', () => {
     const expected: string[] = Object.keys(STATEMENT_SHA256).sort();
     expect([...STATEMENT_KINDS].map(String).sort()).toEqual(expected);
-    // 17 until relic_settings (live per-relik settings) joined the contract.
-    expect(STATEMENT_KINDS.length).toBe(18);
+    // 17 until relic_settings joined; 22 with the signing kinds (plan 3.1).
+    expect(STATEMENT_KINDS.length).toBe(22);
   });
 });
 

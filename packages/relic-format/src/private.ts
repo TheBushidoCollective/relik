@@ -38,6 +38,8 @@ const KEK_LABEL = utf8('relic/identity-kek/v1');
 const BUNDLE_LABEL = utf8('relic/identity-bundle/v1');
 const ATTEST_LABEL = utf8('relic-attest/v1');
 const STATEMENT_PREFIX = 'relic-statement/v1';
+/** The consent a signer agrees to, bound into every signature statement. */
+export const SIGN_CONSENT_ID = 'relic/sign-consent/v1';
 
 /** The statement kinds, one per signed or device-signed message (section 4.3). */
 export type StatementKind =
@@ -58,7 +60,11 @@ export type StatementKind =
   | 'owner_bind'
   | 'private_publish'
   | 'owner_publish'
-  | 'relic_settings';
+  | 'relic_settings'
+  | 'signing_request'
+  | 'signing_cancel'
+  | 'signature'
+  | 'open_receipt';
 
 export interface IdentityRegisterStatement {
   readonly at: number;
@@ -217,6 +223,76 @@ export interface RelicSettingsStatement {
   readonly suggestions: boolean;
 }
 
+/** The order a signing request's signers sign in (plan 3.1). */
+export type SigningOrder = 'parallel' | 'sequential';
+
+/** One named signer: their address and, on a private relik, their identity. */
+export interface SigningSignerEntry {
+  readonly email: string;
+  readonly identity_id: string | null;
+}
+
+/**
+ * An owner's request for named addresses to sign one exact version. `signer_id`
+ * is the owner identity, or the owner device that signed it. A signature commits
+ * to these bytes through `request_sha256`.
+ */
+export interface SigningRequestStatement {
+  readonly at: number;
+  readonly ciphertext_sha256: string;
+  readonly consent: typeof SIGN_CONSENT_ID;
+  readonly content_mac: string;
+  readonly layout_sha256: string;
+  readonly order: SigningOrder;
+  readonly owner_identity_id: string;
+  readonly relic_id: string;
+  readonly request_id: string;
+  readonly require_opened: boolean;
+  readonly signer_id: string;
+  readonly signers: readonly SigningSignerEntry[];
+  readonly version: number;
+}
+
+/** The owner's cancellation of one open request. */
+export interface SigningCancelStatement {
+  readonly at: number;
+  readonly owner_identity_id: string;
+  readonly relic_id: string;
+  readonly request_id: string;
+  readonly signer_id: string;
+}
+
+/**
+ * One signer's signature on one exact version. A public signature carries no
+ * identity (`signer_identity_id` and `opened_receipt_sha256` are null); the
+ * passkey assertion is its only proof.
+ */
+export interface SignatureStatement {
+  readonly at: number;
+  readonly ciphertext_sha256: string;
+  readonly consent: typeof SIGN_CONSENT_ID;
+  readonly content_mac: string;
+  readonly mark_sha256: string;
+  readonly opened_receipt_sha256: string | null;
+  readonly relic_id: string;
+  readonly request_id: string;
+  readonly request_sha256: string;
+  readonly signer_email: string;
+  readonly signer_identity_id: string | null;
+  readonly signer_index: number;
+  readonly version: number;
+}
+
+/** A reader's statement that their browser decrypted and checked one private version. */
+export interface OpenReceiptStatement {
+  readonly at: number;
+  readonly ciphertext_sha256: string;
+  readonly key_commitment: string;
+  readonly reader_identity_id: string;
+  readonly relic_id: string;
+  readonly version: number;
+}
+
 /** The statement for each kind. Every field is listed; nullable fields are typed `| null`. */
 export interface StatementMap {
   readonly identity_register: IdentityRegisterStatement;
@@ -237,6 +313,10 @@ export interface StatementMap {
   readonly private_publish: PrivatePublishStatement;
   readonly owner_publish: OwnerPublishStatement;
   readonly relic_settings: RelicSettingsStatement;
+  readonly signing_request: SigningRequestStatement;
+  readonly signing_cancel: SigningCancelStatement;
+  readonly signature: SignatureStatement;
+  readonly open_receipt: OpenReceiptStatement;
 }
 
 /** The reason a statement was refused. The service reports it as `statement_check`. */
@@ -248,7 +328,9 @@ export type StatementCheck =
   | 'format'
   | 'range'
   | 'order'
-  | 'designation';
+  | 'designation'
+  | 'signers'
+  | 'require_opened';
 
 /** A statement that does not parse exactly. The message names the field, never its value. */
 export class InvalidStatementError extends RelicFormatError {
@@ -971,6 +1053,25 @@ const SERVICE_TOKEN: Rule = (value) => {
 };
 const PUBLIC_KEY: Rule = base64urlBytes(65, 65, 0x04);
 const CREDENTIAL_ID: Rule = base64urlBytes(1, 1023);
+/** Exactly 16 bytes of base64url: a signing request's identifier. */
+const REQUEST_ID: Rule = base64urlBytes(16, 16);
+/** 1 to 20 named signers, each with an address and an identity or null. */
+const SIGNER_LIST: Rule = (value) => {
+  if (!Array.isArray(value)) return 'type';
+  if (value.length < 1 || value.length > 20) return 'range';
+  for (const entry of value as unknown[]) {
+    if (!isPlainObject(entry)) return 'type';
+    const keys = Object.keys(entry).sort();
+    if (keys.length !== 2 || keys[0] !== 'email' || keys[1] !== 'identity_id') {
+      return 'format';
+    }
+    const email = EMAIL(entry.email);
+    if (email !== undefined) return email;
+    const identity = nullable(HEX_ID)(entry.identity_id);
+    if (identity !== undefined) return identity;
+  }
+  return undefined;
+};
 
 /** Ascending, unique, positive integers. Empty only when `nonEmpty` is false. */
 function versionList(nonEmpty: boolean): Rule {
@@ -1189,6 +1290,51 @@ const SPECS: { readonly [K in StatementKind]: Readonly<Record<string, Rule>> } =
       signing: BOOL,
       suggestions: BOOL,
     },
+    signing_request: {
+      at: AT,
+      ciphertext_sha256: HEX_ID,
+      consent: literal(SIGN_CONSENT_ID),
+      content_mac: HEX_ID,
+      layout_sha256: HEX_ID,
+      order: either(literal('parallel'), literal('sequential')),
+      owner_identity_id: HEX_ID,
+      relic_id: RELIC_ID,
+      request_id: REQUEST_ID,
+      require_opened: BOOL,
+      signer_id: HEX_ID,
+      signers: SIGNER_LIST,
+      version: integer(1),
+    },
+    signing_cancel: {
+      at: AT,
+      owner_identity_id: HEX_ID,
+      relic_id: RELIC_ID,
+      request_id: REQUEST_ID,
+      signer_id: HEX_ID,
+    },
+    signature: {
+      at: AT,
+      ciphertext_sha256: HEX_ID,
+      consent: literal(SIGN_CONSENT_ID),
+      content_mac: HEX_ID,
+      mark_sha256: HEX_ID,
+      opened_receipt_sha256: nullable(HEX_ID),
+      relic_id: RELIC_ID,
+      request_id: REQUEST_ID,
+      request_sha256: HEX_ID,
+      signer_email: EMAIL,
+      signer_identity_id: nullable(HEX_ID),
+      signer_index: integer(0),
+      version: integer(1),
+    },
+    open_receipt: {
+      at: AT,
+      ciphertext_sha256: HEX_ID,
+      key_commitment: HEX_ID,
+      reader_identity_id: HEX_ID,
+      relic_id: RELIC_ID,
+      version: integer(1),
+    },
   };
 
 /**
@@ -1208,6 +1354,22 @@ const CROSS_CHECKS: Partial<
       value.recovery_identity_id,
     ].filter((field) => field === null).length;
     return nulls === 0 || nulls === 3 ? undefined : 'designation';
+  },
+  signing_request: (value) => {
+    const signers = value.signers as readonly {
+      readonly email: string;
+      readonly identity_id: string | null;
+    }[];
+    const emails = signers.map((signer) => normalizeEmail(signer.email));
+    if (new Set(emails).size !== emails.length) return 'signers';
+    const anonymous = signers.filter(
+      (signer) => signer.identity_id === null
+    ).length;
+    if (anonymous !== 0 && anonymous !== signers.length) return 'signers';
+    if (value.require_opened === true && anonymous !== 0) {
+      return 'require_opened';
+    }
+    return undefined;
   },
 };
 

@@ -1,0 +1,183 @@
+{
+  "format": "relic/signing-certificate/v1",
+  "service": {
+    "origin": "https://relik.link",
+    "rp_id": "relik.link"
+  },
+  "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+  "access": "public",
+  "title": "Studio lease, Unit 4B",
+  "version": 3,
+  "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+  "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+  "request": {
+    "statement": {
+      "at": 1767225600000,
+      "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+      "consent": "relic/sign-consent/v1",
+      "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+      "layout_sha256": "587c20f2f5e21d7febfab56e673c5a50f12cd1f16007632c668b9b28616eaf27",
+      "order": "sequential",
+      "owner_identity_id": "c06a0ac5c9ce59859738ae15e69df5a4749184615fc90e491ef7df92770e4cb9",
+      "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+      "request_id": "oKGio6SlpqeoqaqrrK2urw",
+      "require_opened": false,
+      "signer_id": "c06a0ac5c9ce59859738ae15e69df5a4749184615fc90e491ef7df92770e4cb9",
+      "signers": [
+        {
+          "email": "signer0@harbor.test",
+          "identity_id": null
+        },
+        {
+          "email": "signer1@harbor.test",
+          "identity_id": null
+        }
+      ],
+      "version": 3
+    },
+    "signature": "8AX4y8jo96MRM4MqGM_WE6RZ68ub3W-EY6gj7PGPWDya2GgefuuOVgSsvubp_kCzZqy4lO5DfPLQV7umQlIhFg",
+    "signer_kind": "identity",
+    "attestation": {
+      "nonce": "Tke7WmMQSnvOZOzaWiLqUXQ9h4aaG2vRjh9zdAU2PgE",
+      "credential": {
+        "id": "nAyA5kfLztxwU8ETQCenag",
+        "rawId": "nAyA5kfLztxwU8ETQCenag",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiMmF5XzkwNHlaOUdEa1g0Z0FtSzNhZl9XV0VrTEY5UEc0YXJZRy1nTGY0MCIsIm9yaWdpbiI6Imh0dHBzOi8vcmVsaWsubGluayIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+          "authenticatorData": "TBw7OBzkrXVhHQfr_JgzbfF_OTNFIccFGelq5C8e6PEFAAAAAQ",
+          "signature": "MEUCIQDK4mKKruFG2tW3CKmNJIHTOyXuq-anAdDQjmBsT1HihgIgKSFP994qjdJYJPj-J18HUTzU-5MLz7EFUjgV0W2fJkU",
+          "userHandle": null
+        }
+      },
+      "credential_id": "nAyA5kfLztxwU8ETQCenag",
+      "public_key_jwk": {
+        "crv": "P-256",
+        "ext": true,
+        "key_ops": [
+          "verify"
+        ],
+        "kty": "EC",
+        "x": "hIjj6vJZU_I0vZrcA0RfLFeAlKgp3cvMcrMbGxPALVA",
+        "y": "rW8hxC8RzyK5RFQN1wiCy_jSRCLLT4zyvy_dc_xwK4w"
+      },
+      "alg": -7,
+      "passkey_registered_at": null
+    },
+    "layout_ciphertext": "Rzgf136lGwc-Wss40N7zLs3rzGHxDnlMKZqJPdga68ZLvk6VAeBOxv-RfYbLjCGfCb_9lDehCloToSAzAwFlF7blAwm2NrYE1rS8bnCfAoYE6M8ZZfeDrW5xuWv77KCoMQliTUIruob_2qF3ZSYgELUGgLAgSP1ItMqX0JjIaG_64hV8OWGloBZ3WlYyjZzPpNFqAURLbBhlhpAcmAkvv9-zJ37VCkr61j3memQ"
+  },
+  "owner": {
+    "identity": {
+      "identity_id": "c06a0ac5c9ce59859738ae15e69df5a4749184615fc90e491ef7df92770e4cb9",
+      "email": "owner@relik.test",
+      "kem_public_key": "BFmDxv_3vYmTI-ea45q1y3RUQ1J3iTEenxfevMMxx0ILciTqIljYhEuKoR4UoBZx7Tlu_AFjOIIPoXq5aqmpTWo",
+      "sig_public_key": "BCPkCNJOfQAHhTV3cdr9Iv0-cAHsZNtO0uBXECbjTgV3DEDmc98g1w3TvvhcEKexiuTBB0mYEeAwK4kWhB-uZDc",
+      "created_at": "2025-12-31T23:00:00.000Z",
+      "retired_at": null
+    },
+    "device": null
+  },
+  "signatures": [
+    {
+      "signer_index": 0,
+      "statement": {
+        "at": 1767225660000,
+        "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+        "consent": "relic/sign-consent/v1",
+        "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+        "mark_sha256": "49a37e9125f82b89ba30edbd5d108a64d865e71172815a705acfc404ca1618b4",
+        "opened_receipt_sha256": null,
+        "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+        "request_id": "oKGio6SlpqeoqaqrrK2urw",
+        "request_sha256": "2aadc046f13725e5e95597d2768e034f36b9bbde65e4fcfc7e9b808f5adcc1a6",
+        "signer_email": "signer0@harbor.test",
+        "signer_identity_id": null,
+        "signer_index": 0,
+        "version": 3
+      },
+      "identity_signature": "",
+      "signer_identity": null,
+      "mark_ciphertext": "WsvvvV2hkdMo0AAaJfkzyJlPCkP2xEzjBiW10bGvDzGppRVZyNxj5nGS8Ph5iqOkyTb824nyoQzEzoid-fT6OkFsNMs",
+      "webauthn": {
+        "nonce": "TXTnNpeS5lCLjtyIA-BXmIpp4M0uALN8BPksicCWCUs",
+        "credential": {
+          "id": "3tUM9uFD4ta_gMIOhk-N1Q",
+          "rawId": "3tUM9uFD4ta_gMIOhk-N1Q",
+          "type": "public-key",
+          "response": {
+            "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiOHNKM0pjRU5LaVpRQW9yUjRZYzJ2LXBJSzN4WHN3UVE1al9iYlQyNWIwayIsIm9yaWdpbiI6Imh0dHBzOi8vcmVsaWsubGluayIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+            "authenticatorData": "TBw7OBzkrXVhHQfr_JgzbfF_OTNFIccFGelq5C8e6PEFAAAAAQ",
+            "signature": "MEUCIQCZwgcDFFVPVvKS4pCIr9gbH2osWcJ-Jx7CbM1nMjtmqgIgYWjbnEzobqAYPJme2I0vNs-eG_gvjPod_UGk2SQgxVA",
+            "userHandle": null
+          }
+        },
+        "credential_id": "3tUM9uFD4ta_gMIOhk-N1Q",
+        "public_key_jwk": {
+          "crv": "P-256",
+          "ext": true,
+          "key_ops": [
+            "verify"
+          ],
+          "kty": "EC",
+          "x": "lymMP9r-d7vrevLLcJPoQawRBNHrQTBitARTexTeQzE",
+          "y": "dhBTnR9LqT0gUfI3ewQxeUKuBJ0qKOtcxm90v8QRG3Y"
+        },
+        "alg": -7,
+        "passkey_registered_at": null
+      },
+      "recorded_at": "2026-01-01T00:01:00.001Z",
+      "receipts": null
+    },
+    {
+      "signer_index": 1,
+      "statement": {
+        "at": 1767225720000,
+        "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+        "consent": "relic/sign-consent/v1",
+        "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+        "mark_sha256": "351c032b4712803b27bc8ccef370918f9af3cc85843578a9ae9cbdbeb946a037",
+        "opened_receipt_sha256": null,
+        "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+        "request_id": "oKGio6SlpqeoqaqrrK2urw",
+        "request_sha256": "2aadc046f13725e5e95597d2768e034f36b9bbde65e4fcfc7e9b808f5adcc1a6",
+        "signer_email": "signer1@harbor.test",
+        "signer_identity_id": null,
+        "signer_index": 1,
+        "version": 3
+      },
+      "identity_signature": "",
+      "signer_identity": null,
+      "mark_ciphertext": "BfeaSYmy4G7WcrdORPuACZtRGXFVFC9WQUJJMmjnMwR2bN7S8SDWKthVHSTQlG81PsoKTkWSyngs_y6SAcodWWOYa5k",
+      "webauthn": {
+        "nonce": "DS3wc4hcI2NwZdm4VEZBRrPj-6vpeCK2zeWsr3MDPeM",
+        "credential": {
+          "id": "6LxlSc9bf6cUJOHCIQv0LA",
+          "rawId": "6LxlSc9bf6cUJOHCIQv0LA",
+          "type": "public-key",
+          "response": {
+            "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiQU5QSC1kbnR5aUpsVDU2N253R1ZSWHBLWmZwSHNxaDVQWnM4RnQ3bkZOVSIsIm9yaWdpbiI6Imh0dHBzOi8vcmVsaWsubGluayIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+            "authenticatorData": "TBw7OBzkrXVhHQfr_JgzbfF_OTNFIccFGelq5C8e6PEFAAAAAQ",
+            "signature": "MEUCIGu1Ms96esXxI8i8vfjvGcRRSYgMGkrfrf5qNmrVX34-AiEA4wsDHCzeP3hk-pyhZq3UEfJU1g7GKaWLb2mqy7h_DbU",
+            "userHandle": null
+          }
+        },
+        "credential_id": "6LxlSc9bf6cUJOHCIQv0LA",
+        "public_key_jwk": {
+          "crv": "P-256",
+          "ext": true,
+          "key_ops": [
+            "verify"
+          ],
+          "kty": "EC",
+          "x": "ea0jwluogd_4MTkSb2567VLZ-c86ROB27jeIKdcw73M",
+          "y": "wepqBON_UOr1YE2aI1eLYynHJWJi5aRCZIQtxRn30hA"
+        },
+        "alg": -7,
+        "passkey_registered_at": null
+      },
+      "recorded_at": "2026-01-01T00:02:00.001Z",
+      "receipts": null
+    }
+  ],
+  "completed_at": "2026-01-01T00:10:00.000Z"
+}

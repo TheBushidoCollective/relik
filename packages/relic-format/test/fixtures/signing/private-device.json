@@ -1,0 +1,136 @@
+{
+  "format": "relic/signing-certificate/v1",
+  "service": {
+    "origin": "https://relik.link",
+    "rp_id": "relik.link"
+  },
+  "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+  "access": "private",
+  "title": null,
+  "version": 3,
+  "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+  "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+  "request": {
+    "statement": {
+      "at": 1767225600000,
+      "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+      "consent": "relic/sign-consent/v1",
+      "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+      "layout_sha256": "8401b88b0a78a1d2623a4243e874c52379953927c2175da1f81b9a56ccb8acf9",
+      "order": "parallel",
+      "owner_identity_id": "2390d2366a1e0a9aebfca57f949a4818d5a1089aba9460f10e36e8e995444d6e",
+      "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+      "request_id": "oKGio6SlpqeoqaqrrK2urw",
+      "require_opened": false,
+      "signer_id": "f9eb653a8db45e40e0ccb367b902ade4c88223b230fd897f66855348316d349b",
+      "signers": [
+        {
+          "email": "signer0@harbor.test",
+          "identity_id": "0f6d001bcb6862915a48384691fd23f3a7bfddcdbe999257a868084ab4c195b7"
+        }
+      ],
+      "version": 3
+    },
+    "signature": "hno_zOAepc-Inv0NiPG17zP3cxhPuF9Qu6poYfcjNUwLaG032g8yw8pRseobtSGFIm_qvL8goaViLW7UEPtm1g",
+    "signer_kind": "device",
+    "attestation": null,
+    "layout_ciphertext": "CGx3uoRZnbCB65wmG81PBUOndAAim3vQbEzbkJXrM45THqmsKTUF55_y9mJ54g"
+  },
+  "owner": {
+    "identity": {
+      "identity_id": "2390d2366a1e0a9aebfca57f949a4818d5a1089aba9460f10e36e8e995444d6e",
+      "email": "owner@relik.test",
+      "kem_public_key": "BDzhRiDYaaTQvAGGvOuQVJjlOXgyP_KnseXZDFK70i8wsTOw1Z5NPEkgJTyZ0yzF0O6GC16AKHRYsxrTCcZPtw8",
+      "sig_public_key": "BCnhWFR19ZcZkqlTC8F7f_Zw0xoHDDVsprhwIlovujVclfaJF0gePiYv5dXFi0fjx6m2BS4iCWR4mkXZgfkfjBY",
+      "created_at": "2025-12-31T23:00:00.000Z",
+      "retired_at": null
+    },
+    "device": {
+      "backend": "file",
+      "cert": {
+        "statement": {
+          "at": 1767225540000,
+          "device_fingerprint_typed": "ze105zqqk65pepqv6ctm6b3e0gwwzqfx",
+          "device_id": "f9eb653a8db45e40e0ccb367b902ade4c88223b230fd897f66855348316d349b",
+          "kem_public_key": "BKcJxifAA_5cmbRc0mZaNEslrPQlM5IYPJYu2FG8DaVtnVcCzsH4nhUS-97DWAFpABeSCw4vgiViglLMfjU70-Q",
+          "label": "test laptop",
+          "not_after": 1767312000000,
+          "owner_identity_id": "2390d2366a1e0a9aebfca57f949a4818d5a1089aba9460f10e36e8e995444d6e",
+          "sig_public_key": "BITBZX9XVa2J1VHvdX2p_ZQTqygSk3a12ItFR59tCwpbwaw8sMT1ToArYMtAFIjMKxhCSmYcch_EDeKcsW4HAKk"
+        },
+        "identity_signature": "lzEC6ZED7gX_N5eG1XvpP-3c1WV37vzjYqdh3dGfKihcg_0q-wYxk94RX0TDeOoPPLxyqQ4hSecgoGNmEB5TJw"
+      },
+      "certified_at": "2025-12-31T23:59:00.000Z",
+      "device_id": "f9eb653a8db45e40e0ccb367b902ade4c88223b230fd897f66855348316d349b",
+      "kem_public_key": "BKcJxifAA_5cmbRc0mZaNEslrPQlM5IYPJYu2FG8DaVtnVcCzsH4nhUS-97DWAFpABeSCw4vgiViglLMfjU70-Q",
+      "label": "test laptop",
+      "not_after": 1767312000000,
+      "owner_identity_id": "2390d2366a1e0a9aebfca57f949a4818d5a1089aba9460f10e36e8e995444d6e",
+      "revoked_at": null,
+      "sig_public_key": "BITBZX9XVa2J1VHvdX2p_ZQTqygSk3a12ItFR59tCwpbwaw8sMT1ToArYMtAFIjMKxhCSmYcch_EDeKcsW4HAKk"
+    }
+  },
+  "signatures": [
+    {
+      "signer_index": 0,
+      "statement": {
+        "at": 1767225660000,
+        "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+        "consent": "relic/sign-consent/v1",
+        "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+        "mark_sha256": "2d58df1c629a6fb25a334d84a94898e34bd93588ce2acd2af2db9b16a8f07393",
+        "opened_receipt_sha256": null,
+        "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+        "request_id": "oKGio6SlpqeoqaqrrK2urw",
+        "request_sha256": "9eb50e40a6ca9654fbf791014e82b07c96df29c811f776af07201711d498030d",
+        "signer_email": "signer0@harbor.test",
+        "signer_identity_id": "0f6d001bcb6862915a48384691fd23f3a7bfddcdbe999257a868084ab4c195b7",
+        "signer_index": 0,
+        "version": 3
+      },
+      "identity_signature": "qM3AFMlG95iOTzZ5-BrLFPDgr3-C2See1lZVWNXsWmpRtXR_qw0w7RqHVfhYLgkjiSL2PBjQq-Rub-klFu1rJw",
+      "signer_identity": {
+        "identity_id": "0f6d001bcb6862915a48384691fd23f3a7bfddcdbe999257a868084ab4c195b7",
+        "email": "signer0@harbor.test",
+        "kem_public_key": "BHbmxrEy3A_TOFWsq4QDXkCZmmDF40kK01-9pC1ijmqj1P8BCs2MXLq1y9URh5ujhdS3Q6npVkRIrvZP8u9VWvc",
+        "sig_public_key": "BIssxrN6DeBl8M-yxPVzD0ql3PWNRnX6zhUm5WGvN_AWfmfrIUPipGwabmxvX3IMfU3ciZJ_-7Tdj-3W8vER56c",
+        "created_at": "2025-12-31T23:00:00.000Z",
+        "retired_at": null
+      },
+      "mark_ciphertext": "9kwrYhWOpRr4Zu0fK3Pb7I101hHv4fjiLj-e1DO14QlQj6Nfw8kJ5sVh8Sc7z70LKrE0dWGqc-0K3M4s-OowJZD5BmE",
+      "webauthn": {
+        "nonce": "iTBfKAYcCb_JRG2LI4XlKnw5FVTGY-lDwhTTBf36-QQ",
+        "credential": {
+          "id": "Y3Orqtbm1I5lrrmNhASFTQ",
+          "rawId": "Y3Orqtbm1I5lrrmNhASFTQ",
+          "type": "public-key",
+          "response": {
+            "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZ0xFS0ZDZ2NFaWoxTUdnZEg3bGFwZU45b3FSNjFCU2NzbVBfUzFqRXJqMCIsIm9yaWdpbiI6Imh0dHBzOi8vcmVsaWsubGluayIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+            "authenticatorData": "TBw7OBzkrXVhHQfr_JgzbfF_OTNFIccFGelq5C8e6PEFAAAAAQ",
+            "signature": "MEUCIDhBAot1tI5l1yg--rPxChAr506Fd8je038RU2FYj2sbAiEA3q-fhmHTlzu29uFHXDtXLQ31u06JjgeUWQqRXBUZEeY",
+            "userHandle": null
+          }
+        },
+        "credential_id": "Y3Orqtbm1I5lrrmNhASFTQ",
+        "public_key_jwk": {
+          "crv": "P-256",
+          "ext": true,
+          "key_ops": [
+            "verify"
+          ],
+          "kty": "EC",
+          "x": "SXmflqvMHHDnn39I97tfYiXp1VUDFdMOejOhTShOp9c",
+          "y": "ciP_1H0rs_eVYH2aea5Labc1EC5UsD3on5BE4edWVZs"
+        },
+        "alg": -7,
+        "passkey_registered_at": null
+      },
+      "recorded_at": "2026-01-01T00:01:00.001Z",
+      "receipts": {
+        "served_at": "2026-01-01T00:00:59.998Z",
+        "opened": null
+      }
+    }
+  ],
+  "completed_at": "2026-01-01T00:10:00.000Z"
+}
