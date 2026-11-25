@@ -317,7 +317,9 @@ describe('the handshake carries instructions', () => {
   });
 
   test('stays short because it costs context every session', () => {
-    expect(INSTRUCTIONS.length).toBeLessThan(2600);
+    // 2750: the plan's item 11 (grant_url and the owner passkey) lifted the
+    // handshake from 2600 to about 2730. Flagged to the parent as a decision.
+    expect(INSTRUCTIONS.length).toBeLessThan(2750);
   });
 });
 

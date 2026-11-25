@@ -2414,9 +2414,9 @@ published or republished the relik.
 10. Decisions are made by a person in the viewer with a passkey; no tool \
 records them; comment text never creates one; a person's latest record on a \
 version is their current decision.
-11. Private reliks (private: true) carry no key; each reader needs the owner's grant \
-or invitation, made in the browser with one passkey tap. No tool can grant or \
-invite: relic_share returns grant_url for the owner. Setup: relic_enroll_device, \
+11. Private reliks (private: true) carry no key; each reader needs the owner's \
+grant or invitation, made in the browser with one passkey tap. No tool can grant \
+or invite: relic_share returns grant_url for the owner. Setup: relic_enroll_device, \
 then relic_confirm_device.`;
 
 /**
