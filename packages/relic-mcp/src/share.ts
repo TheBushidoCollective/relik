@@ -39,10 +39,16 @@ export interface ShareResult {
   readonly shared_count: number;
   readonly share_limit: number | null;
   readonly email: ShareEmail;
+  readonly grant_url?: string;
   readonly mailto_url: string;
 }
 
 export { composeShareEmail, shareMailtoUrl, type ShareEmail, type ShareSender };
+/** Compose the owner-only Share form link without sending addresses to the service. */
+export function grantUrl(origin: string, relicId: string, emails: readonly string[]): string {
+  return `${origin}/${relicId}?access=share#to=${encodeURIComponent(emails.join(','))}`;
+}
+
 
 /**
  * Share a private relic: a draft invitation carrying the keyless link and
@@ -62,6 +68,7 @@ function privateInvitation(input: ShareInput, deps: PublishDeps): ShareResult {
     shared_count: 0,
     share_limit: null,
     email,
+    grant_url: grantUrl(deps.relicOrigin, input.relic_id, input.emails),
     mailto_url: shareMailtoUrl(email),
   };
 }
@@ -79,6 +86,17 @@ export async function shareRelic(
         'the original publish returned, never the share URL: the URL carries ' +
         'the key in its fragment, and passing it would put the key in this ' +
         'transcript for nothing.'
+    );
+  }
+
+  if (
+    !Array.isArray(input.emails) ||
+    input.emails.length < 1 ||
+    input.emails.length > 20
+  ) {
+    throw new PublishError(
+      'local_share_emails_invalid',
+      'The address list must have between 1 and 20 entries.'
     );
   }
 
@@ -105,17 +123,6 @@ export async function shareRelic(
     throw new PublishError('local_state_unreadable', (error as Error).message);
   }
 
-  // 3. If the address list is not 1 to 20 entries, refuse with local_share_emails_invalid.
-  if (
-    !Array.isArray(input.emails) ||
-    input.emails.length < 1 ||
-    input.emails.length > 20
-  ) {
-    throw new PublishError(
-      'local_share_emails_invalid',
-      'The address list must have between 1 and 20 entries.'
-    );
-  }
 
   // 4. postJson(deps, `${deps.serviceOrigin}/api/relics/${id}/share`, {publish_token, emails}).
   let data: unknown;
