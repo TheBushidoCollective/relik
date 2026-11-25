@@ -58,7 +58,10 @@ export function mountSigningBoxes(input: {
       element.style.top = `${position.top}px`;
       element.style.width = `${position.width}px`;
       element.style.height = `${position.height}px`;
-      element.textContent = `Signer ${box.signer + 1}`;
+      element.textContent =
+        !input.editable && box.signer === input.signer()
+          ? 'Sign here'
+          : `Signer ${box.signer + 1}`;
       element.setAttribute(
         'aria-label',
         `Signature box for signer ${box.signer + 1}, page ${box.page}`

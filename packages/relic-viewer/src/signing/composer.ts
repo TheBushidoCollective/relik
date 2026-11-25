@@ -56,7 +56,7 @@ export function openSigningComposer(input: {
   const rows = document.createElement('div');
   const add = document.createElement('button');
   add.type = 'button';
-  add.className = 'btn small';
+  add.className = 'btn is-small';
   add.textContent = 'Add signer';
   list.append(listTitle, rows, add);
   const orderSection = document.createElement('section');

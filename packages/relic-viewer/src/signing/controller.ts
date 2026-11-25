@@ -173,6 +173,8 @@ export function mountSigning(input: {
         request,
         signerIndex,
         signingKey,
+        ...(layout === undefined ? {} : { layout }),
+        signedCount: verifiedSignatures.size,
         ...(shareProof === undefined ? {} : { shareProof }),
         ...(view.signingIdentity === undefined
           ? {}

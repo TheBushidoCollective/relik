@@ -7787,3 +7787,11 @@ body:has(.signing-panel) canvas.relic-page {
 .signing-panel [hidden] {
   display: none !important;
 }
+.signing-summary {
+  margin: 0;
+  color: var(--ink-soft);
+  font: 0.72rem var(--mono);
+}
+.signing-panel .panel-section > .btn.is-small {
+  justify-self: start;
+}

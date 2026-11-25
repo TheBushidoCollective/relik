@@ -13,6 +13,7 @@ import {
   sealSignatureMark,
   SIGN_CONSENT_TEXT,
   signingRequestSha256,
+  type SigningLayout,
   type SigningRequestJSON,
 } from '@relic/format/signing';
 import {
@@ -48,6 +49,8 @@ export function openSignerPanel(input: {
   readonly relicId: string;
   readonly request: SigningRequestJSON;
   readonly signerIndex: number;
+  readonly layout?: SigningLayout;
+  readonly signedCount?: number;
   readonly signingKey: Uint8Array;
   readonly shareProof?: string;
   readonly identity?: UnlockedIdentity;
@@ -148,7 +151,13 @@ export function openSignerPanel(input: {
   status.setAttribute('role', 'status');
   status.textContent = 'Tick the box above to sign.';
   row.append(sign, passkey, status);
-  body.append(person, consentSection, row);
+  const summary = document.createElement('p');
+  summary.className = 'signing-summary';
+  const boxes =
+    input.layout?.boxes.filter((box) => box.signer === input.signerIndex) ?? [];
+  const pages = [...new Set(boxes.map((box) => box.page))].join(', ');
+  summary.textContent = `${boxes.length ? `${boxes.length} ${boxes.length === 1 ? 'box' : 'boxes'}, pages ${pages}` : 'Signature block after the document'} · ${input.signedCount ?? 0} of ${request.signers.length} signed`;
+  body.append(person, consentSection, row, summary);
   panel.append(head, body);
   let mode: 'typed' | 'drawn' = 'typed';
   let prepared: Prepared | undefined;
