@@ -1392,9 +1392,18 @@ class PrivateReader {
         'GET',
         `/api/relics/${encodeURIComponent(this.mount.relicId)}/requests`
       );
-      const pending = listed.requests.filter(
-        (request) => request.status === 'pending'
-      ).length;
+      const invites = await privateApi<{
+        readonly invites: readonly { readonly status: string }[];
+      }>(
+        this.mount.deps,
+        'GET',
+        `/api/relics/${encodeURIComponent(this.mount.relicId)}/invites`
+      );
+      // The Access button counts pending requests and accepted invitations awaiting Confirm.
+      const pending =
+        listed.requests.filter((request) => request.status === 'pending')
+          .length +
+        invites.invites.filter((invite) => invite.status === 'claimed').length;
       count.textContent = String(pending);
       count.hidden = pending === 0;
       count.setAttribute(
