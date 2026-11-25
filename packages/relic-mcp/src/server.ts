@@ -4524,6 +4524,22 @@ const REFUSAL_GUIDANCE: Readonly<Record<string, string>> = {
     'Comments are closed to readers; the publisher and owner can still comment.',
   settings_rate_limited:
     'The service is rate limiting settings changes. Wait for retry_after_seconds before retrying.',
+  signing_closed:
+    'Signing is paused. The owner can turn it back on with relic_settings.',
+  signing_rate_limited:
+    'The service is rate limiting signing requests. Wait for retry_after_seconds before retrying.',
+  signing_request_closed:
+    'This signing request is no longer open and cannot be cancelled.',
+  signing_in_progress:
+    'A signing request is open for this version. Cancel it before replacing the public relik.',
+  version_locked:
+    'This version has been signed and is locked. Its lifetime cannot be shortened.',
+  signer_without_access:
+    'A private signer needs access to this version before they can be asked to sign.',
+  certificate_not_ready:
+    'The certificate is available after every signer has signed.',
+  invalid_signing_request:
+    'Check signing_check and correct the request before trying again.',
 };
 
 /**
@@ -4608,6 +4624,11 @@ service ever holds, and neither secret is ever printed or logged. Deleting the
 file changes nothing for existing links; it only ends this machine's ability
 to update those reliks.
 Use relic_settings to read or change live settings without republishing.
+Signing requests are made by the owner. Signatures are made by a person in the
+viewer with their passkey. No tool signs or records a signature on anyone's
+behalf. A certificate verifies offline against an independently trusted owner
+identity. Relik does not verify identity or claim that an electronic signature
+is legally binding.
 
 
 What happens with comments: a comment body is encrypted here too, under a key

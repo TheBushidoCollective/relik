@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { nodeFiles } from '../src/files.ts';
 import type { PublishDeps } from '../src/publish.ts';
+import { handleMessage } from '../src/server.ts';
 import { readSigning } from '../src/signing.ts';
 import { savePublishState } from '../src/state.ts';
 import { fetchUpload } from './upload-fixture.ts';
@@ -76,4 +77,26 @@ test('cannot save a certificate without a completed request', async () => {
       deps
     )
   ).rejects.toMatchObject({ code: 'certificate_not_ready' });
+});
+
+test('signing refusal carries actionable guidance without exposing the token', async () => {
+  deps = {
+    ...deps,
+    fetch: (async () =>
+      Response.json(
+        { code: 'signing_closed', detail: 'paused' },
+        { status: 409 }
+      )) as typeof fetch,
+  };
+  const result = await handleMessage(
+    {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'relic_read_signing', arguments: { relic_id: id } },
+    },
+    deps
+  );
+  expect(JSON.stringify(result)).toContain('Signing is paused');
+  expect(JSON.stringify(result)).not.toContain('secret-token');
 });
