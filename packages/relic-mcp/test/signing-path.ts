@@ -9,12 +9,16 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   decodeKey,
+  deriveCommentKey,
+  encryptComment,
   deriveShareProof,
   encodeKey,
   encryptRelic,
 } from '@relic/format';
 import {
   deriveSigningKey,
+  sealSignatureMark,
+  markCiphertextSha256,
   type SigningRequestJSON,
 } from '@relic/format/signing';
 import { contentFromBytes } from '../../relic-viewer/src/content.ts';
@@ -27,6 +31,7 @@ import { MemoryStore } from '@relic/server/src/store.ts';
 import { callMcp } from './decision-proof-steps.ts';
 import { clickPrivateControl } from './confirmation-private-proof.ts';
 import { harnessEnv } from './harness-env.ts';
+import { pageSigningAssertion } from './signing-proof-steps.ts';
 import {
   approveDeviceFromProcess,
   bootstrapOwner,
