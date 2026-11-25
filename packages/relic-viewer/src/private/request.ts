@@ -35,6 +35,7 @@ function nullableNumber(value: unknown): number | null {
 function accessRole(value: unknown): AccessRole {
   switch (value) {
     case 'owner':
+    case 'invited':
     case 'grantee':
     case 'recovery':
     case 'revoked':
