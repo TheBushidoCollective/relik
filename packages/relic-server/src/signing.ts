@@ -164,6 +164,12 @@ export async function signingRequestView(
                   mark_ciphertext: signature.markCiphertext,
                   webauthn: proofJson(signature.attestation)!,
                   recorded_at: new Date(signature.recordedAt).toISOString(),
+                  ...(!showReceipts &&
+                  statement.require_opened &&
+                  signature.openedReceipt?.statement !== undefined &&
+                  signature.openedReceipt.identitySignature !== undefined
+                    ? { opened_receipt_withheld: true }
+                    : {}),
                   opened_receipt:
                     showReceipts &&
                     signature.openedReceipt?.statement !== undefined &&
@@ -636,6 +642,16 @@ export async function cancelSigningRequest(
   }
   if (row.expiresAt !== undefined && row.expiresAt <= env.now)
     throw new ProblemError('relic_expired', { relic_id: row.id });
+  if (row.signingOpen?.requestId !== statement.request_id) {
+    const current = await env.store.getSigningRequest(
+      row.id,
+      statement.request_id
+    );
+    if (current === undefined)
+      throw new ProblemError('signing_request_not_found');
+    if (current.status !== 'cancelled' || current.cancellation === undefined)
+      throw new ProblemError('signing_request_closed');
+  }
   let cancelledNow = false;
   const updated = await env.store.updateSigningRequest(
     row.id,
@@ -1334,23 +1350,29 @@ async function sendSigningNotice(
   details?: string
 ): Promise<void> {
   try {
-    await env.sendSigningMail?.(row.id, address, (stopUrl) =>
-      signingNoticeMail({
-        kind,
-        private: row.access === 'private',
-        ...(row.title === undefined ? {} : { title: row.title }),
-        relicUrl: `${env.config.serviceOrigin}/${row.id}`,
-        stopUrl,
-        ...(details === undefined ? {} : { details }),
-        ...(certificate === undefined || row.access === 'private'
-          ? {}
-          : {
-              certificate: {
-                filename: `relik-${row.id}-v${certificate['version']}-signing.json`,
-                content: new TextEncoder().encode(JSON.stringify(certificate)),
-              },
-            }),
-      })
+    await env.sendSigningMail?.(
+      row.id,
+      address,
+      kind === 'complete',
+      (stopUrl) =>
+        signingNoticeMail({
+          kind,
+          private: row.access === 'private',
+          ...(row.title === undefined ? {} : { title: row.title }),
+          relicUrl: `${env.config.serviceOrigin}/${row.id}`,
+          stopUrl,
+          ...(details === undefined ? {} : { details }),
+          ...(certificate === undefined || row.access === 'private'
+            ? {}
+            : {
+                certificate: {
+                  filename: `relik-${row.id}-v${certificate['version']}-signing.json`,
+                  content: new TextEncoder().encode(
+                    JSON.stringify(certificate)
+                  ),
+                },
+              }),
+        })
     );
   } catch {
     console.error('relic: signing notice could not be prepared');

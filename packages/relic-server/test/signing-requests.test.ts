@@ -981,9 +981,15 @@ test('cancellation racing staged creation cannot leave an open pointer', async (
       body: JSON.stringify(await cancel(request.request.statement.request_id)),
     })
   );
-  expect(cancelled.status).toBe(200);
+  expect(cancelled.status).toBe(409);
   store.resume.resolve();
   const creation = await creating;
-  expect((await creation.json()).code).toBe('signing_request_closed');
-  expect((await store.getRelic(RELIC_ID))?.signingOpen).toBeUndefined();
+  expect(creation.status).toBe(201);
+  const requestId = request.request.statement.request_id;
+  expect((await store.getRelic(RELIC_ID))?.signingOpen?.requestId).toBe(
+    requestId
+  );
+  expect((await store.getSigningRequest(RELIC_ID, requestId))?.status).toBe(
+    'open'
+  );
 });

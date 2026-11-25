@@ -232,7 +232,8 @@ async function fixture(store: RelicStore = new MemoryStore()) {
     order: 'parallel' | 'sequential' = 'parallel',
     isPrivate = false,
     requireOpened = false,
-    version = 1
+    version = 1,
+    signers: readonly (typeof first)[] = [first, second]
   ) {
     const nonce = await post(
       a,
@@ -254,16 +255,10 @@ async function fixture(store: RelicStore = new MemoryStore()) {
       request_id: b64(randomBytes(16)),
       require_opened: requireOpened,
       signer_id: owner.identityId,
-      signers: [
-        {
-          email: first.email,
-          identity_id: isPrivate ? first.identityId : null,
-        },
-        {
-          email: second.email,
-          identity_id: isPrivate ? second.identityId : null,
-        },
-      ],
+      signers: signers.map((signer) => ({
+        email: signer.email,
+        identity_id: isPrivate ? signer.identityId : null,
+      })),
       version,
     };
     const result = await post(
@@ -395,6 +390,7 @@ async function fixture(store: RelicStore = new MemoryStore()) {
     first,
     second,
     post,
+    person,
     assertion,
     open,
     opened,
@@ -734,6 +730,22 @@ test('private signing requires verified opens and produces a verifiable certific
     (await f.post(f.a, `${root}/signing/signatures`, first, f.first.cookie))
       .status
   ).toBe(201);
+  const redacted = await f.post(
+    f.b,
+    `${root}/signing/read`,
+    {},
+    f.second.cookie
+  );
+  const view = redacted.body.requests as {
+    signers: {
+      signature: {
+        opened_receipt: unknown;
+        opened_receipt_withheld?: boolean;
+      } | null;
+    }[];
+  }[];
+  expect(view[0]?.signers[0]?.signature?.opened_receipt).toBeNull();
+  expect(view[0]?.signers[0]?.signature?.opened_receipt_withheld).toBe(true);
   expect(
     (await f.post(f.b, `${root}/signing/signatures`, second, f.second.cookie))
       .status
@@ -1289,4 +1301,24 @@ test('a signed relik cannot have its lifetime shortened', async () => {
   );
   expect(result.body.code).toBe('version_locked');
   expect((await f.store.getRelic(RELIC_ID))?.expiresAt).toBe(deadline);
+});
+
+test('ten signatures leave room for the owner completion mail', async () => {
+  const f = await fixture();
+  const signers = [f.first, f.second];
+  for (let i = 2; i < 10; i++)
+    signers.push(await f.person(`signer${i}@example.com`, false));
+  const request = await f.open('parallel', false, false, 1, signers);
+  for (const signer of signers) {
+    const body = await f.prepare(signer, request, f.a);
+    expect(
+      (await f.post(f.a, `${root}/signing/signatures`, body, signer.cookie))
+        .status
+    ).toBe(201);
+  }
+  const ownerMails = f.mails.filter((item) => item.email === f.owner.email);
+  expect(
+    ownerMails.filter(({ mail }) => mail.subject.startsWith('Everyone signed'))
+  ).toHaveLength(1);
+  expect(ownerMails.length).toBeLessThanOrEqual(10);
 });

@@ -763,14 +763,21 @@ export function createApp(options: AppOptions = {}): RelicApp {
       sendMail: async (to, mail) => {
         if (mailer?.sendMail !== undefined) await mailer.sendMail(to, mail);
       },
-      sendSigningMail: async (relicId, address, build) => {
+      sendSigningMail: async (relicId, address, completion, build) => {
         if (mailer?.sendMail === undefined) return;
         const normalized = normalizeEmail(address);
         const addressHash = await sha256Hex(normalized);
         if (await store.isOptedOut(relicId, addressHash)) return;
         const key = `signing ${relicId} ${normalized}`;
+        if (!completion && config.signingMailRateLimit.limit <= 1) return;
+        const budget = completion
+          ? config.signingMailRateLimit
+          : {
+              ...config.signingMailRateLimit,
+              limit: config.signingMailRateLimit.limit - 1,
+            };
         if (
-          !limiter.peek(key, config.signingMailRateLimit, now).allowed ||
+          !limiter.peek(key, budget, now).allowed ||
           !limiter.peek('change-notice', config.changeNoticeRateLimit, now)
             .allowed
         )
@@ -790,7 +797,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         const stopUrl = `${config.serviceOrigin}/api/relics/${relicId}/unsubscribe?addr=${addressHash}&token=${Buffer.from(mac).toString('base64url')}`;
         if (await store.isOptedOut(relicId, addressHash)) return;
         if (
-          !limiter.check(key, config.signingMailRateLimit, now).allowed ||
+          !limiter.check(key, budget, now).allowed ||
           !limiter.check('change-notice', config.changeNoticeRateLimit, now)
             .allowed
         )
@@ -5216,8 +5223,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
       (row.expiresAt === undefined || expiresAt > row.expiresAt)
     )
       await store.extendPrivateLifetime(relicId, expiresAt);
-    if (row.access !== 'private' && 'ttl_days' in changes)
-      await store.syncPublicSigningLifetime(relicId, expiresAt);
     const updated = await store.updateRelic(relicId, (cur) => {
       const current = settingsView(cur);
       const nextExpiry = 'ttl_days' in changes ? expiresAt : cur.expiresAt;
@@ -5260,8 +5265,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
     });
     if (updated === undefined)
       throw new ProblemError('relic_not_found', { relic_id: relicId });
-    if (updated.access !== 'private' && 'ttl_days' in changes)
-      await store.syncPublicSigningLifetime(relicId, updated.expiresAt);
+    if (updated.access !== 'private' && 'ttl_days' in changes) {
+      for (let pass = 0; pass < 2; pass++) {
+        const current = await store.getRelic(relicId);
+        if (current === undefined) break;
+        await store.syncPublicSigningLifetime(relicId, current.expiresAt);
+      }
+    }
     if (
       updated.access === 'private' &&
       'ttl_days' in changes &&

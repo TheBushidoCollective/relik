@@ -945,6 +945,10 @@ first sweep fails, the row is unchanged. If the second fails, the response says
 the lifetime was updated and the same change can be retried to finish the sweep.
 A write that read the row before the update and lands after the second pass can
 still retain the earlier erasure time.
+For public reliks, signing-object erasure metadata is reconciled only after the
+lifetime update commits, with a second pass. A failed post-commit pass can be
+retried using the same lifetime setting. A locked relik's lifetime can be
+extended but cannot be shortened.
 
 Shortening ends access, including private comment access, sooner but does not
 move erasure earlier. A pending upload sealed after shortening keeps the later
@@ -966,6 +970,8 @@ for a relik at once.
 `signing_cancel` statement, or a publish token and owner-device signature.
 Cancellation releases the open-request slot. A repeat cancellation returns the
 cancelled request.
+A cancellation of a staged request whose open slot has not been claimed is
+refused with `signing_request_closed`.
 
 `POST /api/relics/{id}/signing/read` returns signing state. Public readers
 provide the share proof or publish token. Private readers provide the publish
@@ -975,6 +981,8 @@ own receipt times under `me`. Expired reliks remain readable, but writes are
 refused. Read and write requests use separate signing rate budgets, and session
 writes require JSON. A paused write is refused before it consumes an attestation
 nonce.
+A private signer without current read standing can read only the requests on
+which their current identity is listed, including their certificates.
 
 The create, cancel, and read routes accept JSON. Creation takes `{attestation, layout_ciphertext}`
 for an owner session, or `{publish_token, request, layout_ciphertext}` for a
@@ -991,6 +999,9 @@ status and any cancellation. An open signer is ready, waiting, or needs access;
 a signed signer includes the recorded signature. The owner and publisher can
 see each signer's served and opened times. Other readers do not receive those
 times or the signed opened receipt in the per-signer records.
+A signature whose required receipt is withheld carries
+`opened_receipt_withheld: true`. The viewer reports that signature as admitted
+with receipt evidence withheld, rather than claiming complete verification.
 
 Request creation may refuse `invalid_signing_request` with `signing_check`,
 `signing_closed`, `share_unavailable`, `signing_digest_mismatch`,
@@ -1017,6 +1028,7 @@ A publisher token is refused with `signing_requires_reader`. The response
 contains a single-use nonce and WebAuthn options, the version and ciphertext
 digest, content MAC, request hash, signer index and identity, opened receipt
 hash when required, and the consent identifier and text.
+The nonce is bound to that request ID and cannot authorize a replacement.
 
 `POST /api/relics/{id}/signing/signatures` takes `{request_id, share_proof?,
 attestation, mark_ciphertext}`. The signer attests a `signature` statement.
@@ -1098,6 +1110,8 @@ claims it; a crash after the claim can drop that send. Public completion mail
 includes the certificate as JSON. Signing mail honors per-relik stop links and
 the signing and global change-notice limits, independently of the owner's
 general notifications setting. No signing mail contains a fragment key.
+Progress notices reserve one unit of the per-recipient signing mail budget for
+completion. The global change-notice fuse still applies.
 
 Public signers' passkeys are trusted on first use. A malicious service could
 register its own passkey under an address and produce an internally valid

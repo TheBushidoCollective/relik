@@ -413,4 +413,88 @@ describe('live settings', () => {
       new Date(now + 3 * 86400000).toISOString()
     );
   });
+
+  test('failed public expiry CAS leaves signing erasure unchanged', async () => {
+    const fake = fakeGcs();
+    const store = gcsStore({
+      bucket: 'relics',
+      prefix: 'tenant/m',
+      host: 'https://gcs.test',
+      getAccessToken: async () => 'test',
+      fetch: fake.fetch,
+    });
+    const id = generateRelicId();
+    await store.putRelic(await row(id));
+    await store.putSigningRequest(id, 'req', {
+      statement: {},
+      signature: 'sig',
+      signerKind: 'device',
+      signerId: 'owner',
+      layoutCiphertext: 'encrypted',
+      status: 'open',
+      createdAt: now,
+    });
+    const name = `tenant/m/signing/${id}/req/request.json`;
+    expect(fake.objects.get(name)?.customTime).toBeUndefined();
+    store.updateRelic = async () => {
+      throw new Error('injected CAS failure');
+    };
+    const app = createApp({ store, now: () => now });
+    await expect(
+      app.fetch(
+        request(`/api/relics/${id}/settings`, {
+          publish_token: token,
+          settings: { ttl_days: 1 },
+        })
+      )
+    ).rejects.toThrow('injected CAS failure');
+    expect((await store.getRelic(id))?.expiresAt).toBeUndefined();
+    expect(fake.objects.get(name)?.customTime).toBeUndefined();
+  });
+
+  test('a failed post-commit public sweep can be retried', async () => {
+    const fake = fakeGcs();
+    const store = gcsStore({
+      bucket: 'relics',
+      prefix: 'tenant/m',
+      host: 'https://gcs.test',
+      getAccessToken: async () => 'test',
+      fetch: fake.fetch,
+    });
+    const id = generateRelicId();
+    await store.putRelic(await row(id));
+    await store.putSigningRequest(id, 'req', {
+      statement: {},
+      signature: 'sig',
+      signerKind: 'device',
+      signerId: 'owner',
+      layoutCiphertext: 'encrypted',
+      status: 'open',
+      createdAt: now,
+    });
+    const name = `tenant/m/signing/${id}/req/request.json`;
+    const sync = store.syncPublicSigningLifetime.bind(store);
+    let fail = true;
+    store.syncPublicSigningLifetime = async (...args) => {
+      if (fail) {
+        fail = false;
+        throw new Error('injected sweep failure');
+      }
+      return sync(...args);
+    };
+    const app = createApp({ store, now: () => now });
+    const set = () =>
+      app.fetch(
+        request(`/api/relics/${id}/settings`, {
+          publish_token: token,
+          settings: { ttl_days: 1 },
+        })
+      );
+    await expect(set()).rejects.toThrow('injected sweep failure');
+    expect((await store.getRelic(id))?.expiresAt).toBe(now + 86400000);
+    expect((await set()).status).toBe(200);
+    expect(fake.objects.get(name)?.customTime).toBe(
+      new Date(now + 86400000).toISOString()
+    );
+  });
 });

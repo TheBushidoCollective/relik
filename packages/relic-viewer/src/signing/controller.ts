@@ -23,6 +23,22 @@ import { openSigningComposer } from './composer.ts';
 import { openSignerPanel } from './panel.ts';
 import { openSigningStatus } from './status.ts';
 
+/** Report withheld receipt evidence separately from a failed signature. */
+export function signatureEvidenceStatus(
+  checks: readonly { readonly id: string; readonly ok: boolean }[],
+  withheld: boolean
+): 'verified' | 'withheld' | 'invalid' {
+  if (checks.length === 0) return 'invalid';
+  if (checks.every((check) => check.ok)) return 'verified';
+  if (
+    withheld &&
+    checks.some((check) => check.id === 'opened_receipt' && !check.ok) &&
+    checks.every((check) => check.ok || check.id === 'opened_receipt')
+  )
+    return 'withheld';
+  return 'invalid';
+}
+
 /** All async results decorate the mounted page; they never redraw the document. */
 export function mountSigning(input: {
   readonly view: ReadyView;
@@ -110,6 +126,7 @@ export function mountSigning(input: {
       }
     }
     const verifiedSignatures = new Set<number>();
+    const withheldSignatures = new Set<number>();
     if (request && trusted) {
       for (const entry of request.signers) {
         const record = entry.signature;
@@ -127,8 +144,13 @@ export function mountSigning(input: {
           origin: input.deps.serviceOrigin,
           rpId: new URL(input.deps.serviceOrigin).hostname,
         });
-        if (checks.every((check) => check.ok))
-          verifiedSignatures.add(entry.index);
+        const evidence = signatureEvidenceStatus(
+          checks,
+          record.opened_receipt_withheld === true &&
+            record.opened_receipt === null
+        );
+        if (evidence !== 'invalid') verifiedSignatures.add(entry.index);
+        if (evidence === 'withheld') withheldSignatures.add(entry.index);
       }
     }
     if (disposed) return;
@@ -205,7 +227,7 @@ export function mountSigning(input: {
         block.appendChild(heading);
         for (const entry of request.signers) {
           const row = document.createElement('p');
-          row.textContent = `${entry.email}: ${entry.status === 'signed' ? (verifiedSignatures.has(entry.index) ? 'Signed' : 'Signature unverified') : 'Waiting'}`;
+          row.textContent = `${entry.email}: ${entry.status === 'signed' ? (withheldSignatures.has(entry.index) ? 'Signed (receipt withheld)' : verifiedSignatures.has(entry.index) ? 'Signed' : 'Signature unverified') : 'Waiting'}`;
           if (entry.index === signerIndex && canSign) {
             const button = document.createElement('button');
             button.type = 'button';

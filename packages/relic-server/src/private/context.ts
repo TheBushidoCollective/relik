@@ -46,6 +46,7 @@ export interface PrivateEnv {
   readonly sendSigningMail?: (
     relicId: string,
     address: string,
+    completion: boolean,
     build: (stopUrl: string) => OutboundMail
   ) => Promise<void>;
   /** Spends one unit of the named budget, or throws `private_rate_limited`. */

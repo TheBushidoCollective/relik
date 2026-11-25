@@ -368,6 +368,7 @@ export interface SignatureRecordJSON {
   readonly mark_ciphertext: string;
   readonly webauthn: WebAuthnProofJSON;
   readonly recorded_at: string;
+  readonly opened_receipt_withheld?: boolean;
   readonly opened_receipt: {
     readonly statement: Record<string, unknown>;
     readonly identity_signature: string;
