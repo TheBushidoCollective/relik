@@ -1,0 +1,217 @@
+{
+  "format": "relic/signing-certificate/v1",
+  "service": {
+    "origin": "https://relik.link",
+    "rp_id": "relik.link"
+  },
+  "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+  "access": "private",
+  "title": null,
+  "version": 3,
+  "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+  "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+  "request": {
+    "statement": {
+      "at": 1767225600000,
+      "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+      "consent": "relic/sign-consent/v1",
+      "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+      "layout_sha256": "bab9f49c152c8479f29eaf98c0050d306c00894c1f56bf3df16796bc910e3cfd",
+      "order": "parallel",
+      "owner_identity_id": "b8ade4ca42772ec7e0bfe58d025fc56430bf1495e27a1567d869bd12d1998e56",
+      "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+      "request_id": "oKGio6SlpqeoqaqrrK2urw",
+      "require_opened": true,
+      "signer_id": "b8ade4ca42772ec7e0bfe58d025fc56430bf1495e27a1567d869bd12d1998e56",
+      "signers": [
+        {
+          "email": "signer0@harbor.test",
+          "identity_id": "e1e09d11a584c6d41c0dfcba7f5e858ac0b153f5f45b8e448bafe6d845053178"
+        },
+        {
+          "email": "signer1@harbor.test",
+          "identity_id": "1f83874a0427123169a231433c0749a883cc194ed31c097859e12c2345e4b32a"
+        }
+      ],
+      "version": 3
+    },
+    "signature": "vFCZahG5IRztDgul3-d4Jf6OIN_68T14iGiNjv7VpqmMcBgumlNmmzHnXoFHJPJKwk7ZpTk2wj3pkybVUQVQ7w",
+    "signer_kind": "identity",
+    "attestation": {
+      "nonce": "SPsStt_XOS_VSRHsjBWBS-v3-k3T13DOi15lIDdj6iY",
+      "credential": {
+        "id": "4VxMqoF_9SAHEWlJwxfyIw",
+        "rawId": "4VxMqoF_9SAHEWlJwxfyIw",
+        "type": "public-key",
+        "response": {
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiNlphRFlneEVNanhLYUxwTEk2bms5bXNnM0toVkFmN3g5bVUtWFJfeGZkNCIsIm9yaWdpbiI6Imh0dHBzOi8vcmVsaWsubGluayIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+          "authenticatorData": "TBw7OBzkrXVhHQfr_JgzbfF_OTNFIccFGelq5C8e6PEFAAAAAQ",
+          "signature": "MEUCIH-HlD8bTsctf50YgCxMGEf4HTQ_EG5rik3SaIwSepWiAiEAnE7ZqbI1KxKYv7UXS_XmCm9BHP5KOHuHzlECer6-1CE",
+          "userHandle": null
+        }
+      },
+      "credential_id": "4VxMqoF_9SAHEWlJwxfyIw",
+      "public_key_jwk": {
+        "crv": "P-256",
+        "ext": true,
+        "key_ops": ["verify"],
+        "kty": "EC",
+        "x": "kYXQ3jRua6nJ0FWrGcmCe7qa4DUhEYbmjvIgxC0P9eE",
+        "y": "iWmvrOTzHoVMKin3R5Ny4C11Znid9eGBGTv8wyA5_24"
+      },
+      "alg": -7,
+      "passkey_registered_at": null
+    },
+    "layout_ciphertext": "9CWotl_IY218Cr0Ni_nOVwW5dFE9LfmdhSRpMD-kvTrmCnjBBngPwlbqAz3bnw"
+  },
+  "owner": {
+    "identity": {
+      "identity_id": "b8ade4ca42772ec7e0bfe58d025fc56430bf1495e27a1567d869bd12d1998e56",
+      "email": "owner@relik.test",
+      "kem_public_key": "BKBFCZQG_bU0RgnBN6OTbXsqXn1jSlkoVl1WXepst74F8Xukt1QZfkk6n-k3olUZlDWSHarCH1jnm9lZzgIP7A0",
+      "sig_public_key": "BBt7D0xtDJeFBP6s9PQ4pNm8Em1jtUGyj05C-0jK_R_-3YDBy0T_grmVCevXqeTh65SIkg2tGXnO6C4SRhEl3Gk",
+      "created_at": "2025-12-31T23:00:00.000Z",
+      "retired_at": null
+    },
+    "device": null
+  },
+  "signatures": [
+    {
+      "signer_index": 0,
+      "statement": {
+        "at": 1767225660000,
+        "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+        "consent": "relic/sign-consent/v1",
+        "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+        "mark_sha256": "3c2801ecb64441800542bacaeded807abf1a4650064ec90428afe061fccff969",
+        "opened_receipt_sha256": "57ece4843eb699e2d7c6908be7ab0b42ff0e88aa05525c934d0fd5596325b69b",
+        "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+        "request_id": "oKGio6SlpqeoqaqrrK2urw",
+        "request_sha256": "2213ade2afb157f7ba447c042f144dac0b3274b3f1dc1d77fd036249b4a90957",
+        "signer_email": "signer0@harbor.test",
+        "signer_identity_id": "e1e09d11a584c6d41c0dfcba7f5e858ac0b153f5f45b8e448bafe6d845053178",
+        "signer_index": 0,
+        "version": 3
+      },
+      "identity_signature": "91hMMQzsSBCA7jt4btsIt__iRwU1cTZWm_9Lg51RAoEkz5rb1rrYEk7Y3y8HStmAlZ6nMyClGc1fEEct1HuGKw",
+      "signer_identity": {
+        "identity_id": "e1e09d11a584c6d41c0dfcba7f5e858ac0b153f5f45b8e448bafe6d845053178",
+        "email": "signer0@harbor.test",
+        "kem_public_key": "BHQm-HzYhkn_U11c8gxJWVg0ZvbTamJZD8mwcG69Rp6UttiIlXCuC-9kVxRMybesUgr5CF28Kjcmck5K2OBowVs",
+        "sig_public_key": "BGeScbxCz909NUWbTc5pZKtZWHIxcZgw8wsEhaQ_nRJ_pnbitI8_r2b5tWuRkfpq4MFDTrtOsKtN1raQt2_l4_k",
+        "created_at": "2025-12-31T23:00:00.000Z",
+        "retired_at": null
+      },
+      "mark_ciphertext": "5hswdRHn2EOurmeCOyEz_KOwr5sNHT00lmJnnHNlSyQSCyQCcgyD6A54pQg_DD3Sg3cVuEeSf_NO7TfyMhYMrzdy7lY",
+      "webauthn": {
+        "nonce": "JRaT4Bl20JO9fwPonLydJ61p8eHb0HUc-zvBCEuntkU",
+        "credential": {
+          "id": "XPxq_e9rshBzGcvVW4W34w",
+          "rawId": "XPxq_e9rshBzGcvVW4W34w",
+          "type": "public-key",
+          "response": {
+            "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVTRybUR6a1VsdmoyTl9IMXd3OXBpQjdWaHhXbFI4NldwSEplNHM5dnJYOCIsIm9yaWdpbiI6Imh0dHBzOi8vcmVsaWsubGluayIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+            "authenticatorData": "TBw7OBzkrXVhHQfr_JgzbfF_OTNFIccFGelq5C8e6PEFAAAAAQ",
+            "signature": "MEYCIQC79w5IX_FZFYOU5ajc5q_z3q_GiEdaxBDTHr10VKkuTAIhAOMJFAM8MxPqExf1STbJvbQzoCKUbxCKm6FRwf4RgRb-",
+            "userHandle": null
+          }
+        },
+        "credential_id": "XPxq_e9rshBzGcvVW4W34w",
+        "public_key_jwk": {
+          "crv": "P-256",
+          "ext": true,
+          "key_ops": ["verify"],
+          "kty": "EC",
+          "x": "xk3vXdw0mS_QQ5hyW1aHtpqM-fNWEnjsUutBx3t7MNg",
+          "y": "NDLfAb29MX-DuTLPXgIsH_RAOywEOzhyNBoRbNmg5NU"
+        },
+        "alg": -7,
+        "passkey_registered_at": null
+      },
+      "recorded_at": "2026-01-01T00:01:00.001Z",
+      "receipts": {
+        "served_at": "2026-01-01T00:00:59.998Z",
+        "opened": {
+          "statement": {
+            "at": 1767225659999,
+            "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+            "key_commitment": "cff8b6f5590263a8e1b01c03824f5cf03bcc4aa9aa0d665ae78fcd5592d37611",
+            "reader_identity_id": "e1e09d11a584c6d41c0dfcba7f5e858ac0b153f5f45b8e448bafe6d845053178",
+            "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+            "version": 3
+          },
+          "identity_signature": "6vf48AiDIoMHE88VLH47uCR9NmhTNLaG3bcxS--ROw3kiPr5eMnDkblqwvDVjqM2kY9gUvVATtWxLoNG9VViYg"
+        }
+      }
+    },
+    {
+      "signer_index": 1,
+      "statement": {
+        "at": 1767225720000,
+        "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+        "consent": "relic/sign-consent/v1",
+        "content_mac": "77d7841c61a18073ae9d84b9f0ad1e325ecb960e9de22b370375fc9b38c3a0d1",
+        "mark_sha256": "ef4a07b674f8a2d33d2f128d447662099f819adc01b338bce024a6306a093586",
+        "opened_receipt_sha256": "075bddee5910ea81d1a52da928da144528340cb1751effce26df183a9c983313",
+        "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+        "request_id": "oKGio6SlpqeoqaqrrK2urw",
+        "request_sha256": "2213ade2afb157f7ba447c042f144dac0b3274b3f1dc1d77fd036249b4a90957",
+        "signer_email": "signer1@harbor.test",
+        "signer_identity_id": "1f83874a0427123169a231433c0749a883cc194ed31c097859e12c2345e4b32a",
+        "signer_index": 1,
+        "version": 3
+      },
+      "identity_signature": "ghMk54MiXcMmak1BZUwIXUQ7jIhzrQg1psq4JE0lIDVJjyf1ApbGlh0lM_COU6-ZOLkP3Xtd5k4LpWlKg88aog",
+      "signer_identity": {
+        "identity_id": "1f83874a0427123169a231433c0749a883cc194ed31c097859e12c2345e4b32a",
+        "email": "signer1@harbor.test",
+        "kem_public_key": "BIr7LdjUEKuPHwX6UOeWMkJOLZaGVr3cwhL63RmHw1k1ynY6GemIAHQIZ0UbSx-S6ohIzboIEFhWMhAyFpvEwBE",
+        "sig_public_key": "BEtuY8HAMXtAxlXA0RLUAF_1hR9L72-ViW0mv7pvBtWO6MdsYEan3gppkfKB5t3FyML_ZcRc7t9pTETkXVoQv-o",
+        "created_at": "2025-12-31T23:00:00.000Z",
+        "retired_at": null
+      },
+      "mark_ciphertext": "EhM0BvVESSLfVaa9lqk-HEHarpqoNNkJM23G4LmNxQif4H5hAuqvtrnVZA_PSwvUunHCak4n8Hzh-uBWjDUUim_hw7A",
+      "webauthn": {
+        "nonce": "EcjGgVNfE9xdHMvfA7g0S6RazE_bQZe1dI5SVBlzpAM",
+        "credential": {
+          "id": "9tQGZ_iSFvyXWZ9ctGs4Hw",
+          "rawId": "9tQGZ_iSFvyXWZ9ctGs4Hw",
+          "type": "public-key",
+          "response": {
+            "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiS3JRazUyTExZSnhoeEhPNmkwOWFzTVdqMmI1c3dMQ2JaczhVVzRadm15NCIsIm9yaWdpbiI6Imh0dHBzOi8vcmVsaWsubGluayIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+            "authenticatorData": "TBw7OBzkrXVhHQfr_JgzbfF_OTNFIccFGelq5C8e6PEFAAAAAQ",
+            "signature": "MEQCIHk67SdhazuHiayrMnfD5yhnnFGbdV9yOfuFWyGWJa70AiBpm0qgq6izuaudfUtVUQOd2pDGT3AK0oO9p4X5rJssXw",
+            "userHandle": null
+          }
+        },
+        "credential_id": "9tQGZ_iSFvyXWZ9ctGs4Hw",
+        "public_key_jwk": {
+          "crv": "P-256",
+          "ext": true,
+          "key_ops": ["verify"],
+          "kty": "EC",
+          "x": "nXk6oa_quozsfvXpSeIwO3VSyiVlKX71vYd0oyLn1CA",
+          "y": "50dm6qCEh3_g9atK5qxlpR3YXouMUQffJTr00-U3JYQ"
+        },
+        "alg": -7,
+        "passkey_registered_at": null
+      },
+      "recorded_at": "2026-01-01T00:02:00.001Z",
+      "receipts": {
+        "served_at": "2026-01-01T00:01:59.998Z",
+        "opened": {
+          "statement": {
+            "at": 1767225719999,
+            "ciphertext_sha256": "e037b9091476e3723d2eb8d4288c266884841941faa216f3ec75e623c10acdc6",
+            "key_commitment": "6956890c127404ef097babc481114461ed6d0fe7721ff7266532e29c513caafd",
+            "reader_identity_id": "1f83874a0427123169a231433c0749a883cc194ed31c097859e12c2345e4b32a",
+            "relic_id": "7k2m9qxah3tb0p4dvw8cr1nezf",
+            "version": 3
+          },
+          "identity_signature": "YAgJ5fFJs449ZLe7pXdCNUdFBXdHbEcQFJCWCFLl1aggMbcwUiTvSXNzrtT-em3tqjppGk9mVJqbQVlaAexDcg"
+        }
+      }
+    }
+  ],
+  "completed_at": "2026-01-01T00:10:00.000Z"
+}

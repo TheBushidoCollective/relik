@@ -8,6 +8,7 @@
  */
 
 import type { AuthenticationResponseJSON } from './passkey.ts';
+import type { SigningSummaryJSON } from './signing.ts';
 import type { SignedStatementBody, StatementKind } from './private.ts';
 
 export type AttestPurpose =
@@ -183,6 +184,12 @@ export interface PrivateAccessJSON {
   };
   /** The relik's live settings. Null for a caller with no standing to read it. */
   readonly settings: RelicSettingsJSON | null;
+  /**
+   * The relik's signing summary: the open request's version and the locked
+   * versions. Null for a caller with no standing to read it. Absent on answers
+   * from a service that predates signing, as `revocation` is on older answers.
+   */
+  readonly signing?: SigningSummaryJSON | null;
 }
 
 export interface PublicAccessJSON {

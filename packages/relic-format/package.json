@@ -18,6 +18,7 @@
     "./notebook": "./src/notebook.ts",
     "./presence": "./src/presence.ts",
     "./private": "./src/private.ts",
+    "./signing": "./src/signing.ts",
     "./renderer-class": "./src/renderer-class.ts",
     "./suggestions": "./src/suggestions.ts",
     "./subtitles": "./src/subtitles.ts",

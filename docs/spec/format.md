@@ -429,6 +429,9 @@ Each bound passkey has its own bundle, and a bundle opens only under that passke
 | `access_request` | the requester's identity | yes |
 | `grant`, `revocation`, `republish`, `delete`, `device_cert`, `device_revocation`, `recovery_designation` | the owner's identity | yes |
 | `relic_settings` | the owner's identity, on a private or a public relik | yes |
+| `signing_request`, `signing_cancel` | An owner identity (browser, passkey attested), or an owner device (relic-mcp, not attested) | Yes for an identity, no for a device |
+| `signature` | Private: the signer's identity. Public: nobody (`identity_signature` is `''`) | Always |
+| `open_receipt` | The reader's identity | No |
 | `seal` | an owner device or the owner's identity | no |
 | `device_enroll`, `device_request`, `owner_bind`, `private_publish` | a device | no |
 
@@ -512,6 +515,63 @@ Paths are NFC strings with 1 to 32 nonempty `/`-separated segments. No segment i
 Entries appear in strictly ascending UTF-8 byte order. Exact duplicates, case-folded collisions across any path prefix, and a file also used as a directory are refused. Folding applies NFC, uppercase, lowercase, then NFC. The writer normalizes paths before checking; the reader refuses a noncanonical path rather than changing it.
 
 An entry source may be an in-memory byte array or an asynchronous chunk source with its byte size known before encryption. The writer checks each source against that declared size. A source yielding too many or too few bytes aborts with `entry-size-mismatch`; a sink must discard any ciphertext already written. Record encryption holds bounded record buffers rather than the complete folder.
+
+### 3.21 Passkey signing
+
+A signature is a passkey assertion over one exact version. This section defines what a signature commits to, the request that asks for it, and the certificate that gathers the evidence. The code is `packages/relic-format/src/signing.ts` (`@relic/format/signing`) and `packages/relic-format/src/webauthn-verify.ts`. The service and relic-mcp verify with the same code, and the viewer runs it in the browser.
+
+**Keys.** Every key comes from the content key, which is the 16-byte fragment key of a public relik or the version key of a private one. Each is HKDF-SHA256 with an empty salt:
+
+- `signingKey = HKDF(ikm = content key, info = "relic/signing/v1", 32 bytes)`.
+- The content MAC key is `HKDF(ikm = signingKey, info = "relic/signing/content-mac/v1", 32 bytes)`.
+- The appearance key is `HKDF(ikm = signingKey, info = "relic/signing/appearance/v1", 16 bytes)`.
+
+Holding the signing key confirms the file and reads the sealed layout and marks. It does not reveal the content key or the comment key (3.13).
+
+**Content MAC.** `content_mac = hex(HMAC-SHA256(content MAC key, content))`, a standard HMAC computed over the streamed content. `content` is the bytes the content records decrypt to, after the envelope header. For envelope version 1 that is the file. For version 2 it is the whole stream, manifest included (3.20). A plain hash of the plaintext is not used, because it would let anyone holding a file test whether that file is stored (3.14).
+
+**Sealed appearance.** The layout and each mark are sealed with AES-128-GCM under the appearance key. The sealed text is base64url of `nonce (12 bytes) || ciphertext || tag (16 bytes)`. The additional data is `UTF8(kind) || 0x00 || UTF8(relicId) || u32be(version)`, where `kind` is `layout` or `mark`, so a sealed layout does not open as a mark. The plaintext is canonical JSON with sorted keys and no whitespace. Numbers are finite and written in their shortest round-trip form, because rectangle coordinates are fractions and the statement serializer (3.1) takes integers only. A sealed text that is not the canonical form of what it opens to is refused. The plaintext cap is 16 KiB for a layout and 32 KiB for a mark.
+
+**Layout.** `{v: 1, boxes: [{signer, page, rect}]}`. A box names a signer index, a page from 1 to 10,000, and a rectangle in unit coordinates under the rules of 3.1's AnchorRect. A signer has at most 20 boxes, and boxes are allowed only on a PDF. A signer with no box signs in the block after the document.
+
+**Mark.** `{v: 1, name, strokes}`. The name is 1 to 128 UTF-8 bytes with no control or bidirectional characters. Strokes are null, or a list of at most 64 flat `[x0, y0, x1, y1, ...]` arrays holding at most 2,048 points in all. Each coordinate is in [0, 1] at three decimals.
+
+**Statements.** Four kinds join the statement table of 3.17. Each is strictly parsed and signed over the bytes of 3.17.
+
+- `signing_request` names the relik and version, `ciphertext_sha256`, `content_mac`, `layout_sha256`, the owner, the signers, the order (`parallel` or `sequential`), `require_opened`, and `signer_id` (the owner identity, or the owner device that signed the request). `layout_sha256` is the SHA-256 of the sealed layout's UTF-8 text. `request_id` is exactly 16 bytes. There are 1 to 20 signers, with no duplicate address after normalization. Either every signer carries an identity (a private relik) or none does (a public relik), and `require_opened` needs identities.
+- `signature` answers one request. It names the request by `request_sha256` (the SHA-256 of the request's statement bytes), the signer index, the signer address, and the signer's identity, which is null on a public relik. It carries `mark_sha256`, the SHA-256 of the sealed mark's text, and `opened_receipt_sha256`, which is set only when the request requires an opened receipt. Its `consent` is `relic/sign-consent/v1`, whose text is fixed in `SIGN_CONSENT_TEXT`.
+- `open_receipt` is a reader's identity statement that its browser decrypted and checked the named version.
+
+**The passkey challenge.** A passkey answers `attestationChallenge(nonce, [statement bytes])` as defined in 3.17, the same construction used for attested owner actions. The nonce is 32 bytes and single-use, which the service enforces against its stored nonces.
+
+**Certificate.** A completed request yields a certificate with `format` `relic/signing-certificate/v1`. It carries the service origin and relying-party id, the relik and version, the digests, the signed request with its owner or device proof, and one entry per signer. Each entry holds the signed statement, the identity signature, the sealed mark, the passkey assertion, and the service's unsigned times. `signing_key` is present only in a copy that a reader's viewer or relic-mcp built. The certificate is strictly parsed, and an unknown field is refused.
+
+**Verifier.** `verifySigningCertificate` runs offline. A report with owner trust `unchecked` proves internal consistency only, not that an independently trusted owner made the request. `valid` is false until the caller supplies a matching independently obtained `trustedOwnerIdentityId`. Private signer identity pins may also be supplied by index; a mismatch makes `valid` false. The trust report marks each principal `matches`, `mismatch`, or `unchecked`. Public signer passkeys remain trust-on-first-use, not independently authenticated.
+
+| Check | Passes when |
+|---|---|
+| `format` | The certificate parses strictly, the origin is a bare origin whose host is the relying-party id, and the origin equals `expectedOrigin` when one is given. |
+| `request_statement` | The request parses and agrees with the certificate on relik, version, digests and owner, its layout digest matches, and its identities match the access class. |
+| `request_signer` | An owner identity signed the request, or an owner device signed it under an owner-signed device certificate that was valid at the request time. |
+| `request_attestation` | For an identity request, the owner's passkey assertion answers the request's challenge. |
+| `signers_complete` | There is exactly one signature for each signer index. |
+| `signature_statement` | Each signature parses. |
+| `consent` | The consent is the one the signer agreed to. |
+| `signature_binding` | The signature names this relik, version, digests, request and signer, and its `request_sha256` is the hash of the request. |
+| `mark_hash` | The sealed mark hashes to `mark_sha256`. |
+| `signature_webauthn` | The signer's passkey assertion answers the signature's challenge. |
+| `signature_identity` | On a private relik the signer's identity is the one pinned for that signer and its key signed the statement. On a public relik the identity signature is empty. |
+| `opened_receipt` | When one is required, the receipt parses, names the signer's identity, verifies under it, and hashes to `opened_receipt_sha256`. |
+| `order` | On a sequential request, no signer's time precedes the time of the signer before. |
+| `appearance` | Only when a signing key is given: the layout and every mark open under it. |
+| `content` | Only when a signing key and the content are given: the content MAC matches the signed one. |
+
+The assertion rules come from `webauthn-verify.ts`. `type` is `webauthn.get`. The challenge, the origin and the rpId hash match, and `crossOrigin` is not true. User presence and user verification are set, and the attested-credential flag is clear. Extension data, when present, is exactly one CBOR map that fills the rest of the authenticator data. Without it the data is exactly 37 bytes. The signature is ES256 over `authenticatorData || SHA-256(clientDataJSON)`, with the DER form converted to IEEE P1363, or RS256. The stored key carries no private part. The signature counter is checked by the service, against its own stored state, because it needs that state.
+
+**What a certificate proves.** A certificate with matching owner trust and passing checks records that the passkeys in it approved this version. The certificate alone does not establish who held a passkey, that the signer is who the address suggests, or that the signature is legally binding. The owner's email is an unsigned `claimed` address, not authenticated by the owner identity id. The report's owner and private signer fingerprints are the authenticated 64-character identity ids derived from the public keys, not fingerprints incorporating an unsigned address. Signed statement times come from the signer's device; `recorded_at`, `completed_at`, and `served_at` are unsigned service records.
+
+**What the verifier cannot check offline.** A receipt's `key_commitment` is checked against the seal by the service. The certificate does not carry the seal, so the verifier does not check it. The passkey's binding to an identity is checked by the service at registration, not by the certificate.
+
 
 ## 4. Routed to `shape`
 
