@@ -161,6 +161,12 @@ export async function requestSignatures(
       ).map((grant) => verifyGrant(grant, device.owner!, input.relicId))
     );
     signers = input.signers.map(({ email }) => {
+      if (email.toLowerCase() === device.owner!.email.toLowerCase()) {
+        return {
+          email: device.owner!.email,
+          identity_id: device.owner!.identity_id,
+        };
+      }
       const grant = grants.find(
         (g) =>
           !g.mark.revoked &&
