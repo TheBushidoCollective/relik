@@ -976,7 +976,7 @@ refused. Read and write requests use separate signing rate budgets, and session
 writes require JSON. A paused write is refused before it consumes an attestation
 nonce.
 
-All three routes accept JSON. Creation takes `{attestation, layout_ciphertext}`
+The create, cancel, and read routes accept JSON. Creation takes `{attestation, layout_ciphertext}`
 for an owner session, or `{publish_token, request, layout_ciphertext}` for a
 device. The device request holds `statement`, `signature`, `signer_kind` set to
 `device`, and `device_id`. Cancellation takes `{attestation}` or
@@ -1008,3 +1008,101 @@ opening it. The signer and owner can check it with the signing key. The
 certificate verifier opens and validates the layout only when a signing key is
 provided; without that key it checks the signed ciphertext hash, not the
 decrypted layout.
+
+### Signing and certificates
+
+`POST /api/relics/{id}/signing/options` takes `{request_id, share_proof?}`.
+It requires a reader session, and a public relik also requires its share proof.
+A publisher token is refused with `signing_requires_reader`. The response
+contains a single-use nonce and WebAuthn options, the version and ciphertext
+digest, content MAC, request hash, signer index and identity, opened receipt
+hash when required, and the consent identifier and text.
+
+`POST /api/relics/{id}/signing/signatures` takes `{request_id, share_proof?,
+attestation, mark_ciphertext}`. The signer attests a `signature` statement.
+The service verifies the WebAuthn assertion and, for private reliks, the
+identity signature, current identity, grant, and version wrap. It checks the
+request hash, signer, version, consent, ciphertext digest, content MAC, receipt
+hash, and encrypted mark hash. It reads the stored ciphertext to check its
+digest; the service cannot compute the content MAC without the signing key.
+
+For signature submissions, the service checks request status before verifying
+the attestation. It verifies and consumes the nonce before checking whether
+that signer already signed. A replay against a still-open request therefore
+returns `passkey_verification_failed` with `passkey_check: nonce`; a request
+already completed or cancelled returns `signing_request_closed` first. This
+order differs from the signing plan's route table.
+
+Each signature object is create-only. The request row's `signedBy` list is the
+authority for admitted signatures, and its compare-and-swap also changes the
+last signature's request to complete. Readers ignore objects absent from that
+list. Cancellation and signature admission compete on the same request row.
+If a process stops after storing a signature but before admission, a fresh,
+valid attestation by the same signer retries admission. The server verifies
+the stored signature and admits it; if the retry carries a different mark or
+statement, the first stored signature wins.
+
+On completion, the server clears the open slot and locks the signed version in
+one relik-row compare-and-swap. It assembles a certificate, verifies it against
+the configured origin and stored owner identity, then stores it create-only.
+Reads retry completion if necessary. Public reliks cannot republish while a
+request is open or after the current version is signed. Private reliks may
+republish and revoke access, but a signed version cannot be deleted.
+
+`POST /api/relics/{id}/signing/certificate` takes `{request_id, share_proof?
+| publish_token?}` and uses the signing-read authorization. It returns the
+stored certificate, or `certificate_not_ready` while the request is incomplete.
+A listed private signer retains signing-read access after revocation.
+
+### Opened receipts
+
+`POST /api/relics/{id}/receipts/opened` takes `{statement,
+identity_signature}` for a private relik. The signed `open_receipt` statement
+must name the session's current identity and match the version's seal digest
+and key commitment. The identity must retain access to the version, and the
+service must already have recorded a served receipt when it delivered the
+wrapped version key. The first opened receipt wins. A new receipt returns 201;
+a repeat returns 200 with the original served and opened times.
+
+Served records show that a wrapped key was handed to the identity, not that a
+person read the file. Opened records are identity-signed statements that a
+reader's client opened and checked it. Public reliks have neither receipt type.
+
+### Signing refusals
+
+| Condition | Code |
+|---|---|
+| Missing session or publisher token used as reader | `sign_in_required`, `signing_requires_reader` |
+| Invalid public share proof | `invalid_share_proof` |
+| Request missing or no longer open | `signing_request_not_found`, `signing_request_closed` |
+| Signing paused by owner | `signing_closed` |
+| Signer absent, already admitted, or waiting for a prior signer | `not_a_signer`, `already_signed`, `signing_not_your_turn` |
+| Private identity missing, changed, or without current access | `identity_required`, `signer_identity_changed`, `private_access_denied` |
+| Required opened receipt absent | `signing_open_required` |
+| Mark or statement binding invalid | `invalid_signature` with `signing_check` |
+| Ciphertext digest or content MAC differs | `signing_digest_mismatch`, `signing_content_mismatch` |
+| Receipt invalid or served record absent | `invalid_receipt` with `receipt_check`, `receipt_not_served` |
+| Certificate absent before completion | `certificate_not_ready` |
+
+Attestation parsing, passkey verification, rate limiting, expiry, deletion,
+and the service pause can also refuse the request as described above.
+
+### Mail and limits
+
+Private invitations and signing notices are generic and omit titles and other
+recipients' addresses. Invitations go to every private signer in parallel
+requests, or the first signer in sequential requests. The next signer receives
+a turn notice after each sequential signature. The owner receives signature
+notices. Completion mail goes to the owner and signers once a compare-and-swap
+claims it; a crash after the claim can drop that send. Public completion mail
+includes the certificate as JSON. Signing mail honors per-relik stop links and
+the signing and global change-notice limits, independently of the owner's
+general notifications setting. No signing mail contains a fragment key.
+
+Public signers' passkeys are trusted on first use. A malicious service could
+register its own passkey under an address and produce an internally valid
+certificate. A passkey approval identifies a credential, not the person holding
+it, and does not establish whether a signature is legally binding. Statement
+times come from the signer's clock and are checked within the challenge window;
+recorded, served, and completion times are unsigned service records. Deleting
+the whole relik removes the server's signing records.

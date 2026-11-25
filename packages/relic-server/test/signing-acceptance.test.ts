@@ -7,17 +7,18 @@ import { layoutCiphertextSha256, markCiphertextSha256, signingRequestSha256, ver
 import { createApp } from '../src/app.ts';
 import type { OutboundMail } from '../src/mail.ts';
 import { sha256Hex } from '../src/gcs.ts';
+import { gcsStore } from '../src/gcsstore.ts';
 import { MemoryStorage } from '../src/storage.ts';
 import { assertVersionUnlocked, MemoryStore } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
+import { fakeGcs } from './fake-gcs.ts';
 import { attestation, grant, identity, NOW, relic, RELIC_ID, seal, wrap } from './private-fixtures.ts';
 
 const origin = 'https://relic.example';
 const root = `/api/relics/${RELIC_ID}`;
 const b64 = (bytes: Uint8Array) => encodeBase64url(bytes);
 
-async function fixture() {
-  const store = new MemoryStore();
+async function fixture(store: RelicStore = new MemoryStore()) {
   const storage = new MemoryStorage();
   const mails: { email: string; mail: OutboundMail }[] = [];
   const mailer = { async send() {}, async sendMail(email: string, mail: OutboundMail) { mails.push({ email, mail }); } };
