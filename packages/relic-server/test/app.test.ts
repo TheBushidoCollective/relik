@@ -1434,7 +1434,7 @@ describe('the mint', () => {
     expect(body['current_version']).toBe(5);
   });
 
-  test('returns the nine fields the viewer consumes', async () => {
+  test('returns the ten fields the viewer consumes', async () => {
     const { id } = await publish();
     const body = (await app
       .fetch(
@@ -1449,6 +1449,7 @@ describe('the mint', () => {
       'object_length',
       'relic_expires_at',
       'settings',
+      'signing',
       'url',
       'url_expires_at',
       'version',

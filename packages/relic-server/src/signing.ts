@@ -1,6 +1,7 @@
 import { normalizeEmail } from '@relic/format';
 import {
   decodeBase64url,
+  InvalidStatementError,
   parseStatement,
   statementBytes,
   verifyStatement,
@@ -103,6 +104,23 @@ export async function signingRequestView(
         const opened = receipts.find(
           (r) => r.identityId === signer.identity_id && r.kind === 'opened'
         );
+        let needsAccess = false;
+        if (relic.access === 'private' && signature === undefined) {
+          const current = await currentIdentity(env, signer.email);
+          if (
+            identity === undefined ||
+            current?.identityId !== identity.identityId
+          ) {
+            needsAccess = true;
+          } else {
+            try {
+              await requireRead(env, relic, owner, identity, statement.version);
+            } catch (error) {
+              if (!(error instanceof ProblemError)) throw error;
+              needsAccess = true;
+            }
+          }
+        }
         return {
           index,
           email: signer.email,
@@ -111,9 +129,17 @@ export async function signingRequestView(
           status:
             signature !== undefined
               ? ('signed' as const)
-              : statement.order === 'sequential' && signatures.length < index
-                ? ('waiting' as const)
-                : ('ready' as const),
+              : needsAccess
+                ? ('needs_access' as const)
+                : statement.order === 'sequential' &&
+                    statement.signers
+                      .slice(0, index)
+                      .some(
+                        (_, prior) =>
+                          !signatures.some((item) => item.signerIndex === prior)
+                      )
+                  ? ('waiting' as const)
+                  : ('ready' as const),
           served_at:
             served === undefined ? null : new Date(served.at).toISOString(),
           opened_at:
@@ -153,6 +179,31 @@ export async function signingRequestView(
   };
 }
 
+function parseSigningRequest(value: unknown): SigningRequestStatement {
+  try {
+    return parseStatement('signing_request', value);
+  } catch (error) {
+    if (!(error instanceof InvalidStatementError)) throw error;
+    const check =
+      error.check === 'signers' || error.field === 'signers'
+        ? 'signers'
+        : error.check === 'require_opened' || error.field === 'require_opened'
+          ? 'require_opened'
+          : error.field === 'request_id'
+            ? 'request_id'
+            : error.field === 'version'
+              ? 'version'
+              : undefined;
+    if (check !== undefined)
+      throw new ProblemError('invalid_signing_request', {
+        signing_check: check,
+      });
+    throw new ProblemError('invalid_statement', {
+      statement_check: error.check,
+    });
+  }
+}
+
 export async function createSigningRequest(
   env: PrivateEnv,
   row: RelicRow,
@@ -160,23 +211,30 @@ export async function createSigningRequest(
   body: Record<string, unknown>,
   digest: (row: RelicRow, version: number) => Promise<string>
 ): Promise<SigningRequestJSON> {
+  if (
+    'publish_token' in body &&
+    !(await publishTokenOk(row, body.publish_token))
+  )
+    throw new ProblemError('invalid_publish_token');
+  if (!('publish_token' in body) && session === undefined)
+    throw new ProblemError('sign_in_required');
+  const identity =
+    session === undefined || 'publish_token' in body
+      ? undefined
+      : await currentIdentity(env, normalizeEmail(session.email));
+  if (!('publish_token' in body) && identity === undefined)
+    throw new ProblemError('identity_required');
   const owner = await ownerRecord(env, row);
   let statement: SigningRequestStatement;
   let signature: string;
   let signerKind: 'identity' | 'device';
   let attestation: StoredAttestation | undefined;
   if ('publish_token' in body) {
-    if (!(await publishTokenOk(row, body.publish_token)))
-      throw new ProblemError('invalid_publish_token');
     const signed = body.request;
     if (signed === null || typeof signed !== 'object' || Array.isArray(signed))
       throw new ProblemError('invalid_statement', { statement_check: 'shape' });
     const input = signed as Record<string, unknown>;
-    try {
-      statement = parseStatement('signing_request', input.statement);
-    } catch {
-      throw new ProblemError('invalid_statement', { statement_check: 'shape' });
-    }
+    statement = parseSigningRequest(input.statement);
     if (
       input.signer_kind !== 'device' ||
       typeof input.device_id !== 'string' ||
@@ -212,11 +270,24 @@ export async function createSigningRequest(
     signature = input.signature;
     signerKind = 'device';
   } else {
-    if (session === undefined) throw new ProblemError('sign_in_required');
-    const identity = await currentIdentity(env, normalizeEmail(session.email));
     if (identity === undefined) throw new ProblemError('identity_required');
     if (identity.identityId !== owner.identityId)
       throw new ProblemError('owner_required');
+    const bundle = body.attestation;
+    if (
+      bundle !== null &&
+      typeof bundle === 'object' &&
+      !Array.isArray(bundle)
+    ) {
+      const statements = (bundle as Record<string, unknown>).statements;
+      if (
+        Array.isArray(statements) &&
+        statements.length === 1 &&
+        statements[0]?.kind === 'signing_request'
+      ) {
+        parseSigningRequest(statements[0].statement);
+      }
+    }
     const verified = await verifyAttestation(env, {
       bundle: body.attestation,
       purpose: 'signing_request',
@@ -249,7 +320,7 @@ export async function createSigningRequest(
   if (row.expiresAt !== undefined && row.expiresAt <= env.now)
     throw new ProblemError('relic_expired', { relic_id: row.id });
   if (row.settings?.signing === false) throw new ProblemError('signing_closed');
-  if (row.access !== 'private' && row.shareVerifier === undefined)
+  if (row.access !== 'private' && !row.shareVerifier)
     throw new ProblemError('share_unavailable');
   const invalid = (check: string): never => {
     throw new ProblemError('invalid_signing_request', { signing_check: check });
@@ -316,9 +387,20 @@ export async function createSigningRequest(
           signer_email: signer.email,
         });
       seen.add(identity.identityId);
+      const grant = await env.store.getGrant(row.id, identity.identityId);
+      if (
+        grant === undefined ||
+        grant.revokedAt !== undefined ||
+        !grant.versions.includes(statement.version)
+      ) {
+        throw new ProblemError('signer_without_access', {
+          signer_email: signer.email,
+        });
+      }
       try {
         await requireRead(env, row, owner, identity, statement.version);
-      } catch {
+      } catch (error) {
+        if (!(error instanceof ProblemError)) throw error;
         throw new ProblemError('signer_without_access', {
           signer_email: signer.email,
         });
@@ -339,8 +421,9 @@ export async function createSigningRequest(
     !(await env.store.putSigningRequest(row.id, statement.request_id, record))
   )
     invalid('request_id');
+  let updated: RelicRow | undefined;
   try {
-    const updated = await env.store.updateRelic(row.id, (current) => {
+    updated = await env.store.updateRelic(row.id, (current) => {
       if (current.signingOpen !== undefined)
         throw new ProblemError('signing_in_progress');
       if (current.lockedVersions?.includes(statement.version))
@@ -352,6 +435,20 @@ export async function createSigningRequest(
         current.deletedVersions?.includes(statement.version)
       )
         invalid('version');
+      if (current.ownerIdentityId !== owner.identityId)
+        throw new ProblemError('owner_required');
+      if (
+        current.access === 'private' &&
+        (current.accessEpoch ?? 0) !== (row.accessEpoch ?? 0)
+      ) {
+        throw new ProblemError('signer_without_access');
+      }
+      if (
+        current.publishedAt === undefined ||
+        (current.access === 'private' &&
+          current.sealedVersion !== current.version)
+      )
+        invalid('published');
       if (current.settings?.signing === false)
         throw new ProblemError('signing_closed');
       if (current.expiresAt !== undefined && current.expiresAt <= env.now)
@@ -365,7 +462,6 @@ export async function createSigningRequest(
       };
     });
     if (updated === undefined) throw new ProblemError('relic_not_found');
-    return signingRequestView(env, updated, record);
   } catch (error) {
     await env.store.updateSigningRequest(
       row.id,
@@ -374,6 +470,11 @@ export async function createSigningRequest(
     );
     throw error;
   }
+  if ((await env.store.getTombstone(row.id)) !== undefined) {
+    await env.store.deleteSigningForRelic(row.id);
+    throw new ProblemError('relic_removed', { relic_id: row.id });
+  }
+  return signingRequestView(env, updated, record);
 }
 
 export async function cancelSigningRequest(
@@ -382,14 +483,25 @@ export async function cancelSigningRequest(
   session: SessionRow | undefined,
   body: Record<string, unknown>
 ): Promise<SigningRequestJSON> {
+  if (
+    'publish_token' in body &&
+    !(await publishTokenOk(row, body.publish_token))
+  )
+    throw new ProblemError('invalid_publish_token');
+  if (!('publish_token' in body) && session === undefined)
+    throw new ProblemError('sign_in_required');
+  const identity =
+    session === undefined || 'publish_token' in body
+      ? undefined
+      : await currentIdentity(env, normalizeEmail(session.email));
+  if (!('publish_token' in body) && identity === undefined)
+    throw new ProblemError('identity_required');
   const owner = await ownerRecord(env, row);
   let statement: SigningCancelStatement;
   let signature: string;
   let signerKind: 'identity' | 'device';
   let attestation: StoredAttestation | undefined;
   if ('publish_token' in body) {
-    if (!(await publishTokenOk(row, body.publish_token)))
-      throw new ProblemError('invalid_publish_token');
     const value = body.cancel;
     if (value === null || typeof value !== 'object' || Array.isArray(value))
       throw new ProblemError('invalid_statement', { statement_check: 'shape' });
@@ -434,8 +546,6 @@ export async function cancelSigningRequest(
     signature = input.signature;
     signerKind = 'device';
   } else {
-    if (session === undefined) throw new ProblemError('sign_in_required');
-    const identity = await currentIdentity(env, normalizeEmail(session.email));
     if (identity === undefined) throw new ProblemError('identity_required');
     if (identity.identityId !== owner.identityId)
       throw new ProblemError('owner_required');
@@ -508,7 +618,13 @@ export async function readSigningState(
   body: Record<string, unknown>,
   checkProof: (row: RelicRow, proof: unknown) => Promise<string>
 ): Promise<SigningStateJSON> {
-  const requests = await env.store.listSigningRequests(row.id);
+  const requests = (await env.store.listSigningRequests(row.id)).filter(
+    (request) =>
+      request.status === 'complete' ||
+      (request.status === 'cancelled' && request.cancellation !== undefined) ||
+      (request.status === 'open' &&
+        request.statement['request_id'] === row.signingOpen?.requestId)
+  );
   const email =
     session === undefined ? undefined : normalizeEmail(session.email);
   const identity =
