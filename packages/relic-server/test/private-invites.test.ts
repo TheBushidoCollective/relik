@@ -11,6 +11,7 @@ import {
   generateIdentityKeys,
   generateInviteKeyPair,
   identityFingerprint,
+  formatFingerprint,
   identityIdOf,
   inviteIdOf,
   keyCommitment,
@@ -1227,6 +1228,15 @@ test('an invited identity claims and retains exactly its versions', async () => 
       item.mail.subject.includes('accepted your invitation')
     )
   ).toHaveLength(1);
+  now += 8 * DAY;
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, invitee.cookie)
+      )
+    ).status
+  ).toBe(200);
 });
 
 test('a pending claim grants nothing and retry finalizes an interrupted claim', async () => {
@@ -1515,6 +1525,12 @@ test('direct sharing looks up, grants, refuses repeats and sends a fingerprint n
   expect(notices).toHaveLength(1);
   expect(notices[0]!.mail.text).toContain(owner.email);
   expect(notices[0]!.mail.text).toContain('fingerprint');
+  expect(notices[0]!.mail.text).toContain(
+    formatFingerprint(
+      await identityFingerprint(reader.identityId!, reader.email)
+    )
+  );
+  expect(notices[0]!.mail.text).not.toContain('#');
   const events = await store.listAccessEvents(owner.identityId!, now, RELIC_ID);
   expect(events.filter((event) => event.kind === 'share')).toHaveLength(1);
 });
@@ -1723,4 +1739,360 @@ test('a different claimant wins the CAS without inheriting the losing claim', as
     ct: saved.ct,
   });
   expect(Buffer.from(opened)).toEqual(Buffer.from(versionKey));
+});
+
+test('removing an accepted invitee revokes the claim and removes its wraps', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const invitee = await person('ada@example.com');
+  const { inviteId } = await createInvite(owner, invitee.email, versionKey);
+  await registerIdentity(invitee);
+  const statement = {
+    at: now,
+    claimant_identity_id: invitee.identityId!,
+    invite_id: inviteId,
+    relic_id: RELIC_ID,
+    versions: [1],
+  };
+  const body = {
+    statement,
+    identity_signature: await signStatement(
+      signer(invitee.keys!),
+      statementBytes('invite_claim', statement)
+    ),
+    wraps: [await wrap(invitee.keys!.kemPublicKey, versionKey, 1)],
+  };
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/invites/${inviteId}/claim`,
+        post(body, invitee.cookie)
+      )
+    ).status
+  ).toBe(201);
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/invites/${inviteId}/revoke`,
+        post({}, owner.cookie)
+      )
+    ).status
+  ).toBe(200);
+  const claim = await store.getInviteClaim(RELIC_ID, invitee.identityId!);
+  expect(claim?.revokedAt).toBe(now);
+  const identity = await store.getIdentity(invitee.identityId!);
+  expect(await store.getWrap(RELIC_ID, 1, identity!.kemKeyId)).toBeUndefined();
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, invitee.cookie)
+      )
+    ).status
+  ).toBe(403);
+});
+
+test('owner deletion removes invitation and claim rows and wraps', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const invitee = await person('ada@example.com');
+  const { inviteId } = await createInvite(owner, invitee.email, versionKey);
+  await registerIdentity(invitee);
+  await claimFor(invitee, owner, [1]);
+  const attestation = await attest(owner, 'delete', RELIC_ID, [
+    {
+      kind: 'delete',
+      statement: {
+        at: now,
+        owner_identity_id: owner.identityId,
+        relic_id: RELIC_ID,
+        versions: 'all',
+      },
+    },
+  ]);
+  const response = await send(
+    `/api/relics/${RELIC_ID}/delete`,
+    post({ attestation }, owner.cookie)
+  );
+  expect(response.status).toBe(200);
+  expect(await store.getInvite(RELIC_ID, inviteId)).toBeUndefined();
+  expect(
+    await store.getInviteClaim(RELIC_ID, invitee.identityId!)
+  ).toBeUndefined();
+  expect(await store.listWraps(RELIC_ID)).toEqual([]);
+});
+
+test('version deletion strips invitation versions and claimant wraps', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const invitee = await person('ada@example.com');
+  const { inviteId } = await createInvite(owner, invitee.email, versionKey);
+  await registerIdentity(invitee);
+  await claimFor(invitee, owner, [1]);
+  await store.updateRelic(RELIC_ID, (row) => ({ ...row, version: 2 }));
+  const attestation = await attest(owner, 'delete', RELIC_ID, [
+    {
+      kind: 'delete',
+      statement: {
+        at: now,
+        owner_identity_id: owner.identityId,
+        relic_id: RELIC_ID,
+        versions: [1],
+      },
+    },
+  ]);
+  const response = await send(
+    `/api/relics/${RELIC_ID}/delete`,
+    post({ attestation }, owner.cookie)
+  );
+  expect(response.status).toBe(200);
+  const invite = await store.getInvite(RELIC_ID, inviteId);
+  expect(invite?.status).toBe('revoked');
+  expect(invite?.versions).toEqual([]);
+  expect(invite?.wraps).toEqual([]);
+  expect(
+    (await store.getInviteClaim(RELIC_ID, invitee.identityId!))?.versions
+  ).toEqual([]);
+  expect(await store.listWraps(RELIC_ID, 1)).toEqual([]);
+});
+
+test('open, claimed and confirmed invitation records do not alter recipients', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const before = await recipientsOf(owner);
+  const invitee = await person('ada@example.com');
+  const { inviteId } = await createInvite(owner, invitee.email, versionKey);
+  expect(await recipientsOf(owner)).toEqual(before);
+  await registerIdentity(invitee);
+  const statement = {
+    at: now,
+    claimant_identity_id: invitee.identityId!,
+    invite_id: inviteId,
+    relic_id: RELIC_ID,
+    versions: [1],
+  };
+  const claim = {
+    statement,
+    identity_signature: await signStatement(
+      signer(invitee.keys!),
+      statementBytes('invite_claim', statement)
+    ),
+    wraps: [await wrap(invitee.keys!.kemPublicKey, versionKey, 1)],
+  };
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/invites/${inviteId}/claim`,
+        post(claim, invitee.cookie)
+      )
+    ).status
+  ).toBe(201);
+  expect(await recipientsOf(owner)).toEqual(before);
+  const grant = await grantStatementFor(owner, invitee, [1]);
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/grants`,
+        post(
+          {
+            attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+            wraps: [await wrap(invitee.keys!.kemPublicKey, versionKey, 1)],
+          },
+          owner.cookie
+        )
+      )
+    ).status
+  ).toBe(201);
+  const confirmed = await recipientsOf(owner);
+  await store.deleteInvite(RELIC_ID, inviteId);
+  expect(await recipientsOf(owner)).toEqual(confirmed);
+});
+
+test('an orphan claim wrap does not broaden a later grant and revocation removes it', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const reader = await person('reader@example.com');
+  await registerIdentity(reader);
+  const orphan = await wrap(reader.keys!.kemPublicKey, versionKey, 1);
+  await store.putWrap({
+    relicId: RELIC_ID,
+    version: 1,
+    recipientKeyId: orphan.recipient_key_id,
+    enc: orphan.enc,
+    ct: orphan.ct,
+    createdAt: now,
+    source: 'claim',
+  });
+  const seal = (await store.getSeal(RELIC_ID, 1))!;
+  await store.putSeal({ ...seal, version: 2 });
+  await store.updateRelic(RELIC_ID, (row) => ({
+    ...row,
+    version: 2,
+    sealedVersion: 2,
+  }));
+  const grant = await grantStatementFor(owner, reader, [2]);
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/grants`,
+        post(
+          {
+            attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+            wraps: [await wrap(reader.keys!.kemPublicKey, versionKey, 2)],
+          },
+          owner.cookie
+        )
+      )
+    ).status
+  ).toBe(201);
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, reader.cookie)
+      )
+    ).status
+  ).toBe(403);
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/2/key`,
+        post({}, reader.cookie)
+      )
+    ).status
+  ).toBe(200);
+  const access = await send(`/api/relics/${RELIC_ID}/access`, {
+    cookie: reader.cookie,
+  });
+  const me = access.body['me'];
+  expect(
+    me !== null &&
+      typeof me === 'object' &&
+      'readable_versions' in me &&
+      me.readable_versions
+  ).toEqual([2]);
+  const attestation = await attest(owner, 'revoke', RELIC_ID, [
+    {
+      kind: 'revocation',
+      statement: {
+        at: now,
+        grantee_identity_id: reader.identityId,
+        owner_identity_id: owner.identityId,
+        relic_id: RELIC_ID,
+      },
+    },
+    {
+      kind: 'republish',
+      statement: {
+        at: now,
+        owner_identity_id: owner.identityId,
+        previous_version: 2,
+        reason: 'rekey',
+        relic_id: RELIC_ID,
+      },
+    },
+  ]);
+  const revoked = await send(
+    `/api/relics/${RELIC_ID}/revocations`,
+    post(
+      {
+        attestation,
+        renderer_class: 'markdown',
+        declared_size_bytes: 64,
+        declared_ciphertext_bytes: encryptedSize(64),
+      },
+      owner.cookie
+    )
+  );
+  expect(revoked.status).toBe(200);
+  expect(
+    await store.getWrap(RELIC_ID, 1, orphan.recipient_key_id)
+  ).toBeUndefined();
+});
+
+test('claiming an expired invitation refuses before creating a claim', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const invitee = await person('ada@example.com');
+  const { inviteId } = await createInvite(owner, invitee.email, versionKey, {
+    expiresAt: now + DAY,
+  });
+  await registerIdentity(invitee);
+  now += DAY + 1;
+  const statement = {
+    at: now,
+    claimant_identity_id: invitee.identityId!,
+    invite_id: inviteId,
+    relic_id: RELIC_ID,
+    versions: [1],
+  };
+  const body = {
+    statement,
+    identity_signature: await signStatement(
+      signer(invitee.keys!),
+      statementBytes('invite_claim', statement)
+    ),
+    wraps: [await wrap(invitee.keys!.kemPublicKey, versionKey, 1)],
+  };
+  const response = await send(
+    `/api/relics/${RELIC_ID}/invites/${inviteId}/claim`,
+    post(body, invitee.cookie)
+  );
+  expect(response.status).toBe(410);
+  expect(response.body['code']).toBe('invite_expired');
+  expect(
+    await store.getInviteClaim(RELIC_ID, invitee.identityId!)
+  ).toBeUndefined();
+});
+
+test('claiming is bound to the address and the current identity signature', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const invitee = await person('ada@example.com');
+  const other = await person('other@example.com');
+  const { inviteId } = await createInvite(owner, invitee.email, versionKey);
+  await registerIdentity(invitee);
+  const statement = {
+    at: now,
+    claimant_identity_id: invitee.identityId!,
+    invite_id: inviteId,
+    relic_id: RELIC_ID,
+    versions: [1],
+  };
+  const body = {
+    statement,
+    identity_signature: await signStatement(
+      signer(invitee.keys!),
+      statementBytes('invite_claim', statement)
+    ),
+    wraps: [await wrap(invitee.keys!.kemPublicKey, versionKey, 1)],
+  };
+  const path = `/api/relics/${RELIC_ID}/invites/${inviteId}/claim`;
+  const otherAddress = await send(path, post(body, other.cookie));
+  const missing = await send(
+    `/api/relics/${RELIC_ID}/invites/${'f'.repeat(64)}/claim`,
+    post(body, other.cookie)
+  );
+  expect(otherAddress.status).toBe(404);
+  expect(missing.status).toBe(404);
+  expect(otherAddress.body['code']).toBe(missing.body['code']);
+  const forged = await send(
+    path,
+    post(
+      { ...body, identity_signature: encodeBase64url(randomBytes(64)) },
+      invitee.cookie
+    )
+  );
+  expect(forged.status).toBe(400);
+  expect(forged.body['statement_check']).toBe('signature');
+  expect(
+    await store.getInviteClaim(RELIC_ID, invitee.identityId!)
+  ).toBeUndefined();
 });

@@ -747,7 +747,7 @@ Decision and passkey routes read JSON request bodies via a streaming reader capp
 
 ## 10. Private reliks
 
-A private relik's link carries no key. Its URL is `https://<relic-domain>/{id}` with no fragment. Each version has its own content key, wrapped to each reader's identity, so an identity that holds a wrap decides what it can open, and the link alone does not. The server stores wraps, seals, grants, requests, owner indexes and an access log. It never stores a key, and no route, error, log line or test snapshot carries one. A public relik is unchanged by this section.
+A direct private relik link carries no key. Each version has its own content key, wrapped to an authorized reader's identity. An invitation link instead carries a temporary invitation key in its fragment and also requires the invited address's session. The server stores wraps, seals, grants, requests, invitations, claims, owner indexes and an access log. It never stores a plaintext content key or the invitation private key.
 
 ### 10.1 Routes
 
