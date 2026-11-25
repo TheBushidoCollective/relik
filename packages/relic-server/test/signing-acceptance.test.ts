@@ -15,6 +15,7 @@ import type {
   SigningRequestStatement,
   SignatureStatement,
   SigningCancelStatement,
+  DeleteStatement,
 } from '@relic/format/private';
 import {
   layoutCiphertextSha256,
@@ -184,11 +185,12 @@ async function fixture(store: RelicStore = new MemoryStore()) {
   async function assertion(
     who: typeof owner,
     nonce: string,
-    kind: 'signature' | 'signing_request' | 'signing_cancel',
+    kind: 'signature' | 'signing_request' | 'signing_cancel' | 'delete',
     statement:
       | SigningRequestStatement
       | SignatureStatement
-      | SigningCancelStatement,
+      | SigningCancelStatement
+      | DeleteStatement,
     signIdentity: boolean
   ) {
     const message = statementBytes(kind, statement as never);
@@ -392,6 +394,7 @@ async function fixture(store: RelicStore = new MemoryStore()) {
     first,
     second,
     post,
+    assertion,
     open,
     opened,
     prepare,
@@ -752,6 +755,34 @@ test('private signing requires verified opens and produces a verifiable certific
   const locked = await f.store.getRelic(RELIC_ID);
   expect(() => assertVersionUnlocked(locked!, 1)).toThrow();
   expect((await f.store.beginVersion(RELIC_ID, 'html', 42))?.version).toBe(2);
+  const nonce = await f.post(
+    f.a,
+    '/api/attest/nonce',
+    { purpose: 'delete', relic_id: RELIC_ID },
+    f.owner.cookie
+  );
+  expect(nonce.status).toBe(200);
+  const deletion: DeleteStatement = {
+    at: NOW,
+    owner_identity_id: f.owner.identityId,
+    relic_id: RELIC_ID,
+    versions: [1],
+  };
+  const attempted = await f.post(
+    f.a,
+    `${root}/delete`,
+    {
+      attestation: await f.assertion(
+        f.owner,
+        nonce.body.nonce,
+        'delete',
+        deletion,
+        true
+      ),
+    },
+    f.owner.cookie
+  );
+  expect(attempted.body.code).toBe('version_locked');
   expect(
     f.mails.every(
       ({ mail }) => !JSON.stringify(mail).includes('SECRET CLIENT TITLE')
