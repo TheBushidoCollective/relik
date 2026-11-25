@@ -87,6 +87,8 @@ import { loadPrivatePublishState } from './state.ts';
 import { readDecisions } from './decisions.ts';
 import { shareRelic } from './share.ts';
 import { type SettingsInput, updateSettings } from './settings.ts';
+import { verifyCertificate } from './verify-certificate.ts';
+import { cancelSigning, readSigning } from './signing.ts';
 import { type ProgramReport, programText } from './program/report.ts';
 import {
   cellResolutionLine,
@@ -224,6 +226,9 @@ export const RESOLVE_COMMENT_TOOL_NAME = 'relic_resolve_comment';
 
 export const READ_DECISIONS_TOOL_NAME = 'relic_read_decisions';
 export const SETTINGS_TOOL_NAME = 'relic_settings';
+export const VERIFY_CERTIFICATE_TOOL_NAME = 'relic_verify_certificate';
+export const CANCEL_SIGNING_TOOL_NAME = 'relic_cancel_signing';
+export const READ_SIGNING_TOOL_NAME = 'relic_read_signing';
 
 export const ENROLL_TOOL_NAME = 'relic_enroll_device';
 
@@ -1051,6 +1056,61 @@ export const LIST_TOOL_DEFINITION = {
   },
 } as const;
 
+export const READ_SIGNING_TOOL_DEFINITION = {
+  name: READ_SIGNING_TOOL_NAME,
+  title: 'Read signing requests',
+  description:
+    'Read signing status, receipts and marks locally. A saved certificate includes a signing key and should be treated as sensitive. Signatures are made by a person in the viewer with their passkey. No tool signs or records a signature on anyone’s behalf.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      relic_id: { type: 'string' },
+      request_id: { type: 'string' },
+      save_certificate_to: { type: 'string' },
+    },
+    required: ['relic_id'],
+    additionalProperties: false,
+  },
+} as const;
+
+export const CANCEL_SIGNING_TOOL_DEFINITION = {
+  name: CANCEL_SIGNING_TOOL_NAME,
+  title: 'Cancel a signing request',
+  description:
+    'Cancel an open signing request using this machine’s owner device and publish token. Signatures are made by a person in the viewer with their passkey. No tool signs or records a signature on anyone’s behalf.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      relic_id: { type: 'string' },
+      request_id: { type: 'string' },
+    },
+    required: ['relic_id', 'request_id'],
+    additionalProperties: false,
+  },
+} as const;
+
+export const VERIFY_CERTIFICATE_TOOL_DEFINITION = {
+  name: VERIFY_CERTIFICATE_TOOL_NAME,
+  title: 'Verify a signing certificate offline',
+  description:
+    "Verify a certificate on this machine without contacting the service. Supply the owner identity id from an independent trusted source; without it the report cannot be valid. The owner email is a claim, not a verified identity. Electronic signatures are not claimed to be legally binding and Relik does not verify identity. Signatures are made by a person in the viewer with their passkey. No tool signs or records a signature on anyone's behalf.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      certificate_path: { type: 'string' },
+      file_path: { type: 'string' },
+      origin: { type: 'string' },
+      trusted_owner_identity_id: {
+        type: 'string',
+        description:
+          'Owner identity id obtained independently of the certificate.',
+      },
+    },
+    required: ['certificate_path'],
+    additionalProperties: false,
+  },
+} as const;
+
 export const SETTINGS_TOOL_DEFINITION = {
   name: SETTINGS_TOOL_NAME,
   title: "Read or change a relik's live settings",
@@ -1060,9 +1120,9 @@ export const SETTINGS_TOOL_DEFINITION = {
     'the service cannot distinguish a suggestion from an encrypted comment. ' +
     'Closing comments is enforced by the service for readers and stops their suggestions; ' +
     'the publisher and owner can still comment. Decisions opens or closes the existing ' +
-    'decisions switch without republishing. Signing is stored but is not yet enforced. ' +
+    'decisions switch without republishing. Turning signing off pauses open requests. ' +
     'Turning notifications off stops change notices and comment or activity mail, ' +
-    'but not access-request or grant mail. Lifetime changes take effect at the new time; ' +
+    'but not signing, access-request or grant mail. Lifetime changes take effect at the new time; ' +
     'shortening a private lifetime does not move stored-copy erasure earlier.',
   inputSchema: {
     type: 'object',
@@ -1217,6 +1277,15 @@ export const SHOW_TOOL_DEFINITION = {
       status_basis: { type: 'string', enum: ['mint', 'record', 'local'] },
       status_detail: { type: 'string' },
       settings: SETTINGS_TOOL_DEFINITION.outputSchema.properties.settings,
+      signing: {
+        type: 'object',
+        properties: {
+          open_version: { type: ['integer', 'null'] },
+          locked_versions: { type: 'array', items: { type: 'integer' } },
+        },
+        required: ['open_version', 'locked_versions'],
+        additionalProperties: false,
+      },
       republish_call: {
         type: ['object', 'null'],
         description:
@@ -2369,6 +2438,9 @@ export async function handleMessage(
             DESCRIBE_TOOL_DEFINITION,
             READ_DECISIONS_TOOL_DEFINITION,
             SETTINGS_TOOL_DEFINITION,
+            VERIFY_CERTIFICATE_TOOL_DEFINITION,
+            CANCEL_SIGNING_TOOL_DEFINITION,
+            READ_SIGNING_TOOL_DEFINITION,
             ENROLL_TOOL_DEFINITION,
             CONFIRM_TOOL_DEFINITION,
             BIND_TOOL_DEFINITION,
@@ -2510,6 +2582,152 @@ async function callTool(
 
   if (params['name'] === SETTINGS_TOOL_NAME) {
     return callSettings(id, params, deps);
+  }
+
+  if (params['name'] === READ_SIGNING_TOOL_NAME) {
+    const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+    if (
+      typeof args['relic_id'] !== 'string' ||
+      !args['relic_id'] ||
+      ['request_id', 'save_certificate_to'].some(
+        (key) =>
+          args[key] !== undefined &&
+          (typeof args[key] !== 'string' || !args[key])
+      ) ||
+      Object.keys(args).some(
+        (key) =>
+          !['relic_id', 'request_id', 'save_certificate_to'].includes(key)
+      )
+    ) {
+      return errorResponse(
+        id,
+        ERROR_CODES.invalidParams,
+        'Invalid signing read arguments.'
+      );
+    }
+    try {
+      const result = await readSigning(
+        {
+          relicId: args['relic_id'],
+          ...(args['request_id'] === undefined
+            ? {}
+            : { requestId: args['request_id'] as string }),
+          ...(args['save_certificate_to'] === undefined
+            ? {}
+            : { saveCertificateTo: args['save_certificate_to'] as string }),
+        },
+        deps
+      );
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: JSON.stringify(result) }],
+          structuredContent: result,
+          isError: false,
+        },
+      };
+    } catch (error) {
+      return { jsonrpc: '2.0', id, result: toolError(error) };
+    }
+  }
+
+  if (params['name'] === CANCEL_SIGNING_TOOL_NAME) {
+    const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+    if (
+      typeof args['relic_id'] !== 'string' ||
+      !args['relic_id'] ||
+      typeof args['request_id'] !== 'string' ||
+      !args['request_id'] ||
+      Object.keys(args).some(
+        (key) => key !== 'relic_id' && key !== 'request_id'
+      )
+    ) {
+      return errorResponse(
+        id,
+        ERROR_CODES.invalidParams,
+        'A relik id and request id are required.'
+      );
+    }
+    try {
+      const result = await cancelSigning(
+        args['relic_id'],
+        args['request_id'],
+        deps
+      );
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: `Cancelled signing request ${result.request_id}.`,
+            },
+          ],
+          structuredContent: result,
+          isError: false,
+        },
+      };
+    } catch (error) {
+      return { jsonrpc: '2.0', id, result: toolError(error) };
+    }
+  }
+
+  if (params['name'] === VERIFY_CERTIFICATE_TOOL_NAME) {
+    const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+    const path = args['certificate_path'];
+    if (
+      typeof path !== 'string' ||
+      path.length === 0 ||
+      ['file_path', 'origin', 'trusted_owner_identity_id'].some(
+        (key) =>
+          args[key] !== undefined &&
+          (typeof args[key] !== 'string' || args[key] === '')
+      ) ||
+      Object.keys(args).some(
+        (key) =>
+          ![
+            'certificate_path',
+            'file_path',
+            'origin',
+            'trusted_owner_identity_id',
+          ].includes(key)
+      )
+    ) {
+      return errorResponse(
+        id,
+        ERROR_CODES.invalidParams,
+        'Invalid certificate verification arguments.'
+      );
+    }
+    try {
+      const report = await verifyCertificate({
+        certificatePath: path,
+        origin: (args['origin'] as string | undefined) ?? deps.serviceOrigin,
+        ...(args['file_path'] === undefined
+          ? {}
+          : { filePath: args['file_path'] as string }),
+        ...(args['trusted_owner_identity_id'] === undefined
+          ? {}
+          : {
+              trustedOwnerIdentityId: args[
+                'trusted_owner_identity_id'
+              ] as string,
+            }),
+      });
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: JSON.stringify(report) }],
+          structuredContent: report,
+          isError: false,
+        },
+      };
+    } catch (error) {
+      return { jsonrpc: '2.0', id, result: toolError(error) };
+    }
   }
 
   if (params['name'] === ENROLL_TOOL_NAME) {

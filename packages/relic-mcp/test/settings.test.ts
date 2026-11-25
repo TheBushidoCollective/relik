@@ -91,13 +91,13 @@ test('reads without writing settings and never returns token or unexpected field
   const res = await call({ relic_id: id });
   expect(requests).toEqual([`https://svc.test/api/relics/${id}/settings`]);
   expect(body).toEqual({ publish_token: 'secret-token', settings: {} });
-  expect((res?.result as Record<string, unknown>)['structuredContent']).toEqual(
-    {
-      relic_id: id,
-      settings,
-      relic_expires_at: null,
-    }
-  );
+  expect(
+    (res?.result as Record<string, unknown> | undefined)?.['structuredContent']
+  ).toEqual({
+    relic_id: id,
+    settings,
+    relic_expires_at: null,
+  });
   expect(JSON.stringify(res)).not.toContain('secret-token');
   expect(JSON.stringify(res)).not.toContain('must-not-escape');
 });
@@ -113,6 +113,7 @@ test('show returns settings from the mint response when present', async () => {
           object_length: 100,
           relic_expires_at: null,
           settings,
+          signing: { open_version: 1, locked_versions: [2] },
         });
       }
       return new Response(null, { status: 404 });
@@ -128,8 +129,11 @@ test('show returns settings from the mint response when present', async () => {
     deps
   );
   expect(
-    (res?.result as Record<string, unknown>)['structuredContent']
-  ).toMatchObject({ settings });
+    (res?.result as Record<string, unknown> | undefined)?.['structuredContent']
+  ).toMatchObject({
+    settings,
+    signing: { open_version: 1, locked_versions: [2] },
+  });
 });
 
 test('maps all switches and null lifetime without dropping false values', async () => {
@@ -173,9 +177,11 @@ test('server refusal preserves settings check and actionable guidance', async ()
     { status: 400 }
   );
   const res = await call({ relic_id: privateId, ttl_days: null });
-  expect((res?.result as Record<string, unknown>)['isError']).toBe(true);
   expect(
-    (res?.result as Record<string, unknown>)['structuredContent']
+    (res?.result as Record<string, unknown> | undefined)?.['isError']
+  ).toBe(true);
+  expect(
+    (res?.result as Record<string, unknown> | undefined)?.['structuredContent']
   ).toMatchObject({
     code: 'invalid_settings',
     settings_check: 'private_lifetime',
@@ -186,7 +192,7 @@ test('server refusal preserves settings check and actionable guidance', async ()
 test('missing local state refuses before making a request', async () => {
   const res = await call({ relic_id: '00000000000000000000000000' });
   expect(
-    (res?.result as Record<string, unknown>)['structuredContent']
+    (res?.result as Record<string, unknown> | undefined)?.['structuredContent']
   ).toMatchObject({
     code: 'no_local_publish_state',
   });
@@ -200,7 +206,7 @@ test('description states enforcement and correct brand', () => {
     'encrypted comment',
     'publisher and owner',
     'without republishing',
-    'not yet enforced',
+    'pauses open requests',
     'access-request or grant mail',
     'erasure earlier',
   ])
