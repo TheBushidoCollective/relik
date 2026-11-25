@@ -106,6 +106,11 @@ export interface RelicRow {
   };
   readonly settingsChangedAt?: number;
   readonly settingsChangedBy?: 'publisher' | 'owner';
+  readonly signingOpen?: {
+    readonly requestId: string;
+    readonly version: number;
+  };
+  readonly lockedVersions?: readonly number[];
   /**
    * Number of enrolled share addresses reserved against the per-relic cap.
    * Advanced atomically via compare-and-swap when reserving share capacity.
@@ -133,6 +138,83 @@ export interface SettingsChangeRow {
   };
   readonly expiresAt: number | undefined;
   readonly attestation?: StoredAttestation;
+}
+
+export interface SigningRequestRow {
+  readonly statement: Record<string, unknown>;
+  readonly signature: string;
+  readonly signerKind: 'identity' | 'device';
+  readonly signerId: string;
+  readonly attestation?: StoredAttestation;
+  readonly layoutCiphertext: string;
+  readonly status: 'open' | 'complete' | 'cancelled';
+  readonly createdAt: number;
+  readonly completedAt?: number;
+  readonly cancelledAt?: number;
+  readonly cancellation?: {
+    readonly statement: Record<string, unknown>;
+    readonly signature: string;
+    readonly signerKind: 'identity' | 'device';
+    readonly attestation?: StoredAttestation;
+  };
+  readonly completionMailedAt?: number;
+  /** Signatures admitted by the request CAS; unlisted signature objects are orphans. */
+  readonly signedBy?: readonly number[];
+}
+
+export interface ReceiptRow {
+  readonly version: number;
+  readonly identityId: string;
+  readonly kind: 'served' | 'opened';
+  readonly at: number;
+  readonly statement?: Record<string, unknown>;
+  readonly identitySignature?: string;
+}
+
+export interface SignatureRow {
+  readonly signerIndex: number;
+  readonly email: string;
+  readonly attestation: StoredAttestation;
+  readonly markCiphertext: string;
+  readonly recordedAt: number;
+  readonly openedReceipt?: ReceiptRow;
+}
+
+export function assertVersionUnlocked(row: RelicRow, version: number): void {
+  if (row.signingOpen?.version === version)
+    throw new ProblemError('signing_in_progress', { locked_version: version });
+  if (row.lockedVersions?.includes(version))
+    throw new ProblemError('version_locked', { locked_version: version });
+}
+
+export function assertPublicRepublishUnlocked(row: RelicRow): void {
+  if (row.access === 'private') return;
+  if (row.signingOpen !== undefined)
+    throw new ProblemError('signing_in_progress', {
+      locked_version: row.signingOpen.version,
+    });
+  if (row.lockedVersions?.includes(row.version))
+    throw new ProblemError('version_locked', { locked_version: row.version });
+}
+
+export function updateSigningStatus(
+  current: SigningRequestRow,
+  change: (row: SigningRequestRow) => SigningRequestRow
+): SigningRequestRow {
+  const next = change(structuredClone(current));
+  for (const key of [
+    'statement',
+    'signature',
+    'signerKind',
+    'signerId',
+    'attestation',
+    'layoutCiphertext',
+    'createdAt',
+  ] as const) {
+    if (JSON.stringify(next[key]) !== JSON.stringify(current[key]))
+      throw new Error(`signing request ${key} is immutable`);
+  }
+  return next;
 }
 
 export interface DecisionRow {
@@ -175,6 +257,7 @@ export interface WebauthnChallengeRow {
   readonly userHandle?: string;
   readonly assertedBy?: string;
   readonly relicId?: string;
+  readonly signingRequestId?: string;
   readonly version?: number;
   readonly verdict?: DecisionVerdict;
   /** Set when `purpose` is `attest`: the statement family the challenge answers. */
@@ -616,6 +699,47 @@ export interface DedupEntry {
  */
 export interface RelicStore {
   getRelic(id: string): Promise<RelicRow | undefined>;
+  putSigningRequest(
+    id: string,
+    requestId: string,
+    row: SigningRequestRow
+  ): Promise<boolean>;
+  getSigningRequest(
+    id: string,
+    requestId: string
+  ): Promise<SigningRequestRow | undefined>;
+  listSigningRequests(id: string): Promise<readonly SigningRequestRow[]>;
+  updateSigningRequest(
+    id: string,
+    requestId: string,
+    change: (row: SigningRequestRow) => SigningRequestRow
+  ): Promise<SigningRequestRow | undefined>;
+  putSignature(
+    id: string,
+    requestId: string,
+    row: SignatureRow
+  ): Promise<boolean>;
+  listSignatures(
+    id: string,
+    requestId: string
+  ): Promise<readonly SignatureRow[]>;
+  putCertificate(
+    id: string,
+    requestId: string,
+    certificate: Record<string, unknown>
+  ): Promise<boolean>;
+  getCertificate(
+    id: string,
+    requestId: string
+  ): Promise<Record<string, unknown> | undefined>;
+  putReceipt(id: string, row: ReceiptRow): Promise<boolean>;
+  listReceipts(id: string, version?: number): Promise<readonly ReceiptRow[]>;
+  deleteSigningForRelic(id: string): Promise<number>;
+  /** Reconcile public signing record erasure with a requested expiry, or clear it for never. */
+  syncPublicSigningLifetime(
+    id: string,
+    expiresAt: number | undefined
+  ): Promise<void>;
   appendSettingsChange(id: string, row: SettingsChangeRow): Promise<void>;
   deleteSettingsChanges(id: string): Promise<void>;
   extendPrivateLifetime(id: string, expiresAt: number): Promise<void>;
@@ -780,6 +904,7 @@ export interface RelicStore {
    * Compare-and-swap on one relic row. `change` may throw a ProblemError to
    * abort: the row is left as it was and the error propagates.
    */
+  /** A signing request must check deletedVersions while setting signingOpen in this CAS. */
   updateRelic(
     id: string,
     change: (row: RelicRow) => RelicRow
@@ -903,6 +1028,133 @@ export interface RelicStore {
 }
 
 export class MemoryStore implements RelicStore {
+  private readonly signingRequests = new Map<string, SigningRequestRow>();
+  private readonly signatures = new Map<string, SignatureRow>();
+  private readonly certificates = new Map<string, Record<string, unknown>>();
+  private readonly receipts = new Map<string, ReceiptRow>();
+  private signingKey(id: string, ...parts: (string | number)[]): string {
+    return [id, ...parts].join('/');
+  }
+  private requireLiveSigningRelic(id: string): void {
+    if (this.tombstones.has(id) || !this.relics.has(id))
+      throw new ProblemError('relic_removed');
+  }
+  async putSigningRequest(
+    id: string,
+    requestId: string,
+    row: SigningRequestRow
+  ): Promise<boolean> {
+    this.requireLiveSigningRelic(id);
+    const key = this.signingKey(id, requestId);
+    if (this.signingRequests.has(key)) return false;
+    this.signingRequests.set(key, structuredClone(row));
+    return true;
+  }
+  async getSigningRequest(
+    id: string,
+    requestId: string
+  ): Promise<SigningRequestRow | undefined> {
+    const row = this.signingRequests.get(this.signingKey(id, requestId));
+    return row === undefined ? undefined : structuredClone(row);
+  }
+  async listSigningRequests(id: string): Promise<readonly SigningRequestRow[]> {
+    return [...this.signingRequests]
+      .filter(([key]) => key.startsWith(`${id}/`))
+      .map(([, row]) => structuredClone(row))
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+  async updateSigningRequest(
+    id: string,
+    requestId: string,
+    change: (row: SigningRequestRow) => SigningRequestRow
+  ): Promise<SigningRequestRow | undefined> {
+    this.requireLiveSigningRelic(id);
+    const key = this.signingKey(id, requestId);
+    const row = this.signingRequests.get(key);
+    if (row === undefined) return undefined;
+    const next = updateSigningStatus(row, change);
+    this.signingRequests.set(key, structuredClone(next));
+    return structuredClone(next);
+  }
+  async putSignature(
+    id: string,
+    requestId: string,
+    row: SignatureRow
+  ): Promise<boolean> {
+    this.requireLiveSigningRelic(id);
+    const key = this.signingKey(id, requestId, row.signerIndex);
+    if (this.signatures.has(key)) return false;
+    this.signatures.set(key, structuredClone(row));
+    return true;
+  }
+  async listSignatures(
+    id: string,
+    requestId: string
+  ): Promise<readonly SignatureRow[]> {
+    const prefix = `${this.signingKey(id, requestId)}/`;
+    return [...this.signatures]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, row]) => structuredClone(row))
+      .sort((a, b) => a.signerIndex - b.signerIndex);
+  }
+  async putCertificate(
+    id: string,
+    requestId: string,
+    certificate: Record<string, unknown>
+  ): Promise<boolean> {
+    this.requireLiveSigningRelic(id);
+    const key = this.signingKey(id, requestId);
+    if (this.certificates.has(key)) return false;
+    this.certificates.set(key, structuredClone(certificate));
+    return true;
+  }
+  async getCertificate(
+    id: string,
+    requestId: string
+  ): Promise<Record<string, unknown> | undefined> {
+    const row = this.certificates.get(this.signingKey(id, requestId));
+    return row === undefined ? undefined : structuredClone(row);
+  }
+  async putReceipt(id: string, row: ReceiptRow): Promise<boolean> {
+    this.requireLiveSigningRelic(id);
+    const key = this.signingKey(id, row.version, row.identityId, row.kind);
+    if (this.receipts.has(key)) return false;
+    this.receipts.set(key, structuredClone(row));
+    return true;
+  }
+  async listReceipts(
+    id: string,
+    version?: number
+  ): Promise<readonly ReceiptRow[]> {
+    const prefix =
+      version === undefined ? `${id}/` : `${this.signingKey(id, version)}/`;
+    return [...this.receipts]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, row]) => structuredClone(row));
+  }
+  async deleteSigningForRelic(id: string): Promise<number> {
+    let count = 0;
+    for (const map of [
+      this.signingRequests,
+      this.signatures,
+      this.certificates,
+      this.receipts,
+    ]) {
+      for (const key of map.keys()) {
+        if (key.startsWith(`${id}/`)) {
+          map.delete(key);
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+  async syncPublicSigningLifetime(
+    _id: string,
+    _expiresAt: number | undefined
+  ): Promise<void> {
+    // Memory objects do not have lifecycle metadata.
+  }
   async appendSettingsChange(
     id: string,
     row: SettingsChangeRow
@@ -973,6 +1225,7 @@ export class MemoryStore implements RelicStore {
   ): Promise<RelicRow | undefined> {
     const row = this.relics.get(id);
     if (row === undefined) return undefined;
+    assertPublicRepublishUnlocked(row);
     const nextTitle = titleUpdate !== undefined ? titleUpdate.title : row.title;
     const nextOwnerEmail =
       ownerUpdate !== undefined ? ownerUpdate.ownerEmail : row.ownerEmail;

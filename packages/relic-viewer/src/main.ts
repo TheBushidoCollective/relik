@@ -798,6 +798,7 @@ export interface BarOptions {
    * this relic) and absent (still loading) both leave it off the band.
    */
   readonly decisionTally?: DecisionTally | null;
+  readonly onSigning?: () => void;
 }
 
 /**
@@ -1104,6 +1105,11 @@ export function buildBar(
     const decide = button('Decisions', ICONS.stamp, () => onDecide(decide));
     decorateDecisionControl(decide, view.version, tally);
     actions.appendChild(decide);
+  }
+  if (options.onSigning !== undefined) {
+    const signing = button('Signing', ICONS.stamp, options.onSigning);
+    signing.dataset['action'] = 'open-signing';
+    actions.appendChild(signing);
   }
 
   // Gated on there being history, not on the history being comparable. Those
@@ -11494,6 +11500,7 @@ export function renderReady(
   const lifecycle = createLifecycle();
   let entryPreparation: AbortController | undefined;
   let disposeComparison: (() => void) | undefined;
+  let disposeSigning: (() => void) | undefined;
   let folderHistoryHandler: ((event: PopStateEvent) => void) | undefined;
   let disposed = false;
   const readerWindow = typeof window === 'undefined' ? undefined : window;
@@ -11507,6 +11514,8 @@ export function renderReady(
     disposed = true;
     advance();
     disposeComparison?.();
+    disposeSigning?.();
+    disposeSigning = undefined;
     disposeComparison = undefined;
     if (
       readerWindow &&
@@ -11536,6 +11545,7 @@ export function renderReady(
   let decisionTally: DecisionTally | null | undefined;
   let decisionPanel: DecisionPanelHandle | undefined;
   let decisionPanelLoading = false;
+  let signingOpen: (() => void) | undefined;
 
   let activeView = view;
   const versionStore = versionsFor(relicId, view, deps);
@@ -11644,6 +11654,7 @@ export function renderReady(
         ? {}
         : { onDecide: toggleDecisions }),
       ...(decisionTally === undefined ? {} : { decisionTally }),
+      ...(signingOpen === undefined ? {} : { onSigning: signingOpen }),
       ...(thread === undefined
         ? {}
         : {
@@ -11702,6 +11713,9 @@ export function renderReady(
       return;
     }
     disposeComparison?.();
+    disposeSigning?.();
+    disposeSigning = undefined;
+    signingOpen = undefined;
     disposeComparison = undefined;
     decisionPanel?.close();
     if (viewToShow !== activeView || decisionTally === undefined) {
@@ -11809,6 +11823,52 @@ export function renderReady(
     thread?.attach(wrap);
     afterRender?.(document.body);
     trackRenderState(stage, wrap, viewToShow.route, viewToShow.documentKind);
+    void import('./signing/controller.ts')
+      .then(({ mountSigning }) => {
+        if (disposed || activeView !== viewToShow || !stage.isConnected) return;
+        disposeSigning = mountSigning({
+          view: viewToShow,
+          relicId,
+          deps,
+          stage,
+          onAvailable: (open) => {
+            if (disposed || activeView !== viewToShow) return;
+            signingOpen = open;
+            replaceBar();
+          },
+          onOpenVersion: (version) => {
+            void showVersion(version);
+          },
+          onSignIn: (done) => {
+            const panel = document.createElement('aside');
+            panel.className = 'access-panel signing-panel';
+            panel.setAttribute('role', 'dialog');
+            panel.setAttribute('aria-label', 'Sign in to sign');
+            const body = document.createElement('div');
+            body.className = 'panel-body';
+            const outcome = document.createElement('p');
+            outcome.setAttribute('aria-live', 'polite');
+            const { form } = signInForm([], {
+              relicId,
+              fragment:
+                viewToShow.access === 'private'
+                  ? ''
+                  : new URL(viewToShow.shareUrl).hash,
+              deps,
+              outcome,
+              label: 'Your email address',
+              onSignedIn: () => {
+                panel.remove();
+                done();
+              },
+            });
+            body.append(form, outcome);
+            panel.appendChild(body);
+            document.body.appendChild(panel);
+          },
+        });
+      })
+      .catch(() => {});
   };
 
   const showVersion = async (v: number): Promise<void> => {

@@ -20,6 +20,10 @@ import {
   statementBytes,
   verifyStatement,
 } from '@relic/format/private';
+import {
+  verifyWebauthnAssertion,
+  WebauthnAssertionError,
+} from '@relic/format/signing';
 import { verifyAssertion, WebauthnError } from '../webauthn.ts';
 import { ProblemError } from '../problems.ts';
 import type { PasskeyRecord, StoredAttestation } from '../store.ts';
@@ -38,6 +42,9 @@ export const PURPOSE_KINDS: Readonly<
   identity_bind: ['identity_bind'],
   identity_settings: ['identity_settings'],
   relic_settings: ['relic_settings'],
+  signing_request: ['signing_request'],
+  signing_cancel: ['signing_cancel'],
+  sign: ['signature'],
   access_request: ['access_request'],
   grant: ['grant'],
   revoke: ['revocation', 'republish'],
@@ -88,6 +95,7 @@ export async function issueAttestNonce(
     readonly purpose: AttestPurpose;
     readonly passkeys: PasskeyRecord | undefined;
     readonly relicId?: string | undefined;
+    readonly signingRequestId?: string | undefined;
     readonly credentialId?: string | undefined;
     readonly allowedCredentialIds?: readonly string[] | undefined;
   }
@@ -105,6 +113,8 @@ export async function issueAttestNonce(
     }[];
   };
 }> {
+  if (input.purpose === 'sign' && input.signingRequestId === undefined)
+    throw new ProblemError('invalid_statement', { statement_check: 'purpose' });
   const passkeys = input.passkeys;
   if (passkeys === undefined || passkeys.credentials.length === 0) {
     throw new ProblemError('passkey_required');
@@ -139,6 +149,9 @@ export async function issueAttestNonce(
     purpose: 'attest',
     attestPurpose: input.purpose,
     ...(input.relicId === undefined ? {} : { relicId: input.relicId }),
+    ...(input.signingRequestId === undefined
+      ? {}
+      : { signingRequestId: input.signingRequestId }),
     ...(input.credentialId === undefined
       ? {}
       : { credentialId: input.credentialId }),
@@ -240,8 +253,20 @@ export async function verifyAttestation(
     readonly passkeys: PasskeyRecord | undefined;
     readonly signerKey: SignerKey;
     readonly relicId?: string;
+    readonly signingRequestId?: string;
+    readonly identityFree?: boolean;
   }
 ): Promise<VerifiedAttestation> {
+  if (input.identityFree && input.purpose !== 'sign')
+    refuseStatement('purpose');
+  if (input.identityFree) {
+    const row =
+      input.relicId === undefined
+        ? undefined
+        : await env.store.getRelic(input.relicId);
+    if (row === undefined || row.access === 'private')
+      refuseStatement('purpose');
+  }
   const bundle = bundleShape(input.bundle);
   if ('clientExtensionResults' in bundle.credential) {
     // PRF output never reaches the service (plan 2.19). Refusing the field
@@ -297,6 +322,9 @@ export async function verifyAttestation(
     row.email !== input.email ||
     row.expiresAt < env.now ||
     (row.relicId !== undefined && row.relicId !== input.relicId) ||
+    (input.purpose === 'sign' &&
+      (input.signingRequestId === undefined ||
+        row.signingRequestId !== input.signingRequestId)) ||
     (row.credentialId !== undefined &&
       !sameString(row.credentialId, String(bundle.credential['id'] ?? '')))
   ) {
@@ -315,6 +343,38 @@ export async function verifyAttestation(
   if (input.passkeys === undefined) {
     throw new ProblemError('passkey_required');
   }
+  if (
+    input.purpose === 'signing_request' ||
+    input.purpose === 'signing_cancel' ||
+    input.purpose === 'sign'
+  ) {
+    const credential = input.passkeys.credentials.find(
+      (item) => item.credentialId === bundle.credential['id']
+    );
+    if (credential === undefined)
+      throw new ProblemError('passkey_verification_failed', {
+        passkey_check: 'credential',
+      });
+    try {
+      await verifyWebauthnAssertion(bundle.credential, {
+        challenge,
+        origin: new URL(env.config.serviceOrigin).origin,
+        rpId: new URL(env.config.serviceOrigin).hostname,
+        credentialId: credential.credentialId,
+        publicKeyJwk: credential.publicKeyJwk,
+        alg: credential.alg,
+      });
+    } catch (error) {
+      if (error instanceof WebauthnAssertionError)
+        throw new ProblemError(
+          error.kind === 'malformed'
+            ? 'invalid_passkey'
+            : 'passkey_verification_failed',
+          { passkey_check: error.check }
+        );
+      throw error;
+    }
+  }
   const assertion = await env.assertPasskey(
     input.passkeys,
     bundle.credential,
@@ -329,14 +389,18 @@ export async function verifyAttestation(
   for (let i = 0; i < parsed.length; i++) {
     const { kind, statement } = parsed[i] as (typeof parsed)[number];
     const signature = bundle.statements[i]?.identity_signature ?? '';
-    const key = input.signerKey(kind, statement);
-    if (key === undefined) refuseStatement('signer');
-    const valid = await verifyStatement(
-      key,
-      byteList[i] as Uint8Array,
-      signature
-    );
-    if (!valid) refuseStatement('signature');
+    if (input.identityFree) {
+      if (signature !== '') refuseStatement('signature');
+    } else {
+      const key = input.signerKey(kind, statement);
+      if (key === undefined) refuseStatement('signer');
+      const valid = await verifyStatement(
+        key,
+        byteList[i] as Uint8Array,
+        signature
+      );
+      if (!valid) refuseStatement('signature');
+    }
     verified.push({ kind, statement, identitySignature: signature });
   }
 
@@ -377,8 +441,16 @@ export async function verifyAttestation(
  */
 export async function verifyStoredAttestation(
   attestation: StoredAttestation,
-  signerKey: SignerKey
+  signerKey: SignerKey,
+  identityFree = false
 ): Promise<boolean> {
+  if (
+    identityFree &&
+    (attestation.statements.length !== 1 ||
+      attestation.statements[0]?.kind !== 'signature' ||
+      attestation.statements[0].statement['signer_identity_id'] !== null)
+  )
+    return false;
   const byteList = attestation.statements.map((s) =>
     statementBytes(s.kind, s.statement as never)
   );
@@ -404,14 +476,39 @@ export async function verifyStoredAttestation(
       },
       userHandle,
     });
+    if (
+      attestation.statements.some(
+        (statement) =>
+          statement.kind === 'signing_request' ||
+          statement.kind === 'signing_cancel' ||
+          statement.kind === 'signature'
+      )
+    ) {
+      await verifyWebauthnAssertion(credential, {
+        challenge,
+        origin: attestation.origin,
+        rpId: attestation.rpId,
+        credentialId: attestation.credentialId,
+        publicKeyJwk: attestation.credentialPublicKeyJwk,
+        alg: attestation.credentialAlg,
+      });
+    }
   } catch (error) {
-    if (error instanceof WebauthnError) return false;
+    if (
+      error instanceof WebauthnError ||
+      error instanceof WebauthnAssertionError
+    )
+      return false;
     throw error;
   }
   for (let i = 0; i < attestation.statements.length; i++) {
     const s = attestation.statements[
       i
     ] as (typeof attestation.statements)[number];
+    if (identityFree) {
+      if (s.identitySignature !== '') return false;
+      continue;
+    }
     const key = signerKey(s.kind, s.statement);
     if (key === undefined) return false;
     const ok = await verifyStatement(

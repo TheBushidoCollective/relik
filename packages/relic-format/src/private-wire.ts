@@ -23,7 +23,10 @@ export type AttestPurpose =
   | 'device_revoke'
   | 'recovery_designate'
   | 'owner_publish'
-  | 'relic_settings';
+  | 'relic_settings'
+  | 'signing_request'
+  | 'signing_cancel'
+  | 'sign';
 
 export interface SignedStatementJSON {
   readonly kind: StatementKind;

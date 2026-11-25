@@ -469,7 +469,13 @@ Three consequences, stated so nobody "fixes" them by restoring a rule or by serv
 **Delete is idempotent.** A second delete on a tombstoned ID succeeds and returns the existing tombstone. It never returns `404`. On the delete endpoint, `404` means one thing only: no such relik ID was ever issued. Under a project-level suspension clock, "already handled" and "wrong ID" have to be distinguishable at a glance. Deleting an already-tombstoned ID idempotently resumes every sweep (ciphertext, covers, comments, author index, shares, opt-outs, decisions) to completion and returns the counts of removed items.
 **Bulk delete by publishing IP and time window** ships with the single-ID form. Real notices are about campaigns, and without it the operator hand-loops an endpoint never designed for it. The operator credential is exempt from the public per-IP limiters, since those would otherwise throttle the operator's own takedown tooling, and that exemption is precisely why the credential is per-operator and audited.
 
-**Owner hard delete.** `POST /api/relics/{id}/delete` is the owner's own removal and is separate from the operator delete above. It takes an owner session and the body `{attestation}`, where the signed statement is `delete` with `versions` set to `all` or to an ascending list of unique version numbers. `all` removes the whole relik: the row, every private document (wraps, seals, grants, access requests and owner-index entries), the relik's comments and decisions, and every version's object. It then writes an id-only `OwnerTombstone` of the form `{kind: 'owner', id, deletedAt}`, with no publishing IP, no ciphertext hash and no reason. It is not an abuse takedown, and the plan adds no blocklist step to it. A list that includes the current version is refused with `cannot_delete_current_version`. The plan does not state the full effect of a list beyond its response field `relic_deleted`, which section 10 lists as an open item. The success response is `{deleted_versions, relic_deleted}`. The owner's access log is kept for its retention (section 10.6).
+**Owner hard delete.** `POST /api/relics/{id}/delete` is the owner's own removal and is separate from operator delete. It takes an owner session and `{attestation}`, where the signed `delete` statement names `all` or an ascending list of unique versions. `all` removes the row, private documents, comments, decisions, signing records, receipts and every version's object. An id-only owner tombstone remains, without a publishing IP, ciphertext hash or reason. A list including the current version is refused with `cannot_delete_current_version`. The owner's access log is kept for its retention (section 10.6).
+
+Signing requests and receipts are removed with the whole relik; the deletion response reports `signing_deleted`. A private version with an open signing request is refused with `signing_in_progress`, and a locked version with `version_locked`. The store marks versions deleted in the same compare-and-swap that checks those locks, before removing their wraps, seals and ciphertext. A signing request must likewise check `deletedVersions` in the compare-and-swap that sets `signingOpen`, so deletion and request creation cannot both win.
+
+Finite-lived public signing records carry a lifecycle deadline and become eligible for erasure one day after it. After expiry, signing reads remain available while writes are refused; a tombstone refuses both. Changing the lifetime to never removes the deadline by a generation-conditional rewrite; extending it moves the deadline forward. Shortening a public lifetime leaves signing records at the later erasure time, so they can remain readable beyond the shortened expiry.
+
+The portable verifier is stricter on trailing authenticator data: it rejects extra bytes with ED clear, even when the server's existing assertion verifier accepts the signature. Every signing attestation must also pass the portable verifier. The server verifier additionally checks the stored user handle and optional signature counter, which the offline verifier does not have.
 
 Live objects are removed at once when the owner deletes. The deleted ciphertext, wrap records and metadata stay soft-deleted under the bucket's soft-delete retention (section 3.2 and `storage.md` section 7.1), so the operator can restore them during that window. The removal is not immediate permanent erasure.
 
@@ -928,7 +934,7 @@ encrypted suggestion from a comment. An already-open page can still send one
 until it reloads, and existing suggestions remain visible. Closing comments
 prevents new reader comments and ciphertext edits, but the owner and publisher
 remain exempt. Decisions retain their existing open or closed behavior. The
-signing switch is stored and reported but is not enforced in this phase.
+signing switch blocks new signing requests when off.
 Disabling notifications stops change notices and comment activity mail, not
 access-request or grant mail.
 
@@ -939,9 +945,178 @@ first sweep fails, the row is unchanged. If the second fails, the response says
 the lifetime was updated and the same change can be retried to finish the sweep.
 A write that read the row before the update and lands after the second pass can
 still retain the earlier erasure time.
+For public reliks, signing-object erasure metadata is reconciled only after the
+lifetime update commits, with a second pass. A failed post-commit pass can be
+retried using the same lifetime setting. A locked relik's lifetime can be
+extended but cannot be shortened.
 
 Shortening ends access, including private comment access, sooner but does not
 move erasure earlier. A pending upload sealed after shortening keeps the later
 of its stored erasure time and the row's erasure deadline. The restriction on
 moving `customTime` earlier is inferred from GCS documentation. Production GCS
 `customTime` behavior has not been proven locally.
+
+## 12. Signing requests
+
+`POST /api/relics/{id}/signing/requests` creates a request for the current
+published version. The owner signs a `signing_request` statement with an
+identity attestation, or the publisher supplies the publish token and a
+signature from an owner device. A request names its signers and ordering and
+commits to the ciphertext digest, content MAC, and encrypted layout. A private
+signer must have current access to the version. Only one request may be open
+for a relik at once.
+
+`POST /api/relics/{id}/signing/cancel` accepts an owner-attested
+`signing_cancel` statement, or a publish token and owner-device signature.
+Cancellation releases the open-request slot. A repeat cancellation returns the
+cancelled request.
+A cancellation of a staged request whose open slot has not been claimed is
+refused with `signing_request_closed`.
+
+`POST /api/relics/{id}/signing/read` returns signing state. Public readers
+provide the share proof or publish token. Private readers provide the publish
+token or a signed-in session with a readable role or a listed signer's identity.
+Per-signer receipts are visible to the owner or publisher; a signer sees their
+own receipt times under `me`. Expired reliks remain readable, but writes are
+refused. Read and write requests use separate signing rate budgets, and session
+writes require JSON. A paused write is refused before it consumes an attestation
+nonce.
+A private signer without current read standing can read only the requests on
+which their current identity is listed, including their certificates.
+
+The create, cancel, and read routes accept JSON. Creation takes `{attestation, layout_ciphertext}`
+for an owner session, or `{publish_token, request, layout_ciphertext}` for a
+device. The device request holds `statement`, `signature`, `signer_kind` set to
+`device`, and `device_id`. Cancellation takes `{attestation}` or
+`{publish_token, cancel}` with the same device fields. The read body takes
+`share_proof` or `publish_token` when needed. Creation returns 201 and the
+request; cancellation returns 200 and the request; read returns 200 with
+`relic_id`, `current_version`, `locked_versions`, `me`, and `requests`.
+
+The request contains the signed statement, signature, signer kind, attestation
+when present, encrypted layout, owner identity and optional device, signer
+status and any cancellation. An open signer is ready, waiting, or needs access;
+a signed signer includes the recorded signature. The owner and publisher can
+see each signer's served and opened times. Other readers do not receive those
+times or the signed opened receipt in the per-signer records.
+A signature whose required receipt is withheld carries
+`opened_receipt_withheld: true`. The viewer reports that signature as admitted
+with receipt evidence withheld, rather than claiming complete verification.
+
+Request creation may refuse `invalid_signing_request` with `signing_check`,
+`signing_closed`, `share_unavailable`, `signing_digest_mismatch`,
+`version_locked`, `signing_in_progress`, or `signer_without_access`. Both
+mutations can refuse owner, device, statement, or passkey authorization.
+Cancellation also refuses `signing_request_not_found` or
+`signing_request_closed`. Reads can refuse `invalid_share_proof`,
+`invalid_publish_token`, `sign_in_required`, or `private_access_denied`.
+All routes can refuse a malformed id, a missing or removed relik, or the
+signing rate limit. Mutations also refuse an expired relik and a paused service.
+
+The server cannot open the layout. It checks the encoded envelope, its size,
+and the signed hash; clients validate the plaintext layout when sealing and
+opening it. The signer and owner can check it with the signing key. The
+certificate verifier opens and validates the layout only when a signing key is
+provided; without that key it checks the signed ciphertext hash, not the
+decrypted layout.
+
+### Signing and certificates
+
+`POST /api/relics/{id}/signing/options` takes `{request_id, share_proof?}`.
+It requires a reader session, and a public relik also requires its share proof.
+A publisher token is refused with `signing_requires_reader`. The response
+contains a single-use nonce and WebAuthn options, the version and ciphertext
+digest, content MAC, request hash, signer index and identity, opened receipt
+hash when required, and the consent identifier and text.
+The nonce is bound to that request ID and cannot authorize a replacement.
+
+`POST /api/relics/{id}/signing/signatures` takes `{request_id, share_proof?,
+attestation, mark_ciphertext}`. The signer attests a `signature` statement.
+The service verifies the WebAuthn assertion and, for private reliks, the
+identity signature, current identity, grant, and version wrap. It checks the
+request hash, signer, version, consent, ciphertext digest, content MAC, receipt
+hash, and encrypted mark hash. It reads the stored ciphertext to check its
+digest; the service cannot compute the content MAC without the signing key.
+
+For signature submissions, the service checks request status before verifying
+the attestation. It verifies and consumes the nonce before checking whether
+that signer already signed. A replay against a still-open request therefore
+returns `passkey_verification_failed` with `passkey_check: nonce`; a request
+already completed or cancelled returns `signing_request_closed` first. This
+order differs from the signing plan's route table.
+
+Each signature object is create-only. The request row's `signedBy` list is the
+authority for admitted signatures, and its compare-and-swap also changes the
+last signature's request to complete. Readers ignore objects absent from that
+list. Cancellation and signature admission compete on the same request row.
+If a process stops after storing a signature but before admission, a fresh,
+valid attestation by the same signer retries admission. The server verifies
+the stored signature and admits it; if the retry carries a different mark or
+statement, the first stored signature wins.
+
+On completion, the server clears the open slot and locks the signed version in
+one relik-row compare-and-swap. It assembles a certificate, verifies it against
+the configured origin and stored owner identity, then stores it create-only.
+Reads retry completion if necessary. Public reliks cannot republish while a
+request is open or after the current version is signed. Private reliks may
+republish and revoke access, but a signed version cannot be deleted.
+
+`POST /api/relics/{id}/signing/certificate` takes `{request_id, share_proof?
+| publish_token?}` and uses the signing-read authorization. It returns the
+stored certificate, or `certificate_not_ready` while the request is incomplete.
+A listed private signer retains signing-read access after revocation.
+
+### Opened receipts
+
+`POST /api/relics/{id}/receipts/opened` takes `{statement,
+identity_signature}` for a private relik. The signed `open_receipt` statement
+must name the session's current identity and match the version's seal digest
+and key commitment. The identity must retain access to the version, and the
+service must already have recorded a served receipt when it delivered the
+wrapped version key. The first opened receipt wins. A new receipt returns 201;
+a repeat returns 200 with the original served and opened times.
+
+Served records show that a wrapped key was handed to the identity, not that a
+person read the file. Opened records are identity-signed statements that a
+reader's client opened and checked it. Public reliks have neither receipt type.
+
+### Signing refusals
+
+| Condition | Code |
+|---|---|
+| Missing session or publisher token used as reader | `sign_in_required`, `signing_requires_reader` |
+| Invalid public share proof | `invalid_share_proof` |
+| Request missing or no longer open | `signing_request_not_found`, `signing_request_closed` |
+| Signing paused by owner | `signing_closed` |
+| Signer absent, already admitted, or waiting for a prior signer | `not_a_signer`, `already_signed`, `signing_not_your_turn` |
+| Private identity missing, changed, or without current access | `identity_required`, `signer_identity_changed`, `private_access_denied` |
+| Required opened receipt absent | `signing_open_required` |
+| Mark or statement binding invalid | `invalid_signature` with `signing_check` |
+| Ciphertext digest or content MAC differs | `signing_digest_mismatch`, `signing_content_mismatch` |
+| Receipt invalid or served record absent | `invalid_receipt` with `receipt_check`, `receipt_not_served` |
+| Certificate absent before completion | `certificate_not_ready` |
+
+Attestation parsing, passkey verification, rate limiting, expiry, deletion,
+and the service pause can also refuse the request as described above.
+
+### Mail and limits
+
+Private invitations and signing notices are generic and omit titles and other
+recipients' addresses. Invitations go to every private signer in parallel
+requests, or the first signer in sequential requests. The next signer receives
+a turn notice after each sequential signature. The owner receives signature
+notices. Completion mail goes to the owner and signers once a compare-and-swap
+claims it; a crash after the claim can drop that send. Public completion mail
+includes the certificate as JSON. Signing mail honors per-relik stop links and
+the signing and global change-notice limits, independently of the owner's
+general notifications setting. No signing mail contains a fragment key.
+Progress notices reserve one unit of the per-recipient signing mail budget for
+completion. The global change-notice fuse still applies.
+
+Public signers' passkeys are trusted on first use. A malicious service could
+register its own passkey under an address and produce an internally valid
+certificate. A passkey approval identifies a credential, not the person holding
+it, and does not establish whether a signature is legally binding. Statement
+times come from the signer's clock and are checked within the challenge window;
+recorded, served, and completion times are unsigned service records. Deleting
+the whole relik removes the server's signing records.

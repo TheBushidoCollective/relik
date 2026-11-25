@@ -941,3 +941,17 @@ RELIC_CHROME_PATH=/absolute/path/to/owned-headless-shell \
 ```text
 VERSION_COMPARE_LIVE_OK docx=<id> epub=<id> xlsx=<id>
 ```
+
+## Signing
+
+```bash
+bun run build
+bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=/absolute/path/to/chrome-headless-shell bun packages/relic-mcp/test/signing-path.ts
+```
+
+The loopback path exercises the built viewer and real MCP client with isolated
+virtual passkeys, two server instances, shared storage and captured mail. It
+checks public and private signatures, receipts, certificate verification,
+cancellation, signing pause and version locks. It does not prove real
+authenticators, production storage lifecycle behavior or mail delivery.

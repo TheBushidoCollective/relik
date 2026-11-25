@@ -63,6 +63,15 @@ import {
 } from './mail.ts';
 import { newOccurrenceId, ProblemError, problemResponse } from './problems.ts';
 import { settingsView } from './settings.ts';
+import {
+  cancelSigningRequest,
+  createSigningRequest,
+  readSigningState,
+  readSigningCertificate,
+  postOpenedReceipt,
+  recordSignature,
+  signingOptions,
+} from './signing.ts';
 import { RateLimiter, rateLimitKey } from './ratelimit.ts';
 import { MemoryStorage, type ObjectStorage } from './storage.ts';
 import {
@@ -678,6 +687,36 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return new Response('Method not allowed', { status: 405 });
     }
 
+    if (
+      first === 'relics' &&
+      second !== undefined &&
+      third === 'signing' &&
+      (fourth === 'requests' ||
+        fourth === 'cancel' ||
+        fourth === 'read' ||
+        fourth === 'options' ||
+        fourth === 'signatures' ||
+        fourth === 'certificate') &&
+      rest[4] === undefined &&
+      request.method === 'POST'
+    ) {
+      return guarded(() =>
+        postSigningRequest(second, request, ip, now, fourth)
+      );
+    }
+
+    if (
+      first === 'relics' &&
+      second !== undefined &&
+      third === 'receipts' &&
+      fourth === 'opened' &&
+      rest[4] === undefined &&
+      request.method === 'POST'
+    )
+      return guarded(() =>
+        postSigningRequest(second, request, ip, now, 'opened')
+      );
+
     // Passkeys:
     // - auth/passkeys: POST register; POST .../options; otherwise 405.
     if (first === 'auth' && second === 'passkeys') {
@@ -723,6 +762,53 @@ export function createApp(options: AppOptions = {}): RelicApp {
       now,
       sendMail: async (to, mail) => {
         if (mailer?.sendMail !== undefined) await mailer.sendMail(to, mail);
+      },
+      sendSigningMail: async (relicId, address, completion, build) => {
+        if (mailer?.sendMail === undefined) return;
+        const normalized = normalizeEmail(address);
+        const addressHash = await sha256Hex(normalized);
+        if (await store.isOptedOut(relicId, addressHash)) return;
+        const key = `signing ${relicId} ${normalized}`;
+        if (!completion && config.signingMailRateLimit.limit <= 1) return;
+        const budget = completion
+          ? config.signingMailRateLimit
+          : {
+              ...config.signingMailRateLimit,
+              limit: config.signingMailRateLimit.limit - 1,
+            };
+        if (
+          !limiter.peek(key, budget, now).allowed ||
+          !limiter.peek('change-notice', config.changeNoticeRateLimit, now)
+            .allowed
+        )
+          return;
+        const row = await store.getRelic(relicId);
+        if (
+          row === undefined ||
+          (row.expiresAt !== undefined && row.expiresAt <= now) ||
+          (await store.getTombstone(relicId)) !== undefined
+        )
+          return;
+        const secret = await store.unsubscribeKey();
+        const mac = await hmacSha256(
+          secret,
+          `relic-unsubscribe:v1:${parseRelicId(relicId)}:${addressHash}`
+        );
+        const stopUrl = `${config.serviceOrigin}/api/relics/${relicId}/unsubscribe?addr=${addressHash}&token=${Buffer.from(mac).toString('base64url')}`;
+        if (await store.isOptedOut(relicId, addressHash)) return;
+        if (
+          !limiter.check(key, budget, now).allowed ||
+          !limiter.check('change-notice', config.changeNoticeRateLimit, now)
+            .allowed
+        )
+          return;
+        try {
+          await mailer.sendMail(normalized, build(stopUrl));
+        } catch (error) {
+          console.error(
+            `relic: signing notice failed: ${sanitizeMailError(error, normalized)}`
+          );
+        }
       },
       limit: (scope, key, budget) => {
         const verdict = limiter.check(rateLimitKey(scope, key), budget, now);
@@ -808,6 +894,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
     'revoke',
     'delete',
     'relic_settings',
+    'signing_request',
+    'signing_cancel',
   ]);
 
   /**
@@ -852,6 +940,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
             statement_check: 'purpose',
           });
         }
+        if (purpose === 'sign') {
+          throw new ProblemError('invalid_statement', {
+            statement_check: 'purpose',
+          });
+        }
+        if (
+          config.killSwitchEngaged &&
+          (purpose === 'signing_request' || purpose === 'signing_cancel')
+        ) {
+          return refuse('service_paused');
+        }
         env.limit('attest', session.email, config.privateRateLimit);
         const email = normalizeEmail(session.email);
         const relicId =
@@ -883,7 +982,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
             const ownerRow = await liveRelic(env, relicId);
             if (ownerRow.ownerIdentityId !== identity.identityId)
               return refuse('owner_required');
-            if (purpose === 'relic_settings') {
+            if (
+              purpose === 'relic_settings' ||
+              purpose === 'signing_request' ||
+              purpose === 'signing_cancel'
+            ) {
               allowedCredentialIds = identity.credentials.map(
                 (binding) => binding.credentialId
               );
@@ -2009,16 +2112,23 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_publish_metadata', { relic_id: relicId });
     }
 
-    const next = await store.beginVersion(
-      relicId,
-      rendererClass as RendererClass,
-      declared,
-      titleUpdate,
-      ownerUpdate,
-      notify,
-      shareVerifierUpdate,
-      decisionsUpdate
-    );
+    let next: RelicRow | undefined;
+    try {
+      next = await store.beginVersion(
+        relicId,
+        rendererClass as RendererClass,
+        declared,
+        titleUpdate,
+        ownerUpdate,
+        notify,
+        shareVerifierUpdate,
+        decisionsUpdate
+      );
+    } catch (error) {
+      if (error instanceof ProblemError)
+        return refuse(error.code, error.options);
+      throw error;
+    }
     if (next === undefined) {
       return refuse('relic_not_found', { relic_id: relicId });
     }
@@ -2597,6 +2707,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
         version,
         current_version: row.version,
         settings: settingsView(row),
+        signing: {
+          open_version: row.signingOpen?.version ?? null,
+          locked_versions: row.lockedVersions ?? [],
+        },
       },
       { headers: { 'referrer-policy': 'no-referrer' } }
     );
@@ -3568,6 +3682,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const optOutsDeleted = await store.deleteOptOutsForRelic(relicId);
     const decisionsDeleted = await store.deleteDecisionsForRelic(relicId);
     await store.deleteSettingsChanges(relicId);
+    const signingDeleted = await store.deleteSigningForRelic(relicId);
     if (row?.access === 'private') {
       await store.deleteWraps(relicId, {});
       await store.deleteSeals(relicId);
@@ -3593,6 +3708,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         shares_deleted: sharesDeleted,
         opt_outs_deleted: optOutsDeleted,
         decisions_deleted: decisionsDeleted,
+        signing_deleted: signingDeleted,
       });
     }
 
@@ -3606,6 +3722,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       shares_deleted: sharesDeleted,
       opt_outs_deleted: optOutsDeleted,
       decisions_deleted: decisionsDeleted,
+      signing_deleted: signingDeleted,
     });
   }
 
@@ -4692,6 +4809,19 @@ export function createApp(options: AppOptions = {}): RelicApp {
     return promise;
   }
 
+  async function digestStoredVersion(
+    row: RelicRow,
+    version: number
+  ): Promise<string> {
+    const digest = await singleFlightDigest(row.id, version);
+    if (digest === undefined)
+      throw new ProblemError('relic_not_yet_published', {
+        relic_id: row.id,
+        retry_after_seconds: 5,
+      });
+    return digest;
+  }
+
   async function digestOnRecord(
     row: RelicRow,
     version: number
@@ -4824,6 +4954,105 @@ export function createApp(options: AppOptions = {}): RelicApp {
       throw new ProblemError('invalid_passkey', { passkey_check: 'shape' });
     }
     return (parsed as Record<string, unknown>)['challenge'] as string;
+  }
+
+  async function postSigningRequest(
+    rawId: string,
+    request: Request,
+    ip: string,
+    now: number,
+    operation:
+      | 'requests'
+      | 'cancel'
+      | 'read'
+      | 'options'
+      | 'signatures'
+      | 'opened'
+      | 'certificate'
+  ): Promise<Response> {
+    const isRead = operation === 'read' || operation === 'certificate';
+    if (!isRead && config.killSwitchEngaged)
+      throw new ProblemError('service_paused', { retry_after_seconds: 300 });
+    const verdict = limiter.check(
+      rateLimitKey(isRead ? 'signing-read' : 'signing-write', ip),
+      isRead ? config.signingReadRateLimit : config.signingRateLimit,
+      now
+    );
+    if (!verdict.allowed)
+      throw new ProblemError('signing_rate_limited', {
+        retry_after_seconds: verdict.retryAfterSeconds,
+      });
+    let relicId: string;
+    try {
+      relicId = parseRelicId(rawId);
+    } catch {
+      throw new ProblemError('invalid_relic_id');
+    }
+    if ((await store.getTombstone(relicId)) !== undefined)
+      throw new ProblemError('relic_removed', { relic_id: relicId });
+    const row = await store.getRelic(relicId);
+    if (row === undefined)
+      throw new ProblemError('relic_not_found', { relic_id: relicId });
+    const parsed = await readBoundedJson(request, 'invalid_signing_request');
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new ProblemError('invalid_signing_request', {
+        signing_check: 'shape',
+      });
+    const body = parsed as Record<string, unknown>;
+    if (
+      operation !== 'read' &&
+      !('publish_token' in body) &&
+      !/^application\/json(?:\s*;|$)/i.test(
+        request.headers.get('content-type') ?? ''
+      )
+    )
+      throw new ProblemError('invalid_signing_request', {
+        signing_check: 'shape',
+      });
+    const env = privateEnv(now);
+    const session = await sessionOf(request, now);
+    if (operation === 'opened') {
+      const result = await postOpenedReceipt(env, row, session, body);
+      return Response.json(result.body, { status: result.created ? 201 : 200 });
+    }
+    if (operation === 'read')
+      return Response.json(
+        await readSigningState(env, row, session, body, checkShareProof)
+      );
+    if (operation === 'certificate')
+      return Response.json(
+        await readSigningCertificate(env, row, session, body, checkShareProof)
+      );
+    if (operation === 'options')
+      return Response.json(
+        await signingOptions(
+          env,
+          row,
+          session,
+          body,
+          checkShareProof,
+          digestStoredVersion
+        )
+      );
+    if (operation === 'signatures')
+      return Response.json(
+        await recordSignature(
+          env,
+          row,
+          session,
+          body,
+          checkShareProof,
+          digestStoredVersion
+        ),
+        { status: 201 }
+      );
+    const result =
+      operation === 'cancel'
+        ? await cancelSigningRequest(env, row, session, body)
+        : await createSigningRequest(env, row, session, body, digestOnRecord);
+    return Response.json(result, {
+      status: operation === 'cancel' ? 200 : 201,
+    });
   }
 
   async function changeSettings(
@@ -4997,6 +5226,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const updated = await store.updateRelic(relicId, (cur) => {
       const current = settingsView(cur);
       const nextExpiry = 'ttl_days' in changes ? expiresAt : cur.expiresAt;
+      if (
+        (cur.lockedVersions?.length ?? 0) > 0 &&
+        nextExpiry !== undefined &&
+        (cur.expiresAt === undefined || nextExpiry < cur.expiresAt)
+      )
+        throw new ProblemError('version_locked', {
+          locked_version: cur.lockedVersions![0]!,
+        });
       const privateErasureAt =
         cur.access === 'private' && nextExpiry !== undefined
           ? Math.max(
@@ -5028,6 +5265,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
     });
     if (updated === undefined)
       throw new ProblemError('relic_not_found', { relic_id: relicId });
+    if (updated.access !== 'private' && 'ttl_days' in changes) {
+      for (let pass = 0; pass < 2; pass++) {
+        const current = await store.getRelic(relicId);
+        if (current === undefined) break;
+        await store.syncPublicSigningLifetime(relicId, current.expiresAt);
+      }
+    }
     if (
       updated.access === 'private' &&
       'ttl_days' in changes &&
@@ -7649,6 +7893,10 @@ notifications stops change and comment activity mail, not access or grant mail.
 Decisions can be opened or closed. The signing setting is stored but does not yet
 enforce signing. Changing the lifetime changes when access ends. Shortening a
 private lifetime does not move its storage erasure earlier.
+
+When a signed-in reader receives a private relik's version key, Relik records
+the reader's identity, version and time as a delivered receipt. This records
+key delivery, not that the reader opened or read the file.
 
 ## What your own browser keeps
 

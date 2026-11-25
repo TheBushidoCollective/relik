@@ -28,6 +28,7 @@ import {
   type AccessEvent,
   type AccessRequestRow,
   type AuthLinkRow,
+  assertPublicRepublishUnlocked,
   applyCommentPatch,
   type CommentedRelic,
   type CommentPatch,
@@ -47,6 +48,10 @@ import {
   type PasskeyRecord,
   type RelicCover,
   type RelicRow,
+  type ReceiptRow,
+  type SignatureRow,
+  type SigningRequestRow,
+  updateSigningStatus,
   type SettingsChangeRow,
   type RelicStore,
   type SealRow,
@@ -414,6 +419,94 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     return row === undefined ? undefined : customTimeOf(row.value);
   }
 
+  function signingCustomTime(row: RelicRow): string | undefined {
+    if (row.access === 'private') return customTimeOf(row);
+    return row.expiresAt === undefined
+      ? undefined
+      : new Date(row.expiresAt).toISOString();
+  }
+
+  async function liveSigningRow(id: string): Promise<RelicRow> {
+    const [row, tomb] = await Promise.all([
+      get<RelicRow>(key('relic', `${id}.json`)),
+      get<Tombstone>(key('tomb', `${id}.json`)),
+    ]);
+    if (row === undefined || tomb !== undefined)
+      throw new ProblemError('relic_removed');
+    return row.value;
+  }
+
+  /** Rewrite only to clear a public deadline; otherwise PATCH forward, never earlier. */
+  async function reconcileSigningTime(
+    name: string,
+    wanted: string | undefined
+  ): Promise<void> {
+    const url = `${host}/storage/v1/b/${encodeURIComponent(options.bucket)}/o/${encodeURIComponent(name)}`;
+    for (let attempt = 0; attempt < casAttempts; attempt++) {
+      const response = await authorized(url);
+      if (response.status === 404) return;
+      if (!response.ok)
+        throw new Error(`gcs metadata ${name} returned ${response.status}`);
+      const metadata = (await response.json()) as {
+        customTime?: string;
+        metageneration?: string;
+      };
+      if (wanted === undefined) {
+        if (metadata.customTime === undefined) return;
+        const current = await get<unknown>(name);
+        if (current === undefined) return;
+        if (await put(name, current.value, current.generation)) return;
+      } else {
+        if (metadata.customTime !== undefined && metadata.customTime >= wanted)
+          return;
+        const params = new URLSearchParams();
+        if (metadata.metageneration !== undefined)
+          params.set('ifMetagenerationMatch', metadata.metageneration);
+        const patched = await authorized(`${url}?${params}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ customTime: wanted }),
+        });
+        if (patched.ok) return;
+        if (patched.status !== 412)
+          throw new Error(
+            `gcs metadata patch ${name} returned ${patched.status}`
+          );
+      }
+    }
+    throw new Error(
+      `gcs signing metadata ${name} lost ${casAttempts} compare-and-swap races`
+    );
+  }
+
+  async function finishSigningWrite(id: string, name: string): Promise<void> {
+    try {
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const row = await liveSigningRow(id);
+        const wanted = signingCustomTime(row);
+        await reconcileSigningTime(name, wanted);
+        const latest = await liveSigningRow(id);
+        if (signingCustomTime(latest) === wanted) return;
+      }
+      throw new Error(`gcs signing lifetime changed ${casAttempts} times`);
+    } catch (error) {
+      if (error instanceof ProblemError && error.code === 'relic_removed')
+        await remove(name);
+      throw error;
+    }
+  }
+
+  async function putSigningObject(
+    id: string,
+    name: string,
+    body: unknown
+  ): Promise<boolean> {
+    const row = await liveSigningRow(id);
+    const written = await put(name, body, '0', signingCustomTime(row));
+    if (written) await finishSigningWrite(id, name);
+    return written;
+  }
+
   /** `m/identity-address/{sha256Hex(normalizedEmail)}.json`. */
   async function addressObject(normalized: string): Promise<string> {
     return key('identity-address', `${await sha256Hex(normalized)}.json`);
@@ -459,6 +552,127 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     await remove(key('grant-by-grantee', granteeIdentityId, `${relicId}.json`));
   }
   return {
+    async putSigningRequest(id, requestId, row) {
+      return putSigningObject(
+        id,
+        key('signing', id, requestId, 'request.json'),
+        row
+      );
+    },
+    async getSigningRequest(id, requestId) {
+      return (
+        await get<SigningRequestRow>(
+          key('signing', id, requestId, 'request.json')
+        )
+      )?.value;
+    },
+    async listSigningRequests(id) {
+      const names = (await listObjectNames(`${key('signing', id)}/`)).filter(
+        (name) => name.endsWith('/request.json')
+      );
+      const rows = await mapConcurrent(names, 16, (name) =>
+        get<SigningRequestRow>(name)
+      );
+      return rows
+        .flatMap((row) => (row === undefined ? [] : [row.value]))
+        .sort((a, b) => b.createdAt - a.createdAt);
+    },
+    async updateSigningRequest(id, requestId, change) {
+      const name = key('signing', id, requestId, 'request.json');
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const relic = await liveSigningRow(id);
+        const current = await get<SigningRequestRow>(name);
+        if (current === undefined) return undefined;
+        const metadataUrl = `${host}/storage/v1/b/${encodeURIComponent(options.bucket)}/o/${encodeURIComponent(name)}`;
+        const response = await authorized(metadataUrl);
+        if (response.status === 404) continue;
+        if (!response.ok)
+          throw new Error(`gcs metadata ${name} returned ${response.status}`);
+        const metadata = (await response.json()) as { customTime?: string };
+        const wanted = signingCustomTime(relic);
+        const customTime =
+          wanted === undefined
+            ? undefined
+            : metadata.customTime !== undefined && metadata.customTime > wanted
+              ? metadata.customTime
+              : wanted;
+        const next = updateSigningStatus(current.value, change);
+        if (await put(name, next, current.generation, customTime)) {
+          await finishSigningWrite(id, name);
+          return next;
+        }
+      }
+      throw new Error(
+        `gcs signing request lost ${casAttempts} compare-and-swap races`
+      );
+    },
+    async putSignature(id, requestId, row) {
+      return putSigningObject(
+        id,
+        key('signing', id, requestId, `signature-${row.signerIndex}.json`),
+        row
+      );
+    },
+    async listSignatures(id, requestId) {
+      const names = (
+        await listObjectNames(`${key('signing', id, requestId)}/`)
+      ).filter((name) => /\/signature-\d+\.json$/.test(name));
+      const rows = await mapConcurrent(names, 16, (name) =>
+        get<SignatureRow>(name)
+      );
+      return rows
+        .flatMap((row) => (row === undefined ? [] : [row.value]))
+        .sort((a, b) => a.signerIndex - b.signerIndex);
+    },
+    async putCertificate(id, requestId, certificate) {
+      return putSigningObject(
+        id,
+        key('signing', id, requestId, 'certificate.json'),
+        certificate
+      );
+    },
+    async getCertificate(id, requestId) {
+      return (
+        await get<Record<string, unknown>>(
+          key('signing', id, requestId, 'certificate.json')
+        )
+      )?.value;
+    },
+    async putReceipt(id, row) {
+      return putSigningObject(
+        id,
+        key(
+          'receipt',
+          id,
+          String(row.version),
+          row.identityId,
+          `${row.kind}.json`
+        ),
+        row
+      );
+    },
+    async listReceipts(id, version) {
+      return list<ReceiptRow>(
+        `${key('receipt', id)}/${version === undefined ? '' : `${version}/`}`
+      );
+    },
+    async deleteSigningForRelic(id) {
+      const names = [
+        ...(await listObjectNames(`${key('signing', id)}/`)),
+        ...(await listObjectNames(`${key('receipt', id)}/`)),
+      ];
+      for (const name of names) await remove(name);
+      return names.length;
+    },
+    async syncPublicSigningLifetime(id, expiresAt) {
+      const names = [
+        ...(await listObjectNames(`${key('signing', id)}/`)),
+        ...(await listObjectNames(`${key('receipt', id)}/`)),
+      ];
+      const wanted =
+        expiresAt === undefined ? undefined : new Date(expiresAt).toISOString();
+      for (const name of names) await reconcileSigningTime(name, wanted);
+    },
     async appendSettingsChange(
       id: string,
       row: SettingsChangeRow
@@ -497,6 +711,8 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         'grant',
         'access-request',
         'settings',
+        'signing',
+        'receipt',
       ];
       const reverse = ['author_relic', 'grant-by-grantee', 'owner-relic'];
       const names = new Set<string>();
@@ -675,6 +891,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       decisionsUpdate?: { readonly decisionsOpen: boolean }
     ): Promise<RelicRow | undefined> {
       return mutateRelic(id, (row) => {
+        assertPublicRepublishUnlocked(row);
         const { noticePending: _priorPending, ...restRow } = row;
         return {
           ...restRow,

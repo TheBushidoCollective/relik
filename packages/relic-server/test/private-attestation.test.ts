@@ -145,6 +145,37 @@ describe('WebAuthn assertions carrying PRF output', () => {
   });
 });
 
+test('signing budgets and format caps reject invalid overrides', () => {
+  for (const name of [
+    'signingRateLimit',
+    'signingReadRateLimit',
+    'signingMailRateLimit',
+  ] as const) {
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        [name]: { limit: 1, windowSeconds: 0 },
+      })
+    ).toThrow(name);
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        [name]: { limit: 0, windowSeconds: 60 },
+      })
+    ).toThrow(name);
+  }
+  for (const [name, value] of [
+    ['signingMaxSigners', 21],
+    ['signingMaxBoxesPerSigner', 21],
+    ['signingLayoutMaxChars', DEFAULT_CONFIG.signingLayoutMaxChars + 1],
+    ['signingMarkMaxChars', DEFAULT_CONFIG.signingMarkMaxChars + 1],
+  ] as const) {
+    expect(() => assertConfig({ ...DEFAULT_CONFIG, [name]: value })).toThrow(
+      name
+    );
+  }
+});
+
 describe('assertConfig: the usercontent origin under the RP ID', () => {
   const base = { ...DEFAULT_CONFIG, serviceOrigin: ORIGIN };
 

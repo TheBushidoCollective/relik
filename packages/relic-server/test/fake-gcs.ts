@@ -6,6 +6,7 @@ export interface FakeObject {
   readonly generation: number;
   /** Set only by a multipart upload that carried one, as GCS records it. */
   readonly customTime?: string;
+  readonly metageneration?: number;
 }
 
 /**
@@ -23,6 +24,7 @@ export interface FakeGcs {
   /** Every request the store has made, in order, as the fake received it. */
   readonly requests: { readonly url: string; readonly init: RequestInit }[];
   /** `times: -1` means every write, for modelling permanent contention. */
+  beforeNextUpload(name: string, hook: () => Promise<void>): void;
   contendOn(name: string, times: number): void;
 }
 
@@ -79,6 +81,7 @@ export function fakeGcs(): FakeGcs {
    * is what a competing create looks like.
    */
   const bumps = new Map<string, number>();
+  const uploadHooks = new Map<string, () => Promise<void>>();
 
   const competingIncrement = (name: string): void => {
     const remaining = bumps.get(name);
@@ -140,6 +143,11 @@ export function fakeGcs(): FakeGcs {
             : String(init?.body ?? '');
       }
 
+      const hook = uploadHooks.get(name);
+      if (hook !== undefined) {
+        uploadHooks.delete(name);
+        await hook();
+      }
       competingIncrement(name);
 
       if (precondition !== null) {
@@ -163,6 +171,24 @@ export function fakeGcs(): FakeGcs {
       return new Response('{}', { status: 200 });
     }
 
+    if (method === 'PUT' && !url.pathname.startsWith('/storage/')) {
+      const name = decodeURIComponent(
+        url.pathname.split('/').slice(2).join('/')
+      );
+      const match = new Headers(init?.headers).get(
+        'x-goog-if-generation-match'
+      );
+      if (match === '0' && objects.has(name))
+        return new Response('precondition failed', { status: 412 });
+      const payload =
+        init?.body instanceof Uint8Array
+          ? init.body
+          : new TextEncoder().encode(String(init?.body ?? ''));
+      media.set(name, payload);
+      objects.set(name, { body: '', generation: nextGeneration++ });
+      return new Response('', { status: 200 });
+    }
+
     // List: /storage/v1/b/{bucket}/o?prefix=
     const listMatch = /^\/storage\/v1\/b\/[^/]+\/o$/.exec(url.pathname);
     if (listMatch !== null && method === 'GET') {
@@ -181,6 +207,12 @@ export function fakeGcs(): FakeGcs {
         const existing = objects.get(name);
         if (existing === undefined)
           return new Response('not found', { status: 404 });
+        const expectedMeta = url.searchParams.get('ifMetagenerationMatch');
+        if (
+          expectedMeta !== null &&
+          expectedMeta !== String(existing.metageneration ?? 1)
+        )
+          return new Response('precondition failed', { status: 412 });
         const metadata = JSON.parse(String(init?.body ?? '{}')) as {
           customTime?: string;
         };
@@ -191,14 +223,27 @@ export function fakeGcs(): FakeGcs {
         ) {
           return new Response('invalid customTime', { status: 400 });
         }
-        objects.set(name, { ...existing, customTime: metadata.customTime });
-        return Response.json({ name, customTime: metadata.customTime });
+        const metageneration = (existing.metageneration ?? 1) + 1;
+        objects.set(name, {
+          ...existing,
+          customTime: metadata.customTime,
+          metageneration,
+        });
+        return Response.json({
+          name,
+          customTime: metadata.customTime,
+          metageneration: String(metageneration),
+        });
       }
       if (method === 'GET' && url.searchParams.get('alt') !== 'media') {
         const existing = objects.get(name);
         if (existing === undefined)
           return new Response('not found', { status: 404 });
-        return Response.json({ name, customTime: existing.customTime });
+        return Response.json({
+          name,
+          customTime: existing.customTime,
+          metageneration: String(existing.metageneration ?? 1),
+        });
       }
 
       if (method === 'DELETE') {
@@ -239,6 +284,9 @@ export function fakeGcs(): FakeGcs {
     fetch: handler as unknown as typeof globalThis.fetch,
     objects,
     requests,
+    beforeNextUpload(name: string, hook: () => Promise<void>) {
+      uploadHooks.set(name, hook);
+    },
     contendOn(name: string, times: number) {
       bumps.set(name, times);
     },

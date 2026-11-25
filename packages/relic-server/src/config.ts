@@ -7,6 +7,12 @@
 
 import { ciphertextCapBytes, PLAINTEXT_CAP_BYTES } from '@relic/format';
 import { COVER_CAP_BYTES } from '@relic/format/cover';
+import {
+  SIGNING_MAX_SIGNERS,
+  SIGNING_MAX_BOXES_PER_SIGNER,
+  SIGNING_LAYOUT_MAX_BYTES,
+  SIGNING_MARK_MAX_BYTES,
+} from '@relic/format/signing';
 
 export interface RelicConfig {
   /** The service origin: the API and the PWA shell. */
@@ -113,6 +119,13 @@ export interface RelicConfig {
   readonly settingsRateLimit: RateLimitConfig;
   readonly settingsReadRateLimit: RateLimitConfig;
   readonly settingsMinLifetimeSeconds: number;
+  readonly signingMaxSigners: number;
+  readonly signingMaxBoxesPerSigner: number;
+  readonly signingLayoutMaxChars: number;
+  readonly signingMarkMaxChars: number;
+  readonly signingRateLimit: RateLimitConfig;
+  readonly signingReadRateLimit: RateLimitConfig;
+  readonly signingMailRateLimit: RateLimitConfig;
   /** Decision read queries per IP. */
   readonly decisionReadRateLimit: RateLimitConfig;
   /** Passkey operations per IP. */
@@ -253,6 +266,13 @@ export const DEFAULT_CONFIG: RelicConfig = {
   settingsRateLimit: { limit: 60, windowSeconds: 3600 },
   settingsReadRateLimit: { limit: 600, windowSeconds: 3600 },
   settingsMinLifetimeSeconds: 3600,
+  signingMaxSigners: 20,
+  signingMaxBoxesPerSigner: 20,
+  signingLayoutMaxChars: Math.ceil(((16 * 1024 + 28) * 4) / 3),
+  signingMarkMaxChars: Math.ceil(((32 * 1024 + 28) * 4) / 3),
+  signingRateLimit: { limit: 60, windowSeconds: 3600 },
+  signingReadRateLimit: { limit: 600, windowSeconds: 3600 },
+  signingMailRateLimit: { limit: 10, windowSeconds: 3600 },
   decisionReadRateLimit: { limit: 600, windowSeconds: 3600 },
   passkeyRateLimit: { limit: 20, windowSeconds: 3600 },
   passkeySignInOptionsRateLimit: { limit: 240, windowSeconds: 3600 },
@@ -293,6 +313,42 @@ export const DEFAULT_CONFIG: RelicConfig = {
 export const GCS_MAX_SIGNED_URL_SECONDS = 604_800;
 
 export function assertConfig(config: RelicConfig): void {
+  for (const [name, budget] of [
+    ['signingRateLimit', config.signingRateLimit],
+    ['signingReadRateLimit', config.signingReadRateLimit],
+    ['signingMailRateLimit', config.signingMailRateLimit],
+  ] as const) {
+    if (
+      !Number.isSafeInteger(budget?.limit) ||
+      budget.limit < 1 ||
+      !Number.isSafeInteger(budget?.windowSeconds) ||
+      budget.windowSeconds < 1
+    )
+      throw new Error(
+        `${name} must have positive integer limit and windowSeconds`
+      );
+  }
+  for (const [name, value, maximum] of [
+    ['signingMaxSigners', config.signingMaxSigners, SIGNING_MAX_SIGNERS],
+    [
+      'signingMaxBoxesPerSigner',
+      config.signingMaxBoxesPerSigner,
+      SIGNING_MAX_BOXES_PER_SIGNER,
+    ],
+    [
+      'signingLayoutMaxChars',
+      config.signingLayoutMaxChars,
+      Math.ceil(((SIGNING_LAYOUT_MAX_BYTES + 28) * 4) / 3),
+    ],
+    [
+      'signingMarkMaxChars',
+      config.signingMarkMaxChars,
+      Math.ceil(((SIGNING_MARK_MAX_BYTES + 28) * 4) / 3),
+    ],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value < 1 || value > maximum)
+      throw new Error(`${name} must be a positive integer at most ${maximum}`);
+  }
   if (config.urlValiditySeconds > GCS_MAX_SIGNED_URL_SECONDS) {
     throw new Error(
       `url validity ${config.urlValiditySeconds}s exceeds the GCS ceiling`

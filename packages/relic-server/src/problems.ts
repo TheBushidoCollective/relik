@@ -46,6 +46,26 @@ export type ProblemCode =
   | 'comments_closed'
   | 'invalid_settings'
   | 'settings_rate_limited'
+  | 'signing_closed'
+  | 'signing_rate_limited'
+  | 'invalid_signing_request'
+  | 'signing_request_not_found'
+  | 'signing_request_closed'
+  | 'signing_in_progress'
+  | 'version_locked'
+  | 'signing_digest_mismatch'
+  | 'signing_content_mismatch'
+  | 'signing_requires_reader'
+  | 'not_a_signer'
+  | 'already_signed'
+  | 'signing_not_your_turn'
+  | 'signer_without_access'
+  | 'signer_identity_changed'
+  | 'signing_open_required'
+  | 'receipt_not_served'
+  | 'invalid_receipt'
+  | 'invalid_signature'
+  | 'certificate_not_ready'
   | 'comment_not_found'
   // A commenter may delete their own comment and no one else's. The operator
   // path is the abuse surface, not this one.
@@ -132,6 +152,26 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   comments_closed: 409,
   invalid_settings: 400,
   settings_rate_limited: 429,
+  signing_closed: 409,
+  signing_rate_limited: 429,
+  invalid_signing_request: 400,
+  signing_request_not_found: 404,
+  signing_request_closed: 409,
+  signing_in_progress: 409,
+  version_locked: 409,
+  signing_digest_mismatch: 409,
+  signing_content_mismatch: 409,
+  signing_requires_reader: 403,
+  not_a_signer: 403,
+  already_signed: 409,
+  signing_not_your_turn: 409,
+  signer_without_access: 409,
+  signer_identity_changed: 409,
+  signing_open_required: 409,
+  receipt_not_served: 409,
+  invalid_receipt: 400,
+  invalid_signature: 400,
+  certificate_not_ready: 409,
   comment_not_found: 404,
   comment_forbidden: 403,
   nothing_to_change: 400,
@@ -209,6 +249,26 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   comments_closed: 'Comments are closed',
   invalid_settings: 'Invalid settings',
   settings_rate_limited: 'Too many settings requests',
+  signing_closed: 'Signing is closed',
+  signing_rate_limited: 'Too many signing requests',
+  invalid_signing_request: 'Invalid signing request',
+  signing_request_not_found: 'No such signing request',
+  signing_request_closed: 'Signing request is closed',
+  signing_in_progress: 'Signing is in progress',
+  version_locked: 'This version is locked',
+  signing_digest_mismatch: 'The stored version does not match',
+  signing_content_mismatch: 'The content does not match',
+  signing_requires_reader: 'Signing requires a reader',
+  not_a_signer: 'Not a signer',
+  already_signed: 'Already signed',
+  signing_not_your_turn: 'Not your turn to sign',
+  signer_without_access: 'Signer does not have access',
+  signer_identity_changed: 'Signer identity changed',
+  signing_open_required: 'Open this version before signing',
+  receipt_not_served: 'The key was not served',
+  invalid_receipt: 'Invalid receipt',
+  invalid_signature: 'Invalid signature',
+  certificate_not_ready: 'Certificate is not ready',
   comment_not_found: 'No such comment',
   comment_forbidden: 'Not your comment',
   nothing_to_change: 'Nothing to change',
@@ -275,6 +335,12 @@ export interface ProblemExtensions {
     | 'type'
     | 'lifetime'
     | 'private_lifetime';
+  readonly signing_check?: string;
+  readonly receipt_check?: string;
+  readonly request_id?: string;
+  readonly signer_email?: string;
+  readonly signer_index?: number;
+  readonly locked_version?: number;
   readonly relic_id?: string;
   readonly id_validation_failure?: 'alphabet' | 'length' | 'reserved';
   readonly retry_after_seconds?: number;

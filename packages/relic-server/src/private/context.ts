@@ -43,6 +43,12 @@ export interface PrivateEnv {
   readonly now: number;
   /** One message to one address. The caller decides whether a failure matters. */
   readonly sendMail: (to: string, mail: OutboundMail) => Promise<void>;
+  readonly sendSigningMail?: (
+    relicId: string,
+    address: string,
+    completion: boolean,
+    build: (stopUrl: string) => OutboundMail
+  ) => Promise<void>;
   /** Spends one unit of the named budget, or throws `private_rate_limited`. */
   readonly limit: (scope: string, key: string, budget: RateLimitConfig) => void;
   /** The storage key a relic version's ciphertext lives under. */

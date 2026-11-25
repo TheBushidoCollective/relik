@@ -47,6 +47,63 @@ export interface OutboundMail {
   readonly text: string;
   readonly html: string;
   readonly headers?: Readonly<Record<string, string>> | undefined;
+  readonly attachments?: readonly {
+    filename: string;
+    contentType: 'application/json';
+    content: Uint8Array;
+  }[];
+}
+
+export function signingNoticeMail(input: {
+  kind: 'invite' | 'turn' | 'signed' | 'complete' | 'cancelled';
+  private: boolean;
+  title?: string;
+  relicUrl: string;
+  stopUrl: string;
+  details?: string;
+  certificate?: { filename: string; content: Uint8Array };
+}): OutboundMail {
+  const named =
+    !input.private && input.title ? ` "${input.title}"` : ' a relik';
+  const subject =
+    input.kind === 'complete'
+      ? `Everyone signed${named}`
+      : input.kind === 'cancelled'
+        ? `Signing request cancelled for${named}`
+        : input.kind === 'signed'
+          ? `A signature was added to${named}`
+          : `It's your turn to sign${named}`;
+  const detail =
+    input.kind === 'complete'
+      ? input.private
+        ? 'Open it to download the signing certificate.'
+        : "Proves: each listed passkey approved this exact version after agreeing to sign electronically, and the request came from the owner shown. Doesn't prove: who held the passkey, that the person is who the address suggests, or that the signature is legally binding. On a public relik a passkey is trusted from its first use with that address. Times come from each signer's device, checked by Relik to within 5 minutes."
+      : input.kind === 'cancelled'
+        ? 'The signing request was cancelled.'
+        : input.kind === 'signed'
+          ? 'A signer completed their part of the request.'
+          : input.private
+            ? 'Open the relik to review and sign it.'
+            : "Open the link the owner sent. Relik never holds the key, so this email can't include it.";
+  const details = input.private ? '' : (input.details ?? '');
+  const text = `${detail}${details ? `\n\n${details}` : ''}\n\n${input.relicUrl}\n\nStop notifications: ${input.stopUrl}`;
+  const html = `<p>${escapeHtml(detail)}</p>${details ? `<p>${escapeHtml(details)}</p>` : ''}<p><a href="${escapeHtml(input.relicUrl)}">Open relik</a></p><p><a href="${escapeHtml(input.stopUrl)}">Stop notifications</a></p>`;
+  return {
+    subject,
+    text,
+    html,
+    ...(input.certificate === undefined
+      ? {}
+      : {
+          attachments: [
+            {
+              filename: input.certificate.filename,
+              contentType: 'application/json' as const,
+              content: input.certificate.content,
+            },
+          ],
+        }),
+  };
 }
 
 /**
@@ -629,6 +686,15 @@ export function resendMailer(options: ResendMailerOptions): Mailer {
         text: mail.text,
         html: mail.html,
         ...(mail.headers !== undefined ? { headers: mail.headers } : {}),
+        ...(mail.attachments === undefined
+          ? {}
+          : {
+              attachments: mail.attachments.map((item) => ({
+                filename: item.filename,
+                content_type: item.contentType,
+                content: Buffer.from(item.content).toString('base64'),
+              })),
+            }),
       }),
     });
 
@@ -661,6 +727,8 @@ export function resendMailer(options: ResendMailerOptions): Mailer {
   // Up to 100 emails per call, supporting per-email custom headers (List-Unsubscribe).
   async function postBatch(items: readonly BatchMailItem[]): Promise<void> {
     if (items.length === 0) return;
+    if (items.some((item) => item.mail.attachments !== undefined))
+      throw new Error('attachments require sendMail');
     const MAX_BATCH = 100;
     for (let i = 0; i < items.length; i += MAX_BATCH) {
       const slice = items.slice(i, i + MAX_BATCH);

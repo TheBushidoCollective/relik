@@ -1,0 +1,375 @@
+import { normalizeEmail } from '@relic/format';
+import { encodeBase64url, SIGN_CONSENT_ID } from '@relic/format/private';
+import {
+  contentMac,
+  layoutCiphertextSha256,
+  sealSigningLayout,
+  type SigningBox,
+} from '@relic/format/signing';
+import type { RelicContent } from '../content.ts';
+import { nowMs } from '../private/keys.ts';
+import { privateKeysOf } from '../private/ops.ts';
+import type { ViewerDeps } from '../viewer.ts';
+import { signingApi, signingContent } from './api.ts';
+import { mountSigningBoxes } from './boxes.ts';
+
+/** Owner-only composer. Private signer identities come from the owner's verified grants. */
+export function openSigningComposer(input: {
+  readonly deps: ViewerDeps;
+  readonly relicId: string;
+  readonly version: number;
+  readonly digest: string;
+  readonly content: RelicContent;
+  readonly signingKey: Uint8Array;
+  readonly private: boolean;
+  readonly grants: readonly { email: string; identityId: string }[];
+  readonly pdf: boolean;
+  readonly stage: HTMLElement;
+  readonly shareUrl: string;
+  readonly onSent: () => void;
+}): HTMLElement {
+  const panel = document.createElement('aside');
+  panel.className = 'access-panel signing-panel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Request signatures');
+  const head = document.createElement('div');
+  head.className = 'panel-head';
+  const title = document.createElement('h2');
+  title.className = 'panel-title';
+  title.textContent = 'Request signatures';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'panel-close';
+  close.textContent = '×';
+  close.setAttribute('aria-label', 'Close signing');
+  head.append(title, close);
+  const body = document.createElement('div');
+  body.className = 'panel-body';
+  const lead = document.createElement('p');
+  lead.className = 'panel-lead';
+  lead.textContent =
+    'Pick a signer, then drag on a page to place their box. A signer with no boxes signs in a block after the document.';
+  const list = document.createElement('div');
+  list.className = 'panel-section';
+  const listTitle = document.createElement('h3');
+  listTitle.textContent = 'Signers';
+  const rows = document.createElement('div');
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'btn is-small';
+  add.textContent = 'Add signer';
+  list.append(listTitle, rows, add);
+  const orderSection = document.createElement('section');
+  orderSection.className = 'panel-section';
+  const orderTitle = document.createElement('h3');
+  orderTitle.textContent = 'Order';
+  const order = document.createElement('div');
+  order.className = 'seg';
+  order.setAttribute('role', 'group');
+  order.setAttribute('aria-label', 'Signing order');
+  const anyOrder = document.createElement('button');
+  anyOrder.type = 'button';
+  anyOrder.textContent = 'Any order';
+  const inOrder = document.createElement('button');
+  inOrder.type = 'button';
+  inOrder.textContent = 'In order';
+  const orderHint = document.createElement('span');
+  orderHint.className = 'field-hint';
+  let orderValue: 'parallel' | 'sequential' = 'parallel';
+  const updateOrder = (): void => {
+    anyOrder.setAttribute('aria-pressed', String(orderValue === 'parallel'));
+    inOrder.setAttribute('aria-pressed', String(orderValue === 'sequential'));
+    orderHint.textContent =
+      orderValue === 'parallel'
+        ? 'Every signer can sign as soon as the request is sent.'
+        : 'Signer 2 can sign once signer 1 has signed.';
+  };
+  anyOrder.addEventListener('click', () => {
+    orderValue = 'parallel';
+    updateOrder();
+  });
+  inOrder.addEventListener('click', () => {
+    orderValue = 'sequential';
+    updateOrder();
+  });
+  order.append(anyOrder, inOrder);
+  orderSection.append(orderTitle, order, orderHint);
+  updateOrder();
+  const openedLabel = document.createElement('label');
+  const opened = document.createElement('input');
+  opened.type = 'checkbox';
+  openedLabel.append(opened, ' Require opened');
+  openedLabel.hidden = !input.private;
+  const placement = document.createElement('section');
+  placement.className = 'panel-section';
+  placement.hidden = !input.pdf;
+  const placementTitle = document.createElement('h3');
+  placementTitle.textContent = 'Place with the keyboard';
+  const pageSelect = document.createElement('select');
+  pageSelect.setAttribute('aria-label', 'Page');
+  const syncPageSelect = (): void => {
+    const canvas =
+      input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
+    const pageCount = Number(canvas?.dataset['pageCount'] ?? 0);
+    if (pageSelect.options.length !== pageCount) {
+      pageSelect.replaceChildren();
+      for (let page = 1; page <= pageCount; page++) {
+        const option = document.createElement('option');
+        option.value = String(page);
+        option.textContent = `Page ${page}`;
+        pageSelect.appendChild(option);
+      }
+    }
+    if (canvas?.dataset['pageNumber'])
+      pageSelect.value = canvas.dataset['pageNumber'];
+  };
+  syncPageSelect();
+  pageSelect.addEventListener('change', () => {
+    input.stage.querySelector('.doc-pdf')?.dispatchEvent(
+      new CustomEvent('relic:turn-page', {
+        detail: { page: Number(pageSelect.value) },
+      })
+    );
+  });
+  const pageEvents = new AbortController();
+  input.stage.addEventListener('relic:page-changed', syncPageSelect, {
+    signal: pageEvents.signal,
+  });
+  const placementControls = document.createElement('div');
+  placementControls.className = 'signing-placement';
+  const keyboard = document.createElement('button');
+  keyboard.type = 'button';
+  keyboard.className = 'btn is-small';
+  keyboard.textContent = 'Add box on this page';
+  const keyboardHint = document.createElement('span');
+  keyboardHint.className = 'field-hint';
+  keyboardHint.textContent =
+    'Select a box and use the arrow keys to move it, Shift with the arrows to resize, Delete to remove.';
+  placementControls.append(pageSelect, keyboard);
+  placement.append(placementTitle, placementControls, keyboardHint);
+  const notice = document.createElement('p');
+  notice.className = 'panel-notice';
+  notice.setAttribute('role', 'status');
+  const send = document.createElement('button');
+  send.type = 'button';
+  send.className = 'btn primary';
+  send.textContent = 'Review and send';
+  body.append(lead, list, orderSection, openedLabel, placement, notice, send);
+  panel.append(head, body);
+  let boxes: readonly SigningBox[] = [];
+  let current = 0;
+  const emails: HTMLInputElement[] = [];
+  const updateRows = (): void => {
+    listTitle.textContent = `Signers ${emails.length} of 20`;
+    emails.forEach((email, index) => {
+      const row = email.parentElement;
+      if (!row) return;
+      email.setAttribute('aria-label', `Signer ${index + 1} email`);
+      row.dataset['selected'] = String(index === current);
+      const tag = row.querySelector<HTMLElement>('.signer-tag');
+      if (tag) tag.textContent = String(index + 1);
+      const count = boxes.filter((box) => box.signer === index).length;
+      const meta = row.querySelector<HTMLElement>('.row-meta');
+      if (meta)
+        meta.textContent =
+          count === 0
+            ? 'No boxes: signs in the block after the document'
+            : `${count} ${count === 1 ? 'box' : 'boxes'}`;
+    });
+  };
+  const dispose = input.pdf
+    ? mountSigningBoxes({
+        stage: input.stage,
+        boxes: () => boxes,
+        signer: () => current,
+        editable: true,
+        onChange: (next) => {
+          boxes = next;
+          updateRows();
+        },
+      })
+    : () => {};
+  function appendSigner(): void {
+    if (emails.length >= 20) return;
+    const row = document.createElement('div');
+    row.className = 'signer-row';
+    const tag = document.createElement('span');
+    tag.className = 'signer-tag';
+    const email = document.createElement('input');
+    email.type = 'email';
+    email.className = 'input';
+    email.addEventListener('focus', () => {
+      current = emails.indexOf(email);
+      updateRows();
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'panel-close';
+    remove.setAttribute('aria-label', 'Remove signer');
+    remove.textContent = '×';
+    remove.addEventListener('click', () => {
+      const removed = emails.indexOf(email);
+      emails.splice(removed, 1);
+      boxes = boxes
+        .filter((box) => box.signer !== removed)
+        .map((box) =>
+          box.signer > removed ? { ...box, signer: box.signer - 1 } : box
+        );
+      current = Math.max(0, Math.min(current, emails.length - 1));
+      row.remove();
+      updateRows();
+      input.stage.dispatchEvent(new Event('relic:page-changed'));
+    });
+    const meta = document.createElement('span');
+    meta.className = 'row-meta';
+    emails.push(email);
+    row.append(tag, email, remove, meta);
+    rows.appendChild(row);
+    updateRows();
+  }
+  add.addEventListener('click', appendSigner);
+  keyboard.addEventListener('click', () => {
+    const canvas =
+      input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
+    if (!canvas || boxes.filter((box) => box.signer === current).length >= 20)
+      return;
+    const page = Number(canvas.dataset['pageNumber']);
+    const count = boxes.filter(
+      (box) => box.signer === current && box.page === page
+    ).length;
+    boxes = [
+      ...boxes,
+      {
+        signer: current,
+        page,
+        rect: {
+          x: count % 2 === 0 ? 0.1 : 0.55,
+          y: Math.min(0.9, 0.65 + Math.floor(count / 2) * 0.08),
+          w: 0.3,
+          h: 0.06,
+        },
+      },
+    ];
+    updateRows();
+    input.stage.dispatchEvent(new Event('relic:page-changed'));
+  });
+  close.addEventListener('click', () => {
+    dispose();
+    pageEvents.abort();
+    panel.remove();
+  });
+  send.addEventListener('click', () => {
+    const names = emails.map((field) => normalizeEmail(field.value));
+    if (
+      names.length === 0 ||
+      names.some((email) => !email.includes('@')) ||
+      new Set(names).size !== names.length
+    ) {
+      notice.textContent = 'Enter a different email address for each signer.';
+      return;
+    }
+    const signers = names.map((email) => ({
+      email,
+      identity_id: input.private
+        ? (input.grants.find((grant) => normalizeEmail(grant.email) === email)
+            ?.identityId ?? null)
+        : null,
+    }));
+    if (
+      input.private &&
+      signers.some((signer) => signer.identity_id === null)
+    ) {
+      notice.textContent =
+        'A signer cannot open this relik yet. Grant access first.';
+      return;
+    }
+    notice.textContent =
+      "Each signer confirms with a passkey on their own device. Relik records which passkey approved which version, and when. It doesn't verify anyone's identity.";
+    if (send.dataset['confirmed'] !== 'true') {
+      send.dataset['confirmed'] = 'true';
+      send.textContent = 'Send with passkey';
+      return;
+    }
+    send.disabled = true;
+    void (async () => {
+      const requestId = encodeBase64url(
+        crypto.getRandomValues(new Uint8Array(16))
+      );
+      const layout = await sealSigningLayout({
+        signingKey: input.signingKey,
+        relicId: input.relicId,
+        version: input.version,
+        layout: { v: 1, boxes },
+        signerCount: signers.length,
+        pdf: input.pdf,
+      });
+      const mac = await contentMac(
+        input.signingKey,
+        signingContent(input.content)
+      );
+      const tapped = await privateKeysOf(input.deps).attest(input.deps, {
+        purpose: 'signing_request',
+        relicId: input.relicId,
+        build: (identityId) => [
+          {
+            kind: 'signing_request',
+            statement: {
+              at: nowMs(input.deps),
+              ciphertext_sha256: input.digest,
+              consent: SIGN_CONSENT_ID,
+              content_mac: mac,
+              layout_sha256: layoutCiphertextSha256(layout),
+              order: orderValue,
+              owner_identity_id: identityId,
+              relic_id: input.relicId,
+              request_id: requestId,
+              require_opened: input.private && opened.checked,
+              signer_id: identityId,
+              signers,
+              version: input.version,
+            },
+          },
+        ],
+      });
+      await signingApi(input.deps, input.relicId).request(
+        tapped.bundle,
+        layout
+      );
+      dispose();
+      pageEvents.abort();
+      body.replaceChildren();
+      const result = document.createElement('p');
+      result.className = 'panel-notice';
+      result.textContent = input.private
+        ? `Relik emailed ${signers.length === 1 ? 'the signer' : 'the signers'}.`
+        : 'The link carries the key. Relik never sees it.';
+      body.appendChild(result);
+      if (!input.private)
+        for (const signer of signers) {
+          const message = `Please sign version ${input.version}. Open this link and sign in with ${signer.email}: ${input.shareUrl}`;
+          const item = document.createElement('p');
+          item.textContent = signer.email;
+          const copy = document.createElement('button');
+          copy.type = 'button';
+          copy.textContent = 'Copy';
+          copy.addEventListener(
+            'click',
+            () => void navigator.clipboard.writeText(message)
+          );
+          const mail = document.createElement('a');
+          mail.textContent = 'Email draft';
+          mail.href = `mailto:${encodeURIComponent(signer.email)}?subject=${encodeURIComponent('Please sign')}&body=${encodeURIComponent(message)}`;
+          item.append(copy, mail);
+          body.appendChild(item);
+        }
+      input.onSent();
+    })().catch((error: unknown) => {
+      notice.textContent =
+        error instanceof Error ? error.message : 'Could not send the request.';
+      send.disabled = false;
+    });
+  });
+  appendSigner();
+  document.body.appendChild(panel);
+  return panel;
+}
