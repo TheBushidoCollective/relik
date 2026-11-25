@@ -143,6 +143,8 @@ import {
   grantAccess,
   deliverInviteKey,
   listGrants,
+  listInvitations,
+  revokeInvitation,
   listRequests,
   ownedPrivate,
   privateAccessView,
@@ -1291,6 +1293,15 @@ export function createApp(options: AppOptions = {}): RelicApp {
               relicId
             ),
           });
+        }
+        if (third === 'invites' && fourth === undefined && get) {
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json({ invites: await listInvitations(env, normalizeEmail(session.email), relicId) });
+        }
+        if (third === 'invites' && fourth !== undefined && fifth === 'revoke' && post) {
+          if (session === undefined) return refuse('sign_in_required');
+          await privateBody(request, 'invalid_statement');
+          return Response.json({ invite: await revokeInvitation(env, normalizeEmail(session.email), relicId, fourth) });
         }
         if (
           third === 'invites' &&

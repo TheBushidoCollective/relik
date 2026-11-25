@@ -925,6 +925,66 @@ export function inviteJson(
   };
 }
 
+async function ownerInviteJson(env: PrivateEnv, row: InviteRow): Promise<InviteJSON> {
+  const signed = row.attestation.statements.find(
+    (item) => item.kind === 'invite' && item.statement['invite_public_key'] === row.invitePublicKey
+  );
+  const claimant = row.claimantIdentityId === undefined
+    ? undefined
+    : await env.store.getIdentity(row.claimantIdentityId);
+  const grant = row.claimantIdentityId === undefined
+    ? undefined
+    : await env.store.getGrant(row.relicId, row.claimantIdentityId);
+  return {
+    ...inviteJson(row, signed?.statement ?? {}, signed?.identitySignature ?? ''),
+    status: row.status === 'open' && row.expiresAt <= env.now
+      ? 'expired'
+      : row.status === 'claimed' && grant !== undefined && grant.revokedAt === undefined
+        ? 'confirmed'
+        : row.status,
+    claimed_by: claimant === undefined ? null : partyJson(claimant),
+    claimed_at: row.claimedAt === undefined ? null : iso(row.claimedAt),
+  };
+}
+
+export async function listInvitations(env: PrivateEnv, email: string, relicId: string): Promise<InviteJSON[]> {
+  const { row } = await ownedPrivate(env, email, relicId);
+  return Promise.all((await env.store.listInvites(row.id)).map((invite) => ownerInviteJson(env, invite)));
+}
+
+export async function revokeInvitation(env: PrivateEnv, email: string, relicId: string, inviteId: string): Promise<InviteJSON> {
+  const { row, owner } = await ownedPrivate(env, email, relicId);
+  const invite = await env.store.getInvite(row.id, inviteId);
+  if (invite === undefined) throw new ProblemError('invite_not_found');
+  if (invite.status === 'revoked') return ownerInviteJson(env, invite);
+  if (invite.claimantIdentityId !== undefined) {
+    const grant = await env.store.getGrant(row.id, invite.claimantIdentityId);
+    if (grant !== undefined && grant.revokedAt === undefined) throw new ProblemError('grant_exists');
+  }
+  const revoked = await env.store.updateInvite(row.id, inviteId, (current) => {
+    if (current.status !== invite.status || current.claimantIdentityId !== invite.claimantIdentityId) {
+      throw new ProblemError('invite_claimed');
+    }
+    return { ...current, status: 'revoked', wraps: [], revokedAt: env.now };
+  });
+  if (revoked === undefined) throw new ProblemError('invite_not_found');
+  if (revoked.claimantIdentityId !== undefined) {
+    const claimant = await env.store.getIdentity(revoked.claimantIdentityId);
+    await env.store.updateInviteClaim(row.id, revoked.claimantIdentityId, (claim) => ({
+      ...claim, revokedAt: env.now,
+    }));
+    if (claimant !== undefined && !(await recipientKeys(env, row, owner)).includes(claimant.kemKeyId)) {
+      await env.store.deleteWraps(row.id, { recipientKeyId: claimant.kemKeyId });
+    }
+  }
+  await logAccess(env, owner.identityId, row.id, 'revoke', {
+    actorIdentityId: owner.identityId,
+    subjectEmail: revoked.invitedEmail,
+    ...(revoked.claimantIdentityId === undefined ? {} : { subjectIdentityId: revoked.claimantIdentityId }),
+  });
+  return ownerInviteJson(env, revoked);
+}
+
 /** The invitation's public key as P-256 SEC1 bytes, or undefined when it is not a point on the curve. */
 async function validInvitePublicKey(
   value: string

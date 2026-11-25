@@ -1068,3 +1068,26 @@ describe('the invitee reads (plan 3.3 G, H, I)', () => {
     ).toBe(true);
   });
 });
+
+describe('owner invitation management', () => {
+  test('only the owner can list and cancel, and cancellation is idempotent', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const { versionKey } = await sealedPrivateRelic(owner);
+    const other = await person('other@example.com');
+    await registerIdentity(other);
+    const { inviteId } = await createInvite(owner, 'ada@example.com', versionKey);
+    const path = `/api/relics/${RELIC_ID}/invites`;
+    expect((await send(path)).status).toBe(401);
+    expect((await send(path, { cookie: other.cookie })).status).toBe(403);
+    const list = await send(path, { cookie: owner.cookie });
+    expect(list.status).toBe(200);
+    expect((list.body['invites'] as { status: string }[])[0]?.status).toBe('open');
+    expect((await send(`${path}/${inviteId}/revoke`, post({}, other.cookie))).status).toBe(403);
+    expect((await send(`${path}/${inviteId}/revoke`, post({}, owner.cookie))).status).toBe(200);
+    expect((await store.getInvite(RELIC_ID, inviteId))?.wraps).toEqual([]);
+    expect((await send(`${path}/${inviteId}/revoke`, post({}, owner.cookie))).status).toBe(200);
+    const events = await store.listAccessEvents(owner.identityId!, now, RELIC_ID);
+    expect(events.filter((event) => event.kind === 'revoke')).toHaveLength(1);
+  });
+});
