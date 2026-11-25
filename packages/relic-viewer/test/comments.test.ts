@@ -1280,6 +1280,41 @@ describe('hostile input in comment body is neutralized', () => {
 describe('reply threading under target', () => {
   beforeEach(installDom);
   afterEach(clearDom);
+  test('closed comments hide the reader composer but keep the owner composer', async () => {
+    const settings = {
+      suggestions: false,
+      comments: false,
+      decisions: false,
+      signing: true,
+      notifications: true,
+      changed_at: null,
+      changed_by: null,
+      expires_at: null,
+    } as const;
+    const deps = stubDeps((call) =>
+      call.url.endsWith('/api/auth/session')
+        ? json({ email: 'owner@example.com' })
+        : json([])
+    );
+    for (const manage of [false, true]) {
+      const thread = buildThread(
+        view({ settings, manage }),
+        RELIC_ID,
+        deps,
+        () => {}
+      );
+      await thread.ready;
+      const root = thread.element as unknown as ElementStub;
+      expect(textOf(root)).toContain(
+        manage
+          ? 'Comments are closed to readers. You can still comment.'
+          : 'Comments are closed.'
+      );
+      expect(withClass(root, 'compose')).toHaveLength(manage ? 1 : 0);
+      expect(thread.suggestionBar).toBeUndefined();
+      thread.dispose();
+    }
+  });
 
   test('folder thread shows its own file and whole relik comments, with per-file counts', async () => {
     const cipher = commentCipher(await deriveCommentKey(KEY_BYTES));

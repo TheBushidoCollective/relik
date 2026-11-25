@@ -51,6 +51,7 @@ import {
   mountPrivateReader,
 } from '../src/private/reader.ts';
 import { loadIdentityState, unlock } from '../src/private/keys.ts';
+import { openSettingsPanel } from '../src/private/settings-panel.ts';
 import { requestAccess } from '../src/private/request.ts';
 import type { CredentialsLike } from '../src/passkey-common.ts';
 import type { DeadView, ReadyView, ViewerDeps } from '../src/viewer.ts';
@@ -1108,6 +1109,127 @@ beforeEach(() => {
 
 afterEach(() => {
   Reflect.deleteProperty(globalThis, 'document');
+});
+describe('settings use the identity attestation ceremony', () => {
+  test('private access grants settings management only to the owner', async () => {
+    const settings = {
+      suggestions: true,
+      comments: true,
+      decisions: false,
+      signing: true,
+      notifications: true,
+      changed_at: null,
+      changed_by: null,
+      expires_at: null,
+    } as const;
+    for (const role of ['owner', 'grantee'] as const) {
+      const relicId = freshRelicId();
+      const world = await sealedWorld(relicId, { role });
+      const { fetch } = service({
+        ...world.routes,
+        [`GET /api/relics/${relicId}/access`]: () =>
+          json({ ...accessBody(relicId, role, '', 1), settings }),
+      });
+      const deps = depsFor(
+        fetch,
+        authenticator(() =>
+          assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+        )
+      );
+      const { root, views } = await mountReader(deps, relicId);
+      press(root, '[data-action="private-unlock"]');
+      await until(() => views.length === 1, 'private settings view');
+      expect(views[0]?.manage).toBe(role === 'owner');
+      expect(views[0]?.settings).toEqual(settings);
+    }
+  });
+
+  for (const lifetime of ['keep', 'never', 'days'] as const) {
+    test(`one passkey assertion commits the ${lifetime} snapshot`, async () => {
+      const relicId = freshRelicId();
+      const world = await sealedWorld(relicId);
+      const settings = {
+        suggestions: true,
+        comments: false,
+        decisions: true,
+        signing: false,
+        notifications: true,
+        changed_at: null,
+        changed_by: null,
+        expires_at: null,
+      } as const;
+      const { fetch, seen } = service({
+        ...world.routes,
+        [`POST /api/relics/${relicId}/settings`]: () => json({ settings }),
+      });
+      let taps = 0;
+      const deps = depsFor(
+        fetch,
+        authenticator(() => {
+          taps++;
+          return assertion(world.readerPasskey.rawId, world.readerPasskey.prf);
+        })
+      );
+      let saved = false;
+      const panel = openSettingsPanel({
+        relicId,
+        private: false,
+        settings,
+        deps,
+        onSaved: () => {
+          saved = true;
+        },
+      }) as unknown as El;
+      const mode = panel.querySelector('[aria-label="Lifetime"]');
+      const days = panel.querySelector('input[type="number"]');
+      const form = panel.querySelector('form');
+      if (!mode || !days || !form) throw new Error('missing settings controls');
+      mode.value = lifetime;
+      days.value = '42';
+      form.dispatch('submit');
+      await until(() => saved, 'settings save');
+      expect(taps).toBe(1);
+      const nonce = seen.filter(
+        (item) => item.route === 'POST /api/attest/nonce'
+      );
+      expect(nonce).toHaveLength(1);
+      expect(JSON.parse(nonce[0]!.text)).toEqual({
+        purpose: 'relic_settings',
+        relic_id: relicId,
+      });
+      const posts = seen.filter(
+        (item) => item.route === `POST /api/relics/${relicId}/settings`
+      );
+      expect(posts).toHaveLength(1);
+      const body = JSON.parse(posts[0]!.text) as {
+        attestation: {
+          statements: {
+            kind: string;
+            statement: unknown;
+            identity_signature: string;
+          }[];
+        };
+      };
+      expect(body.attestation.statements).toHaveLength(1);
+      expect(body.attestation.statements[0]).toMatchObject({
+        kind: 'relic_settings',
+        statement: {
+          at: NOW,
+          relic_id: relicId,
+          owner_identity_id: world.readerId,
+          suggestions: true,
+          comments: false,
+          decisions: true,
+          signing: false,
+          notifications: true,
+          lifetime: lifetime === 'days' ? 42 : lifetime,
+        },
+      });
+      expect(
+        body.attestation.statements[0]!.identity_signature.length
+      ).toBeGreaterThan(0);
+    });
+  }
 });
 
 describe('the private reader opens a sealed version', () => {

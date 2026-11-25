@@ -701,6 +701,8 @@ class PrivateReader {
         currentVersion: this.access?.currentVersion ?? version,
         versionDigest: opened.digest,
         access: 'private',
+        settings: this.access?.settings,
+        manage: this.access?.role === 'owner',
         keyFor: (wanted: number) => this.keyFor(wanted, identity),
         openVersion: (wanted: number) => this.openVersion(wanted, identity),
         folder,
@@ -726,6 +728,8 @@ class PrivateReader {
       currentVersion: this.access?.currentVersion ?? version,
       versionDigest: opened.digest,
       access: 'private',
+      settings: this.access?.settings,
+      manage: this.access?.role === 'owner',
       keyFor: (wanted: number) => this.keyFor(wanted, identity),
       openVersion: (wanted: number) => this.openVersion(wanted, identity),
     };

@@ -60,6 +60,7 @@ const KIND_LABEL: Readonly<Record<AccessEventJSON['kind'], string>> = {
   revoke: 'Access revoked',
   wrap_fetch: 'Key fetched',
   delete: 'Deleted',
+  settings: 'Settings changed',
 };
 
 function actorLabel(event: AccessEventJSON, me: string): string {
