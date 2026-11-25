@@ -196,5 +196,41 @@ describe.each(['memory', 'gcs'] as const)(
       expect((await store.getRelic(RELIC_ID))?.signingOpen).toBeUndefined();
       expect((await b.fetch(post(await make()))).status).toBe(201);
     });
+    test('reads signing state with publisher authorization and rejects invalid credentials', async () => {
+      const fake = fakeGcs();
+      const store =
+        backend === 'memory'
+          ? new MemoryStore()
+          : gcsStore({
+              bucket: 'relics',
+              prefix: 'tenant/m',
+              host: 'https://gcs.test',
+              getAccessToken: async () => 'test',
+              fetch: fake.fetch,
+            });
+      const { a, b, make } = await setup(store);
+      const request = await make();
+      expect((await a.fetch(post(request))).status).toBe(201);
+      const read = (body: unknown) =>
+        new Request(
+          `https://relic.example/api/relics/${RELIC_ID}/signing/read`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }
+        );
+      const bad = await b.fetch(read({ publish_token: 'wrong' }));
+      expect(bad.status).toBe(403);
+      expect((await bad.json()).code).toBe('invalid_publish_token');
+      const noProof = await b.fetch(read({}));
+      expect((await noProof.json()).code).toBe('invalid_share_proof');
+      const response = await b.fetch(read({ publish_token: token }));
+      expect(response.status).toBe(200);
+      const state = await response.json();
+      expect(state.requests[0].request_id).toBe(
+        request.request.statement.request_id
+      );
+    });
   }
 );

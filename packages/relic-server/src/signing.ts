@@ -10,6 +10,7 @@ import {
 import {
   layoutCiphertextSha256,
   type SigningRequestJSON,
+  type SigningStateJSON,
 } from '@relic/format/signing';
 import { ProblemError } from './problems.ts';
 import type {
@@ -20,7 +21,12 @@ import type {
 } from './store.ts';
 import { verifyAttestation } from './private/attest.ts';
 import { currentIdentity, identitySigner } from './private/identity.ts';
-import { ownerRecord, publishTokenOk, requireRead } from './private/access.ts';
+import {
+  ownerRecord,
+  publishTokenOk,
+  requireRead,
+  standingOf,
+} from './private/access.ts';
 import {
   deviceJson,
   identityPublicJson,
@@ -43,7 +49,8 @@ function proofJson(proof: StoredAttestation | undefined) {
 export async function signingRequestView(
   env: PrivateEnv,
   relic: RelicRow,
-  request: SigningRequestRow
+  request: SigningRequestRow,
+  showReceipts = true
 ): Promise<SigningRequestJSON> {
   const statement = parseStatement('signing_request', request.statement);
   const owner = await ownerRecord(env, relic);
@@ -55,6 +62,9 @@ export async function signingRequestView(
     relic.id,
     statement.request_id
   );
+  const receipts = showReceipts
+    ? await env.store.listReceipts(relic.id, statement.version)
+    : [];
   return {
     request_id: statement.request_id,
     version: statement.version,
@@ -87,6 +97,12 @@ export async function signingRequestView(
             : await env.store.getIdentity(signer.identity_id);
         const signature = signatures.find((s) => s.signerIndex === index);
         const signed = signature?.attestation.statements[0];
+        const served = receipts.find(
+          (r) => r.identityId === signer.identity_id && r.kind === 'served'
+        );
+        const opened = receipts.find(
+          (r) => r.identityId === signer.identity_id && r.kind === 'opened'
+        );
         return {
           index,
           email: signer.email,
@@ -98,8 +114,10 @@ export async function signingRequestView(
               : statement.order === 'sequential' && signatures.length < index
                 ? ('waiting' as const)
                 : ('ready' as const),
-          served_at: null,
-          opened_at: null,
+          served_at:
+            served === undefined ? null : new Date(served.at).toISOString(),
+          opened_at:
+            opened === undefined ? null : new Date(opened.at).toISOString(),
           signature:
             signature === undefined || signed === undefined
               ? null
@@ -110,6 +128,7 @@ export async function signingRequestView(
                   webauthn: proofJson(signature.attestation)!,
                   recorded_at: new Date(signature.recordedAt).toISOString(),
                   opened_receipt:
+                    showReceipts &&
                     signature.openedReceipt?.statement !== undefined &&
                     signature.openedReceipt.identitySignature !== undefined
                       ? {
@@ -480,4 +499,89 @@ export async function cancelSigningRequest(
   });
   if (next === undefined) throw new ProblemError('relic_not_found');
   return signingRequestView(env, next, updated);
+}
+
+export async function readSigningState(
+  env: PrivateEnv,
+  row: RelicRow,
+  session: SessionRow | undefined,
+  body: Record<string, unknown>,
+  checkProof: (row: RelicRow, proof: unknown) => Promise<string>
+): Promise<SigningStateJSON> {
+  const requests = await env.store.listSigningRequests(row.id);
+  const email =
+    session === undefined ? undefined : normalizeEmail(session.email);
+  const identity =
+    email === undefined ? undefined : await currentIdentity(env, email);
+  let owner = false;
+  if ('publish_token' in body) {
+    if (!(await publishTokenOk(row, body.publish_token)))
+      throw new ProblemError('invalid_publish_token');
+    owner = true;
+  } else if (row.access !== 'private') {
+    if ((await checkProof(row, body.share_proof)) !== 'ok')
+      throw new ProblemError('invalid_share_proof');
+    owner =
+      identity !== undefined && identity.identityId === row.ownerIdentityId;
+  } else {
+    if (session === undefined) throw new ProblemError('sign_in_required');
+    const ownerIdentity = await ownerRecord(env, row);
+    const standing = await standingOf(env, row, ownerIdentity, identity);
+    owner = standing.role === 'owner';
+    const isListed = requests.some((request) => {
+      const statement = parseStatement('signing_request', request.statement);
+      return statement.signers.some(
+        (signer) =>
+          signer.email === email && signer.identity_id === identity?.identityId
+      );
+    });
+    if (
+      !owner &&
+      standing.role !== 'grantee' &&
+      standing.role !== 'recovery' &&
+      !isListed
+    )
+      throw new ProblemError('private_access_denied');
+  }
+  const views = await Promise.all(
+    requests.map((request) => signingRequestView(env, row, request, owner))
+  );
+  const current = requests.find(
+    (request) =>
+      request.status === 'open' &&
+      request.statement['request_id'] === row.signingOpen?.requestId
+  );
+  let me: SigningStateJSON['me'] = null;
+  if (current !== undefined && email !== undefined) {
+    const statement = parseStatement('signing_request', current.statement);
+    const index = statement.signers.findIndex(
+      (signer) =>
+        signer.email === email &&
+        (row.access !== 'private' ||
+          signer.identity_id === identity?.identityId)
+    );
+    if (index >= 0) {
+      const receipts =
+        identity === undefined
+          ? []
+          : await env.store.listReceipts(row.id, statement.version);
+      const own = receipts.filter((r) => r.identityId === identity?.identityId);
+      const served = own.find((r) => r.kind === 'served');
+      const opened = own.find((r) => r.kind === 'opened');
+      me = {
+        signer_index: index,
+        served_at:
+          served === undefined ? null : new Date(served.at).toISOString(),
+        opened_at:
+          opened === undefined ? null : new Date(opened.at).toISOString(),
+      };
+    }
+  }
+  return {
+    relic_id: row.id,
+    current_version: row.version,
+    locked_versions: row.lockedVersions ?? [],
+    me,
+    requests: views,
+  };
 }

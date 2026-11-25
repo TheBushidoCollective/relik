@@ -63,7 +63,11 @@ import {
 } from './mail.ts';
 import { newOccurrenceId, ProblemError, problemResponse } from './problems.ts';
 import { settingsView } from './settings.ts';
-import { cancelSigningRequest, createSigningRequest } from './signing.ts';
+import {
+  cancelSigningRequest,
+  createSigningRequest,
+  readSigningState,
+} from './signing.ts';
 import { RateLimiter, rateLimitKey } from './ratelimit.ts';
 import { MemoryStorage, type ObjectStorage } from './storage.ts';
 import {
@@ -683,12 +687,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
       first === 'relics' &&
       second !== undefined &&
       third === 'signing' &&
-      (fourth === 'requests' || fourth === 'cancel') &&
+      (fourth === 'requests' || fourth === 'cancel' || fourth === 'read') &&
       rest[4] === undefined &&
       request.method === 'POST'
     ) {
       return guarded(() =>
-        postSigningRequest(second, request, ip, now, fourth === 'cancel')
+        postSigningRequest(second, request, ip, now, fourth)
       );
     }
 
@@ -4870,13 +4874,15 @@ export function createApp(options: AppOptions = {}): RelicApp {
     request: Request,
     ip: string,
     now: number,
-    cancel: boolean
+    operation: 'requests' | 'cancel' | 'read'
   ): Promise<Response> {
-    if (config.killSwitchEngaged)
+    if (operation !== 'read' && config.killSwitchEngaged)
       throw new ProblemError('service_paused', { retry_after_seconds: 300 });
     const verdict = limiter.check(
-      rateLimitKey('signing-write', ip),
-      config.signingRateLimit,
+      rateLimitKey(operation === 'read' ? 'signing-read' : 'signing-write', ip),
+      operation === 'read'
+        ? config.signingReadRateLimit
+        : config.signingRateLimit,
       now
     );
     if (!verdict.allowed)
@@ -4901,6 +4907,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       });
     const body = parsed as Record<string, unknown>;
     if (
+      operation !== 'read' &&
       !('publish_token' in body) &&
       !/^application\/json(?:\s*;|$)/i.test(
         request.headers.get('content-type') ?? ''
@@ -4911,10 +4918,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
       });
     const env = privateEnv(now);
     const session = await sessionOf(request, now);
-    const result = cancel
-      ? await cancelSigningRequest(env, row, session, body)
-      : await createSigningRequest(env, row, session, body, digestOnRecord);
-    return Response.json(result, { status: cancel ? 200 : 201 });
+    if (operation === 'read')
+      return Response.json(
+        await readSigningState(env, row, session, body, checkShareProof)
+      );
+    const result =
+      operation === 'cancel'
+        ? await cancelSigningRequest(env, row, session, body)
+        : await createSigningRequest(env, row, session, body, digestOnRecord);
+    return Response.json(result, {
+      status: operation === 'cancel' ? 200 : 201,
+    });
   }
 
   async function changeSettings(
