@@ -3,6 +3,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   attestationChallenge,
   decodeBase64url,
+  inviteRecipient,
+  unwrapVersionKey,
   kemKeyIdOf,
   deviceIdOf,
   encodeBase64url,
@@ -819,5 +821,250 @@ describe('the invited role (decision D14)', () => {
       cookie: invitee.cookie,
     });
     expect((access.body['me'] as { role: string }).role).toBe('grantee');
+  });
+});
+
+/** A batch invitation for one address, created through route B, and its key pair. */
+async function createInvite(
+  owner: Person,
+  email: string,
+  versionKey: Uint8Array,
+  options: { readonly expiresAt?: number } = {}
+): Promise<{
+  readonly pair: { publicKey: Uint8Array; d: Uint8Array };
+  readonly inviteId: string;
+}> {
+  const invite = await inviteFor(owner, email, [1], options);
+  const response = await send(
+    `/api/relics/${RELIC_ID}/grants`,
+    post(
+      {
+        attestation: await attest(owner, 'grant', RELIC_ID, [invite.statement]),
+        wraps: [await wrap(invite.pair.publicKey, versionKey, 1)],
+      },
+      owner.cookie
+    )
+  );
+  expect(response.status).toBe(201);
+  return {
+    pair: invite.pair,
+    inviteId: await inviteIdOf(invite.pair.publicKey),
+  };
+}
+
+describe('the invitee reads (plan 3.3 G, H, I)', () => {
+  test('the invitee opens the invitation, takes the wrap, and it opens under the invite key', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const { versionKey } = await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    const { pair, inviteId } = await createInvite(
+      owner,
+      invitee.email,
+      versionKey
+    );
+
+    const opened = await send(
+      `/api/relics/${RELIC_ID}/invites/${inviteId}/open`,
+      post({}, invitee.cookie)
+    );
+    expect(opened.status).toBe(200);
+    expect(opened.body['status']).toBe('open');
+    expect(opened.body['versions']).toEqual([1]);
+    expect(opened.body['sealed_version']).toBe(1);
+    expect(opened.body['claimed_by_identity_id']).toBeNull();
+    expect(
+      (opened.body['invite'] as { statement: { invited_email: string } })
+        .statement.invited_email
+    ).toBe(invitee.email);
+
+    const key = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({ invite_id: inviteId }, invitee.cookie)
+    );
+    expect(key.status).toBe(200);
+    const served = key.body['wrap'] as {
+      recipient_key_id: string;
+      enc: string;
+      ct: string;
+    };
+    expect(served.recipient_key_id).toBe(inviteId);
+    const opensUnder = await unwrapVersionKey({
+      recipient: await inviteRecipient(pair.d, pair.publicKey),
+      relicId: RELIC_ID,
+      version: 1,
+      enc: served.enc,
+      ct: served.ct,
+    });
+    expect(Buffer.from(opensUnder).toString('hex')).toBe(
+      Buffer.from(versionKey).toString('hex')
+    );
+
+    const events = await store.listAccessEvents(
+      owner.identityId as string,
+      now,
+      RELIC_ID
+    );
+    const fetched = events.filter(
+      (e) => e.kind === 'wrap_fetch' && e.subjectEmail === invitee.email
+    );
+    expect(fetched).toHaveLength(1);
+    expect(fetched[0]!.actorEmail).toBe(invitee.email);
+  });
+
+  test('a different address and a bogus id get the same refusals, and no session is 401', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const { versionKey } = await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    const other = await person('grace@example.com');
+    const { inviteId } = await createInvite(owner, invitee.email, versionKey);
+    const bogus = 'f'.repeat(64);
+
+    const signedOut = await send(
+      `/api/relics/${RELIC_ID}/invites/${inviteId}/open`,
+      post({})
+    );
+    expect(signedOut.status).toBe(401);
+
+    const wrongOpen = await send(
+      `/api/relics/${RELIC_ID}/invites/${inviteId}/open`,
+      post({}, other.cookie)
+    );
+    const bogusOpen = await send(
+      `/api/relics/${RELIC_ID}/invites/${bogus}/open`,
+      post({}, other.cookie)
+    );
+    expect(wrongOpen.status).toBe(404);
+    expect(wrongOpen.body['code']).toBe('invite_not_found');
+    expect({ status: bogusOpen.status, code: bogusOpen.body['code'] }).toEqual({
+      status: wrongOpen.status,
+      code: wrongOpen.body['code'],
+    });
+
+    const wrongKey = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({ invite_id: inviteId }, other.cookie)
+    );
+    const bogusKey = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({ invite_id: bogus }, other.cookie)
+    );
+    expect(wrongKey.status).toBe(403);
+    expect(wrongKey.body['code']).toBe('private_access_denied');
+    expect({ status: bogusKey.status, code: bogusKey.body['code'] }).toEqual({
+      status: wrongKey.status,
+      code: wrongKey.body['code'],
+    });
+
+    const wrongMint = await send(
+      `/api/relics/${RELIC_ID}/mint`,
+      post({ version: 1, invite_id: inviteId }, other.cookie)
+    );
+    expect({ status: wrongMint.status, code: wrongMint.body['code'] }).toEqual({
+      status: wrongKey.status,
+      code: wrongKey.body['code'],
+    });
+  });
+
+  test('an expired invitation reads as expired and loses its wraps; the relic expiry refuses first', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const { versionKey } = await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    const { inviteId } = await createInvite(owner, invitee.email, versionKey, {
+      expiresAt: now + DAY,
+    });
+
+    now += 2 * DAY;
+    const opened = await send(
+      `/api/relics/${RELIC_ID}/invites/${inviteId}/open`,
+      post({}, invitee.cookie)
+    );
+    expect(opened.status).toBe(200);
+    expect(opened.body['status']).toBe('expired');
+    expect((await store.getInvite(RELIC_ID, inviteId))?.wraps).toHaveLength(0);
+    const key = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({ invite_id: inviteId }, invitee.cookie)
+    );
+    expect(key.status).toBe(403);
+    expect(key.body['code']).toBe('private_access_denied');
+
+    // Only the relik's own expiry is moved, so the session stays valid.
+    await store.updateRelic(RELIC_ID, (r) => ({ ...r, expiresAt: now - 1 }));
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/invites/${inviteId}/open`,
+      post({}, invitee.cookie)
+    );
+    expect(refused.status).not.toBe(200);
+    expect(refused.body['code']).toBe('relic_expired');
+  });
+
+  test('a withdrawn invitation reads as withdrawn and serves no key', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const { versionKey } = await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    const { inviteId } = await createInvite(owner, invitee.email, versionKey);
+    await store.updateInvite(RELIC_ID, inviteId, (r) => ({
+      ...r,
+      status: 'revoked',
+      revokedAt: now,
+      wraps: [],
+    }));
+    const opened = await send(
+      `/api/relics/${RELIC_ID}/invites/${inviteId}/open`,
+      post({}, invitee.cookie)
+    );
+    expect(opened.body['status']).toBe('revoked');
+    const key = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({ invite_id: inviteId }, invitee.cookie)
+    );
+    expect(key.status).toBe(403);
+  });
+
+  test('a version the invitation did not list is refused', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const { versionKey } = await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    const { inviteId } = await createInvite(owner, invitee.email, versionKey);
+    const key = await send(
+      `/api/relics/${RELIC_ID}/versions/2/key`,
+      post({ invite_id: inviteId }, invitee.cookie)
+    );
+    expect(key.status).toBe(403);
+    expect(key.body['code']).toBe('private_access_denied');
+  });
+
+  test('a mint with an invitation is capped at the invitation expiry, and is logged with the address', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const { versionKey } = await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    const expiresAt = now + DAY;
+    const { inviteId } = await createInvite(owner, invitee.email, versionKey, {
+      expiresAt,
+    });
+    const minted = await send(
+      `/api/relics/${RELIC_ID}/mint`,
+      post({ version: 1, invite_id: inviteId }, invitee.cookie)
+    );
+    expect(minted.status).toBe(200);
+    expect(
+      String(minted.body['url_expires_at']) <= new Date(expiresAt).toISOString()
+    ).toBe(true);
+    const events = await store.listAccessEvents(
+      owner.identityId as string,
+      now,
+      RELIC_ID
+    );
+    expect(
+      events.some(
+        (e) => e.kind === 'wrap_fetch' && e.subjectEmail === invitee.email
+      )
+    ).toBe(true);
   });
 });

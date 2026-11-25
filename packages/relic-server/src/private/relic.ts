@@ -26,6 +26,7 @@ import {
   InvalidStatementError,
   type GrantJSON,
   type InviteJSON,
+  type InviteOpenJSON,
   type KeyJSON,
   type PartyJSON,
   type PrivateAccessJSON,
@@ -1630,4 +1631,182 @@ export async function deleteRelic(
     });
   }
   return { deleted_versions: list, relic_deleted: false };
+}
+
+// ---------------------------------------------------------------- invitations: the invitee's reads
+
+/** A wrap the invited address may open, with the invitation and the owner it came from. */
+export interface HeldInvitation {
+  readonly row: RelicRow;
+  readonly owner: IdentityRecord;
+  readonly invite: InviteRow;
+  readonly wrap: {
+    readonly version: number;
+    readonly enc: string;
+    readonly ct: string;
+  };
+}
+
+/**
+ * The invitation the signed-in address holds, or the refusal the route names.
+ * Both refusals come for a missing invitation and for a different address, so
+ * the answer never says whether the invitation exists (plan 3.3 G, 4.2). The
+ * per-IP invitation budget is charged first (plan 3.5, D20). An invitation
+ * that expired or was withdrawn loses its wraps here (plan 3.3 G).
+ */
+async function heldInvitation(
+  env: PrivateEnv,
+  relicId: string,
+  email: string,
+  inviteId: string,
+  ip: string,
+  refusal: 'invite_not_found' | 'private_access_denied'
+): Promise<{ row: RelicRow; owner: IdentityRecord; invite: InviteRow }> {
+  env.limit('invite', ip, env.config.inviteRateLimit);
+  const row = privateRow(await liveRelic(env, relicId));
+  const owner = await ownerRecord(env, row);
+  const found = await env.store.getInvite(row.id, inviteId);
+  if (found === undefined || found.invitedEmail !== normalizeEmail(email)) {
+    throw new ProblemError(refusal, { relic_id: row.id });
+  }
+  const live = found.status === 'open' && found.expiresAt > env.now;
+  if (!live && found.wraps.length > 0) {
+    const cleared = await env.store.updateInvite(row.id, inviteId, (r) => ({
+      ...r,
+      wraps: [],
+    }));
+    return { row, owner, invite: cleared ?? found };
+  }
+  return { row, owner, invite: found };
+}
+
+/** `POST /api/relics/{id}/invites/{inviteId}/open`: the invitation's status and its owner-signed statement. */
+export async function openInvitation(
+  env: PrivateEnv,
+  relicId: string,
+  email: string,
+  inviteId: string,
+  ip: string
+): Promise<InviteOpenJSON> {
+  const { row, owner, invite } = await heldInvitation(
+    env,
+    relicId,
+    email,
+    inviteId,
+    ip,
+    'invite_not_found'
+  );
+  const signed = invite.attestation.statements.find(
+    (item) =>
+      item.kind === 'invite' &&
+      item.statement['invite_public_key'] === invite.invitePublicKey
+  );
+  if (signed === undefined) {
+    throw new ProblemError('invite_not_found', { relic_id: row.id });
+  }
+  return {
+    relic_id: row.id,
+    invite_id: invite.inviteId,
+    status:
+      invite.status === 'open' && invite.expiresAt <= env.now
+        ? 'expired'
+        : invite.status,
+    expires_at: iso(invite.expiresAt),
+    versions: invite.versions.filter((version) => !isDeleted(row, version)),
+    sealed_version: row.sealedVersion ?? null,
+    owner: partyJson(owner),
+    invite: {
+      statement: signed.statement,
+      identity_signature: signed.identitySignature,
+    },
+    claimed_by_identity_id: invite.claimantIdentityId ?? null,
+  };
+}
+
+/**
+ * The wrap an invited address may open for one version (plan 3.3 H, I). Every
+ * miss is the same `private_access_denied`: no invitation, another address,
+ * an invitation that is not open or has expired, a version not listed, deleted
+ * or sealed.
+ */
+export async function invitedWrap(
+  env: PrivateEnv,
+  relicId: string,
+  email: string,
+  inviteId: string,
+  version: number,
+  ip: string
+): Promise<HeldInvitation> {
+  const { row, owner, invite } = await heldInvitation(
+    env,
+    relicId,
+    email,
+    inviteId,
+    ip,
+    'private_access_denied'
+  );
+  const wrap = invite.wraps.find((w) => w.version === version);
+  const sealed =
+    version <= (row.sealedVersion ?? 0) &&
+    (await env.store.getSeal(row.id, version)) !== undefined;
+  if (
+    invite.status !== 'open' ||
+    invite.expiresAt <= env.now ||
+    !invite.versions.includes(version) ||
+    isDeleted(row, version) ||
+    !sealed ||
+    wrap === undefined
+  ) {
+    throw new ProblemError('private_access_denied', { relic_id: row.id });
+  }
+  return { row, owner, invite, wrap };
+}
+
+/** `POST /api/relics/{id}/versions/{v}/key` with an invitation: the wrap to the invite key, logged with the address and no receipt (D21). */
+export async function deliverInviteKey(
+  env: PrivateEnv,
+  relicId: string,
+  version: number,
+  input: {
+    readonly email: string;
+    readonly inviteId: string;
+    readonly ip: string;
+  }
+): Promise<KeyJSON> {
+  const held = await invitedWrap(
+    env,
+    relicId,
+    input.email,
+    input.inviteId,
+    version,
+    input.ip
+  );
+  const seal = (await env.store.getSeal(held.row.id, version)) as SealRow;
+  const signer =
+    seal.signerKind === 'identity'
+      ? ({ kind: 'identity' } as const)
+      : await deviceSigner(env, seal.signerId);
+  const address = normalizeEmail(input.email);
+  await logAccess(env, held.owner.identityId, held.row.id, 'wrap_fetch', {
+    version,
+    actorEmail: address,
+    subjectEmail: address,
+  });
+  return {
+    relic_id: held.row.id,
+    version,
+    wrap: {
+      recipient_key_id: held.invite.inviteId,
+      version,
+      enc: held.wrap.enc,
+      ct: held.wrap.ct,
+    },
+    seal: {
+      statement: seal.statement,
+      signature: seal.signature,
+      signer_kind: seal.signerKind,
+    },
+    signer,
+    owner: partyJson(held.owner),
+  };
 }

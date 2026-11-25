@@ -141,6 +141,7 @@ import {
   declineRequest,
   deliverKey,
   grantAccess,
+  deliverInviteKey,
   listGrants,
   listRequests,
   ownedPrivate,
@@ -149,6 +150,9 @@ import {
   requestAccess,
   reissueUpload,
   revokeAccess,
+  invitedWrap,
+  openInvitation,
+  type HeldInvitation,
 } from './private/relic.ts';
 import {
   identityPublicJson,
@@ -1289,6 +1293,23 @@ export function createApp(options: AppOptions = {}): RelicApp {
           });
         }
         if (
+          third === 'invites' &&
+          fourth !== undefined &&
+          fifth === 'open' &&
+          post
+        ) {
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json(
+            await openInvitation(
+              env,
+              relicId,
+              normalizeEmail(session.email),
+              fourth,
+              ip
+            )
+          );
+        }
+        if (
           third === 'requests' &&
           fourth !== undefined &&
           fifth === 'decline' &&
@@ -1462,6 +1483,19 @@ export function createApp(options: AppOptions = {}): RelicApp {
               })
             );
           }
+          const inviteId = body['invite_id'];
+          if (typeof inviteId === 'string') {
+            if (session === undefined) {
+              return refuse('private_access_denied', { relic_id: relicId });
+            }
+            return Response.json(
+              await deliverInviteKey(env, relicId, version, {
+                email: normalizeEmail(session.email),
+                inviteId,
+                ip,
+              })
+            );
+          }
           if (session === undefined) return refuse('sign_in_required');
           return Response.json(
             await deliverKey(env, relicId, version, {
@@ -1525,10 +1559,27 @@ export function createApp(options: AppOptions = {}): RelicApp {
         return refuse('relic_expired', { relic_id: relicId });
       }
       let actor: IdentityRecord | undefined;
+      let inviteHold: HeldInvitation | undefined;
+      let inviteEmail: string | undefined;
+      const inviteId = body['invite_id'];
       if (typeof body['publish_token'] === 'string') {
         if (!(await publishTokenOk(row, body['publish_token']))) {
           return refuse('invalid_publish_token');
         }
+      } else if (typeof inviteId === 'string') {
+        const session = await sessionOf(request, now);
+        if (session === undefined) {
+          return refuse('private_access_denied', { relic_id: relicId });
+        }
+        inviteEmail = normalizeEmail(session.email);
+        inviteHold = await invitedWrap(
+          env,
+          relicId,
+          inviteEmail,
+          inviteId,
+          version,
+          clientIp(request, config)
+        );
       } else {
         const session = await sessionOf(request, now);
         if (session === undefined) {
@@ -1562,13 +1613,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
           download_cap: config.downloadCap,
         });
       }
-      const validity =
+      const validity = Math.min(
         row.expiresAt === undefined
           ? config.urlValiditySeconds
           : Math.min(
               config.urlValiditySeconds,
               Math.floor((row.expiresAt - now) / 1000)
-            );
+            ),
+        inviteHold === undefined
+          ? config.urlValiditySeconds
+          : Math.floor((inviteHold.invite.expiresAt - now) / 1000)
+      );
       if (validity < config.minViableValiditySeconds) {
         return refuse('relic_expired', { relic_id: relicId });
       }
@@ -1584,6 +1639,15 @@ export function createApp(options: AppOptions = {}): RelicApp {
           version,
           actorIdentityId: actor.identityId,
           subjectIdentityId: actor.identityId,
+        });
+      } else if (
+        inviteEmail !== undefined &&
+        row.ownerIdentityId !== undefined
+      ) {
+        await logAccess(env, row.ownerIdentityId, relicId, 'wrap_fetch', {
+          version,
+          actorEmail: inviteEmail,
+          subjectEmail: inviteEmail,
         });
       }
       return Response.json(
