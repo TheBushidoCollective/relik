@@ -302,33 +302,6 @@ export async function shareBatch(
   }));
 }
 
-/** The owner's invitations to one relik, in the service's order. */
-export async function listInvites(
-  deps: ViewerDeps,
-  relicId: string
-): Promise<InviteJSON[]> {
-  const result = await privateApi<{ invites: InviteJSON[] }>(
-    deps,
-    'GET',
-    `/api/relics/${encodeURIComponent(relicId)}/invites`
-  );
-  return result.invites;
-}
-
-/** Cancels an open invitation, or removes an accepted one. No passkey is needed (D15). */
-export async function revokeInvite(
-  deps: ViewerDeps,
-  relicId: string,
-  inviteId: string
-): Promise<void> {
-  await privateApi(
-    deps,
-    'POST',
-    `/api/relics/${encodeURIComponent(relicId)}/invites/${encodeURIComponent(inviteId)}/revoke`,
-    {}
-  );
-}
-
 /**
  * The addresses a `?access=share#to=` fragment names, decoded once, split on
  * commas, trimmed, deduplicated and capped. Anything else yields no addresses.

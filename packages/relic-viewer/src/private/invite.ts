@@ -4,7 +4,7 @@ import {
   type HpkeRecipient, type InviteOpenJSON, type WrapJSON,
 } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
-import { privateApi } from './fingerprint-input.ts';
+import { claimInvite, openInvite } from './invite-wire.ts';
 import { nowMs, type UnlockedIdentity } from './keys.ts';
 import { fetchAndDecryptVersion, pinnedOwnerFor, SealMismatchError, verifyVersionKey } from './open.ts';
 import { verifiedPartyKeys } from './rekey.ts';
@@ -16,7 +16,7 @@ export interface VerifiedInvitation {
 
 /** Read an address-bound invitation and verify the owner's signed scope. */
 export async function openInvitation(deps: ViewerDeps, relicId: string, inviteId: string, d: Uint8Array): Promise<VerifiedInvitation> {
-  const open = await privateApi<InviteOpenJSON>(deps, 'POST', `/api/relics/${encodeURIComponent(relicId)}/invites/${encodeURIComponent(inviteId)}/open`, {});
+  const open = await openInvite(deps, relicId, inviteId);
   const keys = await verifiedPartyKeys(open.owner);
   const statement = parseStatement('invite', open.invite.statement);
   const publicKey = decodeBase64url(statement.invite_public_key);
@@ -55,5 +55,5 @@ export async function claimInvitation(deps: ViewerDeps, invitation: VerifiedInvi
   }
   const statement = { at: nowMs(deps), claimant_identity_id: identity.identityId, invite_id: open.invite_id, relic_id: open.relic_id, versions: open.versions };
   const identity_signature = await signStatement((bytes) => identity.sign(bytes), statementBytes('invite_claim', statement));
-  await privateApi(deps, 'POST', `/api/relics/${encodeURIComponent(open.relic_id)}/invites/${encodeURIComponent(open.invite_id)}/claim`, { statement, identity_signature, wraps });
+  await claimInvite(deps, open.relic_id, open.invite_id, { statement, identity_signature, wraps });
 }

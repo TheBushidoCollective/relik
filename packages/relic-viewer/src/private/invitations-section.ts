@@ -1,7 +1,8 @@
 import { formatFingerprint, type InviteJSON, type PrivateAccessJSON } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
 import { describeVersions, formatUtcDay } from './access-log.ts';
-import { grantTargetFor, listInvites, revokeInvite, shareBatch, type GrantTarget } from './direct-share.ts';
+import { grantTargetFor, shareBatch, type GrantTarget } from './direct-share.ts';
+import { listInvites, revokeInvite } from './invite-wire.ts';
 import { fingerprintGroups, h, problemMessage, setChildren, waiting } from './fingerprint-input.ts';
 import { verifiedPartyKeys } from './rekey.ts';
 

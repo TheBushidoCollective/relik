@@ -44,6 +44,7 @@ import {
 } from '../content.ts';
 import { ciphertextBlob } from './ciphertext-blob.ts';
 import { mint, type MintResponse, type ViewerDeps } from '../viewer.ts';
+import { inviteKeyBody } from './invite-wire.ts';
 import {
   postJson,
   readField,
@@ -358,7 +359,7 @@ export async function verifyVersionKey(
     await postJson(
       deps,
       `/api/relics/${encodeURIComponent(relicId)}/versions/${version}/key`,
-      invite === undefined ? {} : { invite_id: invite.inviteId }
+      invite === undefined ? {} : inviteKeyBody(invite.inviteId)
     ),
     relicId,
     version

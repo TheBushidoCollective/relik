@@ -28,6 +28,7 @@ import {
   openInvitedVersion,
   type VerifiedInvitation,
 } from './invite.ts';
+import { listInvites } from './invite-wire.ts';
 import { parseInviteFragment } from '@relic/format/private';
 import { parseShareFragment } from './direct-share.ts';
 import { mountPasskeySignIn } from '../passkey-sign-in.ts';
@@ -1392,15 +1393,8 @@ class PrivateReader {
         'GET',
         `/api/relics/${encodeURIComponent(this.mount.relicId)}/requests`
       );
-      const accepted = await privateApi<{
-        readonly invites: readonly { readonly status: string }[];
-      }>(
-        this.mount.deps,
-        'GET',
-        `/api/relics/${encodeURIComponent(this.mount.relicId)}/invites`
-      ).then(
-        (answer) =>
-          answer.invites.filter((invite) => invite.status === 'claimed').length,
+      const accepted = await listInvites(this.mount.deps, this.mount.relicId).then(
+        (invites) => invites.filter((invite) => invite.status === 'claimed').length,
         () => 0
       );
       // The Access button counts pending requests and accepted invitations awaiting Confirm.
