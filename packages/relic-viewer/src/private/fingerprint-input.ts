@@ -148,6 +148,20 @@ export function problemMessage(error: unknown): string {
   if (error instanceof VerificationRefusedError) return error.message;
   if (error instanceof PrivateApiError) {
     switch (error.code) {
+      case 'grant_exists':
+        return 'This person can already read this relik.';
+      case 'invite_not_found':
+        return 'No such invitation.';
+      case 'invite_claimed':
+        return 'This invitation was already used.';
+      case 'invite_expired':
+        return 'This invitation expired.';
+      case 'invite_revoked':
+        return 'This invitation was withdrawn.';
+      case 'invite_limit_reached':
+        return 'This relik has too many open invitations.';
+      case 'identity_exists':
+        return 'This person now has a private-share key. Look them up again.';
       case 'fingerprint_mismatch':
         return 'The fingerprint does not match. Nothing was granted.';
       case 'grant_stale_version':
