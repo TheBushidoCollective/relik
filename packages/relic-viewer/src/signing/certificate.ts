@@ -13,12 +13,18 @@ export async function openSigningCertificate(input: {
   readonly trustedOwnerIdentityId?: string;
   readonly shareProof?: string;
 }): Promise<HTMLElement> {
-  const cert = await signingApi(input.deps, input.relicId, input.shareProof).certificate(input.requestId);
+  const cert = await signingApi(
+    input.deps,
+    input.relicId,
+    input.shareProof
+  ).certificate(input.requestId);
   const report = await verifySigningCertificate(cert, {
     signingKey: input.signingKey,
     content: signingContent(input.content),
     expectedOrigin: input.deps.serviceOrigin,
-    ...(input.trustedOwnerIdentityId === undefined ? {} : { trustedOwnerIdentityId: input.trustedOwnerIdentityId }),
+    ...(input.trustedOwnerIdentityId === undefined
+      ? {}
+      : { trustedOwnerIdentityId: input.trustedOwnerIdentityId }),
   });
   const panel = document.createElement('aside');
   panel.className = 'access-panel signing-panel';
@@ -40,7 +46,11 @@ export async function openSigningCertificate(input: {
   body.className = 'panel-body';
   const result = document.createElement('p');
   result.className = 'panel-notice';
-  result.textContent = report.valid ? 'Verified in this browser' : report.internal_consistency && report.trust.owner === 'unchecked' ? 'Signatures are internally consistent. The owner identity has not been independently checked.' : 'Certificate verification failed.';
+  result.textContent = report.valid
+    ? 'Verified in this browser'
+    : report.internal_consistency && report.trust.owner === 'unchecked'
+      ? 'Signatures are internally consistent. The owner identity has not been independently checked.'
+      : 'Certificate verification failed.';
   body.appendChild(result);
   for (const check of report.checks) {
     const row = document.createElement('p');
@@ -62,8 +72,18 @@ export async function openSigningCertificate(input: {
   download.type = 'button';
   download.className = 'btn';
   download.textContent = 'Download certificate';
+  download.disabled = !report.internal_consistency || report.content !== 'match';
   download.addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify({ ...cert, signing_key: encodeBase64url(input.signingKey) }, null, 2)], { type: 'application/json' });
+    const blob = new Blob(
+      [
+        JSON.stringify(
+          { ...cert, signing_key: encodeBase64url(input.signingKey) },
+          null,
+          2
+        ),
+      ],
+      { type: 'application/json' }
+    );
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

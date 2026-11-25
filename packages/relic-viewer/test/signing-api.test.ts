@@ -1,8 +1,16 @@
 import { expect, test } from 'bun:test';
 import type { SigningRequestJSON } from '@relic/format/signing';
-import { buildCertificate, RELIC_ID, VERSION } from '../../relic-format/test/support/signing-builder.ts';
+import {
+  buildCertificate,
+  RELIC_ID,
+  VERSION,
+} from '../../relic-format/test/support/signing-builder.ts';
 import { contentFromBytes } from '../src/content.ts';
-import { signingApi, signingContent, verifyViewerSigningRequest } from '../src/signing/api.ts';
+import {
+  signingApi,
+  signingContent,
+  verifyViewerSigningRequest,
+} from '../src/signing/api.ts';
 import type { ViewerDeps } from '../src/viewer.ts';
 
 test('signing transport sends the exact public and private wire bodies', async () => {
@@ -11,7 +19,10 @@ test('signing transport sends the exact public and private wire bodies', async (
     calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
     return Response.json({});
   };
-  const deps = { serviceOrigin: 'https://relik.test', fetch } as unknown as ViewerDeps;
+  const deps = {
+    serviceOrigin: 'https://relik.test',
+    fetch,
+  } as unknown as ViewerDeps;
   const publicApi = signingApi(deps, 'abc', 'proof');
   await publicApi.read();
   await publicApi.options('request');
@@ -22,30 +33,57 @@ test('signing transport sends the exact public and private wire bodies', async (
   await privateApi.request({ nonce: 'owner' }, 'layout');
   await privateApi.cancel({ nonce: 'cancel' });
   expect(calls).toEqual([
-    { url: 'https://relik.test/api/relics/abc/signing/read', body: { share_proof: 'proof' } },
-    { url: 'https://relik.test/api/relics/abc/signing/options', body: { share_proof: 'proof', request_id: 'request' } },
-    { url: 'https://relik.test/api/relics/abc/signing/signatures', body: { share_proof: 'proof', request_id: 'request', attestation: { nonce: 'n' }, mark_ciphertext: 'sealed' } },
-    { url: 'https://relik.test/api/relics/abc/signing/certificate', body: { share_proof: 'proof', request_id: 'request' } },
+    {
+      url: 'https://relik.test/api/relics/abc/signing/read',
+      body: { share_proof: 'proof' },
+    },
+    {
+      url: 'https://relik.test/api/relics/abc/signing/options',
+      body: { share_proof: 'proof', request_id: 'request' },
+    },
+    {
+      url: 'https://relik.test/api/relics/abc/signing/signatures',
+      body: {
+        share_proof: 'proof',
+        request_id: 'request',
+        attestation: { nonce: 'n' },
+        mark_ciphertext: 'sealed',
+      },
+    },
+    {
+      url: 'https://relik.test/api/relics/abc/signing/certificate',
+      body: { share_proof: 'proof', request_id: 'request' },
+    },
     { url: 'https://relik.test/api/relics/abc/signing/read', body: {} },
-    { url: 'https://relik.test/api/relics/abc/signing/requests', body: { attestation: { nonce: 'owner' }, layout_ciphertext: 'layout' } },
-    { url: 'https://relik.test/api/relics/abc/signing/cancel', body: { attestation: { nonce: 'cancel' } } },
+    {
+      url: 'https://relik.test/api/relics/abc/signing/requests',
+      body: { attestation: { nonce: 'owner' }, layout_ciphertext: 'layout' },
+    },
+    {
+      url: 'https://relik.test/api/relics/abc/signing/cancel',
+      body: { attestation: { nonce: 'cancel' } },
+    },
   ]);
 });
 
 test('a private request cannot substitute another owner', async () => {
-  const request = { owner: { identity: { identity_id: 'attacker' } } } as SigningRequestJSON;
-  await expect(verifyViewerSigningRequest({
-    request,
-    relicId: 'r',
-    version: 1,
-    digest: 'digest',
-    content: contentFromBytes(new Uint8Array()),
-    signingKey: new Uint8Array(32),
-    access: 'private',
-    origin: 'https://relik.test',
-    pinnedOwnerIdentityId: 'owner',
-    pdf: false,
-  })).rejects.toThrow('signing_owner_mismatch');
+  const request = {
+    owner: { identity: { identity_id: 'attacker' } },
+  } as SigningRequestJSON;
+  await expect(
+    verifyViewerSigningRequest({
+      request,
+      relicId: 'r',
+      version: 1,
+      digest: 'digest',
+      content: contentFromBytes(new Uint8Array()),
+      signingKey: new Uint8Array(32),
+      access: 'private',
+      origin: 'https://relik.test',
+      pinnedOwnerIdentityId: 'owner',
+      pdf: false,
+    })
+  ).rejects.toThrow('signing_owner_mismatch');
 });
 
 test('signing content uses the complete stored content', async () => {
@@ -77,8 +115,10 @@ test('a valid signed request opens its layout and rejects changed content', asyn
     pdf: true,
   };
   expect((await verifyViewerSigningRequest(input)).boxes).toHaveLength(1);
-  await expect(verifyViewerSigningRequest({
-    ...input,
-    content: contentFromBytes(new Uint8Array([1, 2, 3])),
-  })).rejects.toThrow('signing_content_mismatch');
+  await expect(
+    verifyViewerSigningRequest({
+      ...input,
+      content: contentFromBytes(new Uint8Array([1, 2, 3])),
+    })
+  ).rejects.toThrow('signing_content_mismatch');
 });

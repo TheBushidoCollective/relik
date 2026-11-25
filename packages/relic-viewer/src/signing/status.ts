@@ -45,7 +45,14 @@ export function openSigningStatus(input: {
     const who = document.createElement('strong');
     who.textContent = signer.email;
     const status = document.createElement('span');
-    status.textContent = signer.status === 'signed' ? 'Signed' : signer.status === 'waiting' ? 'Waiting' : signer.status === 'needs_access' ? 'Needs access' : 'Not yet';
+    status.textContent =
+      signer.status === 'signed'
+        ? 'Signed'
+        : signer.status === 'waiting'
+          ? 'Waiting'
+          : signer.status === 'needs_access'
+            ? 'Needs access'
+            : 'Not yet';
     row.append(who, status);
     if (input.private && input.owner) {
       const receipts = document.createElement('small');
@@ -58,7 +65,8 @@ export function openSigningStatus(input: {
   if (input.private && input.owner) {
     const legend = document.createElement('p');
     legend.className = 'panel-meta';
-    legend.textContent = "Delivered: Relik handed their passkey the key to this version (Relik's record), and only that passkey can open it. Opened: their browser opened and checked this version (signed by them). On a public relik there is no delivered record, only whether the page was opened by a signer.";
+    legend.textContent =
+      "Delivered: Relik handed their passkey the key to this version (Relik's record), and only that passkey can open it. Opened: their browser opened and checked this version (signed by them). On a public relik there is no delivered record, only whether the page was opened by a signer.";
     body.appendChild(legend);
   }
   const notice = document.createElement('p');
@@ -92,7 +100,10 @@ export function openSigningStatus(input: {
     sign.type = 'button';
     sign.className = 'btn primary';
     sign.textContent = 'Sign';
-    sign.addEventListener('click', () => { panel.remove(); input.onSign?.(); });
+    sign.addEventListener('click', () => {
+      panel.remove();
+      input.onSign?.();
+    });
     body.appendChild(sign);
   }
   if (input.request.status === 'complete') {
@@ -116,16 +127,37 @@ export function openSigningStatus(input: {
         return;
       }
       cancel.disabled = true;
-      void privateKeysOf(input.deps).attest(input.deps, {
-        purpose: 'signing_cancel',
-        relicId: input.relicId,
-        build: (identityId) => [{ kind: 'signing_cancel', statement: {
-          at: nowMs(input.deps), owner_identity_id: identityId, relic_id: input.relicId,
-          request_id: input.request.request_id, signer_id: identityId,
-        } }],
-      }).then(({ bundle }) => signingApi(input.deps, input.relicId).cancel(bundle))
-        .then(() => { panel.remove(); input.onChanged(); })
-        .catch((error: unknown) => { notice.textContent = error instanceof Error ? error.message : 'Could not cancel the request.'; cancel.disabled = false; });
+      void privateKeysOf(input.deps)
+        .attest(input.deps, {
+          purpose: 'signing_cancel',
+          relicId: input.relicId,
+          build: (identityId) => [
+            {
+              kind: 'signing_cancel',
+              statement: {
+                at: nowMs(input.deps),
+                owner_identity_id: identityId,
+                relic_id: input.relicId,
+                request_id: input.request.request_id,
+                signer_id: identityId,
+              },
+            },
+          ],
+        })
+        .then(({ bundle }) =>
+          signingApi(input.deps, input.relicId).cancel(bundle)
+        )
+        .then(() => {
+          panel.remove();
+          input.onChanged();
+        })
+        .catch((error: unknown) => {
+          notice.textContent =
+            error instanceof Error
+              ? error.message
+              : 'Could not cancel the request.';
+          cancel.disabled = false;
+        });
     });
     body.appendChild(cancel);
   }

@@ -7533,3 +7533,134 @@ fieldset.delete-choice legend { margin-bottom: 0.4rem; padding: 0; font-weight: 
 .sig-block button {
   margin-left: 1rem;
 }
+@media (max-width: 40rem) {
+  .signing-panel {
+    top: auto;
+    bottom: 0;
+    width: 100%;
+    max-height: 60dvh;
+  }
+}
+.signing-panel .input {
+  box-sizing: border-box;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+}
+.signing-panel .signer-row {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr) 2rem;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--oxide);
+  background: var(--ground);
+}
+.signing-panel .signer-row[data-selected="true"] {
+  border-color: var(--patina);
+  background: color-mix(in srgb, var(--patina) 10%, var(--surface));
+}
+.signing-panel .signer-tag {
+  padding: 0.2rem;
+  background: var(--patina);
+  color: var(--surface);
+  text-align: center;
+}
+.signing-panel .row-meta {
+  grid-column: 2 / 4;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+.signing-panel .field-hint {
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+.signing-panel .btn.primary {
+  justify-self: end;
+  border-color: var(--patina);
+  background: var(--patina);
+  color: var(--surface);
+}
+.signing-panel .btn.primary:disabled {
+  border-color: var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink-soft);
+}
+.signing-panel .seg {
+  border: 1px solid var(--rule-strong);
+}
+.signing-panel .seg button {
+  padding: 0.4rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.signing-panel .seg button[aria-pressed="true"] {
+  background: var(--patina);
+  color: var(--surface);
+}
+.signing-panel .panel-notice:empty {
+  display: none;
+}
+@media (min-width: 64rem) {
+  body:has(.signing-panel) .relic-row {
+    padding-right: 28rem;
+  }
+  body:has(.signing-panel) .pdf-page-container {
+    max-width: 60%;
+  }
+}
+.signing-placement {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.signing-placement select {
+  padding: 0.35rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink);
+}
+@media (min-width: 64rem) {
+  body:has(.signing-panel) canvas.relic-page {
+    height: auto !important;
+  }
+}
+.signing-strip {
+  display: flex;
+  flex: none;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  min-height: 3rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  border-left: 3px solid var(--patina);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+.signing-strip strong {
+  color: var(--ink);
+}
+.signing-fingerprint {
+  font: 0.72rem var(--mono);
+  overflow-wrap: anywhere;
+}
+@media (min-width: 64rem) {
+  body:has(.signing-strip) .signing-panel {
+    top: calc(var(--bar-height) + 3rem);
+    max-height: calc(100dvh - var(--bar-height) - 3rem);
+  }
+}
+@media (max-width: 40rem) {
+  .signing-strip {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+}

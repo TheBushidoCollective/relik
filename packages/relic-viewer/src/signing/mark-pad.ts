@@ -1,4 +1,7 @@
-import { SIGNING_MARK_MAX_POINTS, SIGNING_MARK_MAX_STROKES } from '@relic/format/signing';
+import {
+  SIGNING_MARK_MAX_POINTS,
+  SIGNING_MARK_MAX_STROKES,
+} from '@relic/format/signing';
 
 /** Collect a drawn mark in normalized coordinates. The canvas is only a preview. */
 export function createMarkPad(onChange: () => void): {
@@ -19,8 +22,12 @@ export function createMarkPad(onChange: () => void): {
   const context = canvas.getContext('2d');
   function point(event: PointerEvent): [number, number] {
     const rect = canvas.getBoundingClientRect();
-    const unit = (n: number) => Math.round(Math.max(0, Math.min(1, n)) * 1000) / 1000;
-    return [unit((event.clientX - rect.left) / rect.width), unit((event.clientY - rect.top) / rect.height)];
+    const unit = (n: number) =>
+      Math.round(Math.max(0, Math.min(1, n)) * 1000) / 1000;
+    return [
+      unit((event.clientX - rect.left) / rect.width),
+      unit((event.clientY - rect.top) / rect.height),
+    ];
   }
   function append(event: PointerEvent): void {
     if (active === undefined || points >= SIGNING_MARK_MAX_POINTS) return;
@@ -54,7 +61,9 @@ export function createMarkPad(onChange: () => void): {
   canvas.addEventListener('pointermove', (event) => {
     if (active !== undefined) append(event);
   });
-  const finish = () => { active = undefined; };
+  const finish = () => {
+    active = undefined;
+  };
   canvas.addEventListener('pointerup', finish);
   canvas.addEventListener('pointercancel', finish);
   return {

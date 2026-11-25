@@ -1,4 +1,9 @@
-import { formatFingerprint, identityFingerprint, rosterAdmits, type GrantJSON } from '@relic/format/private';
+import {
+  formatFingerprint,
+  identityFingerprint,
+  rosterAdmits,
+  type GrantJSON,
+} from '@relic/format/private';
 import { deriveSigningKey, type SigningLayout } from '@relic/format/signing';
 import { readSession } from '../comments.ts';
 import { decisionShareProof } from '../decisions.ts';
@@ -8,7 +13,7 @@ import { rosterGrants } from '../private/rekey.ts';
 import { observeRosterFloor } from '../private/roster-floor.ts';
 import { keyForView, type ReadyView, type ViewerDeps } from '../viewer.ts';
 import { signingApi, verifyViewerSigningRequest } from './api.ts';
-import { mountSigningBoxes } from './boxes.ts';
+import { mountSigningBoxes, signingPagesFit } from './boxes.ts';
 import { openSigningCertificate } from './certificate.ts';
 import { openSigningComposer } from './composer.ts';
 import { openSignerPanel } from './panel.ts';
@@ -40,30 +45,45 @@ export function mountSigning(input: {
   void (async () => {
     const key = await keyForView(view)(view.version);
     const signingKey = await deriveSigningKey(key);
-    const shareProof = view.access === 'private' ? undefined : await decisionShareProof(key);
+    const shareProof =
+      view.access === 'private' ? undefined : await decisionShareProof(key);
     const api = signingApi(input.deps, input.relicId, shareProof);
     const state = await api.read();
     const session = await readSession(input.deps);
     if (disposed) return;
-    const request = state.requests.find((item) => item.status === 'open') ?? state.requests[0];
+    const request =
+      state.requests.find((item) => item.status === 'open') ??
+      state.requests[0];
     const content = view.folder?.whole ?? view.content;
-    const pin = view.access === 'private' ? pinnedOwnerFor(input.relicId) : undefined;
+    const pin =
+      view.access === 'private' ? pinnedOwnerFor(input.relicId) : undefined;
     const owner = view.manage === true;
     let trusted = false;
     let failure = '';
     let layout: SigningLayout | undefined;
     if (request && request.version === view.version) {
       try {
-        layout = await verifyViewerSigningRequest({ request, relicId: input.relicId, version: view.version,
-          digest: view.versionDigest, content, signingKey, access: view.access === 'private' ? 'private' : 'public',
-          origin: input.deps.serviceOrigin, ...(pin ? { pinnedOwnerIdentityId: pin.identityId } : {}), pdf: view.route === 'pdf' });
+        layout = await verifyViewerSigningRequest({
+          request,
+          relicId: input.relicId,
+          version: view.version,
+          digest: view.versionDigest,
+          content,
+          signingKey,
+          access: view.access === 'private' ? 'private' : 'public',
+          origin: input.deps.serviceOrigin,
+          ...(pin ? { pinnedOwnerIdentityId: pin.identityId } : {}),
+          pdf: view.route === 'pdf',
+        });
         trusted = true;
       } catch (error) {
-        failure = error instanceof Error ? error.message : 'signing_request_invalid';
+        failure =
+          error instanceof Error ? error.message : 'signing_request_invalid';
       }
     }
     if (trusted && layout && view.route === 'pdf') {
-      let canvas = input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
+      let canvas =
+        input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
       if (!canvas?.dataset['pageCount']) {
         const { promise, resolve } = Promise.withResolvers<void>();
         const finish = (): void => {
@@ -72,45 +92,80 @@ export function mountSigning(input: {
           resolve();
         };
         const timer = setTimeout(finish, 20_000);
-        input.stage.addEventListener('relic:page-changed', finish, { once: true });
+        input.stage.addEventListener('relic:page-changed', finish, {
+          once: true,
+        });
         await promise;
-        canvas = input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
+        canvas =
+          input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
       }
       const count = Number(canvas?.dataset['pageCount']);
-      if (!Number.isInteger(count) || count < 1 || layout.boxes.some((box) => box.page > count)) {
+      if (!signingPagesFit(layout.boxes, count)) {
         trusted = false;
         failure = 'signing_page_invalid';
       }
     }
     if (disposed) return;
     const signerIndex = state.me?.signer_index;
-    const signer = signerIndex === undefined ? undefined : request?.signers.find((entry) => entry.index === signerIndex);
-    const canSign = trusted && request?.status === 'open' && signer?.status === 'ready';
+    const signer =
+      signerIndex === undefined
+        ? undefined
+        : request?.signers.find((entry) => entry.index === signerIndex);
+    const canSign =
+      trusted && request?.status === 'open' && signer?.status === 'ready';
     if (request && trusted && signerIndex !== undefined) {
-      const banner = document.createElement('p');
-      banner.className = 'signing-lock';
-      const fingerprint = formatFingerprint(await identityFingerprint(
-        request.owner.identity.identity_id,
-        request.owner.identity.email
-      ));
+      const banner = document.createElement('div');
+      banner.className = 'signing-strip';
+      const fingerprint = formatFingerprint(
+        await identityFingerprint(
+          request.owner.identity.identity_id,
+          request.owner.identity.email
+        )
+      );
       if (disposed) return;
-      banner.textContent = `${request.owner.identity.email} (claimed) asked you to sign version ${request.version}. Owner fingerprint: ${fingerprint}`;
-      input.stage.prepend(banner);
+      const description = document.createElement('span');
+      const ownerName = document.createElement('strong');
+      ownerName.textContent = `${request.owner.identity.email} (claimed)`;
+      description.append(ownerName, ` asked you to sign version ${request.version}`);
+      const fingerprintLabel = document.createElement('span');
+      fingerprintLabel.className = 'signing-fingerprint';
+      fingerprintLabel.textContent = `Owner ${fingerprint}`;
+      banner.append(description, fingerprintLabel);
+      const row = input.stage.closest('.relic-row');
+      if (row) row.before(banner);
+      else input.stage.prepend(banner);
       additions.push(banner);
     }
     const sign = () => {
       if (!canSign || !request || signerIndex === undefined) return;
-      openSignerPanel({ deps: input.deps, relicId: input.relicId, request, signerIndex, signingKey,
+      openSignerPanel({
+        deps: input.deps,
+        relicId: input.relicId,
+        request,
+        signerIndex,
+        signingKey,
         ...(shareProof === undefined ? {} : { shareProof }),
-        ...(view.signingIdentity === undefined ? {} : { identity: view.signingIdentity }),
-        onSigned: refresh });
+        ...(view.signingIdentity === undefined
+          ? {}
+          : { identity: view.signingIdentity }),
+        onSigned: refresh,
+      });
     };
     if (request && trusted && layout) {
       if (view.route === 'pdf') {
-        disposeBoxes = mountSigningBoxes({ stage: input.stage, boxes: () => layout!.boxes,
-          signer: () => signerIndex ?? -1, editable: false, onChange: () => {}, onSign: sign });
+        disposeBoxes = mountSigningBoxes({
+          stage: input.stage,
+          boxes: () => layout!.boxes,
+          signer: () => signerIndex ?? -1,
+          editable: false,
+          onChange: () => {},
+          onSign: sign,
+        });
       }
-      if (view.route !== 'pdf' || !layout.boxes.some((box) => box.signer === signerIndex)) {
+      if (
+        view.route !== 'pdf' ||
+        !layout.boxes.some((box) => box.signer === signerIndex)
+      ) {
         const block = document.createElement('section');
         block.className = 'sig-block';
         block.setAttribute('aria-label', 'Signatures');
@@ -134,12 +189,16 @@ export function mountSigning(input: {
         additions.push(block);
       }
     }
-    if (request?.status === 'complete' && state.locked_versions.includes(request.version)) {
+    if (
+      request?.status === 'complete' &&
+      state.locked_versions.includes(request.version)
+    ) {
       const banner = document.createElement('p');
       banner.className = 'signing-lock';
-      banner.textContent = view.access === 'private'
-        ? `Version ${request.version} was signed by everyone on ${request.completed_at}. It can't be deleted.`
-        : `Version ${request.version} was signed by everyone on ${request.completed_at}. It's locked: this relik can't be republished.`;
+      banner.textContent =
+        view.access === 'private'
+          ? `Version ${request.version} was signed by everyone on ${request.completed_at}. It can't be deleted.`
+          : `Version ${request.version} was signed by everyone on ${request.completed_at}. It's locked: this relik can't be republished.`;
       input.stage.prepend(banner);
       additions.push(banner);
     }
@@ -148,24 +207,61 @@ export function mountSigning(input: {
       if (view.access === 'private') {
         const identity = view.signingIdentity;
         if (!identity) throw new Error('identity_required');
-        const recipients = await privateApi<{ grants: GrantJSON[] }>(input.deps, 'POST', `/api/relics/${encodeURIComponent(input.relicId)}/recipients`);
-        const roster = await rosterGrants({ identityId: identity.identityId, sigPublicKey: identity.sigPublicKey }, input.relicId, recipients.grants);
-        const floor = observeRosterFloor(identity.identityId, { grants: roster.marks });
-        const live = new Set(roster.live.filter((grant) => rosterAdmits(floor.grants?.[grant.key], grant.at)).map((grant) => grant.granteeIdentityId));
-        grants = recipients.grants.filter((grant) => live.has(grant.grantee.identity.identity_id))
-          .map((grant) => ({ email: grant.grantee.email, identityId: grant.grantee.identity.identity_id }));
+        const recipients = await privateApi<{ grants: GrantJSON[] }>(
+          input.deps,
+          'POST',
+          `/api/relics/${encodeURIComponent(input.relicId)}/recipients`
+        );
+        const roster = await rosterGrants(
+          {
+            identityId: identity.identityId,
+            sigPublicKey: identity.sigPublicKey,
+          },
+          input.relicId,
+          recipients.grants
+        );
+        const floor = observeRosterFloor(identity.identityId, {
+          grants: roster.marks,
+        });
+        const live = new Set(
+          roster.live
+            .filter((grant) =>
+              rosterAdmits(floor.grants?.[grant.key], grant.at)
+            )
+            .map((grant) => grant.granteeIdentityId)
+        );
+        grants = recipients.grants
+          .filter((grant) => live.has(grant.grantee.identity.identity_id))
+          .map((grant) => ({
+            email: grant.grantee.email,
+            identityId: grant.grantee.identity.identity_id,
+          }));
       }
       if (disposed) return;
-      openSigningComposer({ deps: input.deps, relicId: input.relicId, version: view.version, digest: view.versionDigest,
-        content, signingKey, private: view.access === 'private', grants, pdf: view.route === 'pdf', stage: input.stage,
-        shareUrl: view.shareUrl, onSent: refresh });
+      openSigningComposer({
+        deps: input.deps,
+        relicId: input.relicId,
+        version: view.version,
+        digest: view.versionDigest,
+        content,
+        signingKey,
+        private: view.access === 'private',
+        grants,
+        pdf: view.route === 'pdf',
+        stage: input.stage,
+        shareUrl: view.shareUrl,
+        onSent: refresh,
+      });
     }
     function open(): void {
       if (!request) {
         if (owner) void compose().catch(() => alert('Could not load signing.'));
         return;
       }
-      if (request.version !== view.version) { input.onOpenVersion(request.version); return; }
+      if (request.version !== view.version) {
+        input.onOpenVersion(request.version);
+        return;
+      }
       if (!trusted) {
         const panel = document.createElement('aside');
         panel.className = 'access-panel signing-panel';
@@ -175,11 +271,12 @@ export function mountSigning(input: {
         body.className = 'panel-body';
         const message = document.createElement('p');
         message.className = 'panel-notice is-oxide';
-        message.textContent = failure === 'signing_content_mismatch'
-          ? `This file doesn't match the one you were asked to sign. Don't sign it. Ask ${request.owner.identity.email} to send the request again.`
-          : failure === 'signing_page_invalid'
-            ? `This request places a signature box beyond the last page. Don't sign it. Ask ${request.owner.identity.email} to send the request again.`
-            : "This signing request isn't signed by this relik's owner.";
+        message.textContent =
+          failure === 'signing_content_mismatch'
+            ? `This file doesn't match the one you were asked to sign. Don't sign it. Ask ${request.owner.identity.email} to send the request again.`
+            : failure === 'signing_page_invalid'
+              ? `This request places a signature box beyond the last page. Don't sign it. Ask ${request.owner.identity.email} to send the request again.`
+              : "This signing request isn't signed by this relik's owner.";
         const close = document.createElement('button');
         close.type = 'button';
         close.className = 'btn';
@@ -190,16 +287,35 @@ export function mountSigning(input: {
         document.body.appendChild(panel);
         return;
       }
-      openSigningStatus({ deps: input.deps, relicId: input.relicId, request, private: view.access === 'private', owner,
+      openSigningStatus({
+        deps: input.deps,
+        relicId: input.relicId,
+        request,
+        private: view.access === 'private',
+        owner,
         ...(canSign ? { onSign: sign } : {}),
         ...(signerIndex === undefined && session.kind !== 'verified'
           ? { onSignIn: () => input.onSignIn(refresh) }
           : {}),
-        ...(owner ? { onRequest: () => { void compose(); } } : {}),
+        ...(owner
+          ? {
+              onRequest: () => {
+                void compose();
+              },
+            }
+          : {}),
         onChanged: refresh,
-        onCertificate: () => { void openSigningCertificate({ deps: input.deps, relicId: input.relicId,
-          requestId: request.request_id, signingKey, content, ...(pin ? { trustedOwnerIdentityId: pin.identityId } : {}),
-          ...(shareProof === undefined ? {} : { shareProof }) }); },
+        onCertificate: () => {
+          void openSigningCertificate({
+            deps: input.deps,
+            relicId: input.relicId,
+            requestId: request.request_id,
+            signingKey,
+            content,
+            ...(pin ? { trustedOwnerIdentityId: pin.identityId } : {}),
+            ...(shareProof === undefined ? {} : { shareProof }),
+          });
+        },
       });
     }
     if (owner || request) input.onAvailable(open);

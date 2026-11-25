@@ -14,14 +14,18 @@ import {
   signingRequestSha256,
   type SigningRequestJSON,
 } from '@relic/format/signing';
-import { authenticationResponseToJSON, ceremonySignal, requestOptionsFromJSON } from '../passkey-common.ts';
+import {
+  authenticationResponseToJSON,
+  ceremonySignal,
+  requestOptionsFromJSON,
+} from '../passkey-common.ts';
 import type { UnlockedIdentity } from '../private/keys.ts';
 import type { ViewerDeps } from '../viewer.ts';
 import { signingApi } from './api.ts';
 import { createMarkPad } from './mark-pad.ts';
 
 interface Prepared {
-  readonly createdAt: number;
+  readonly expiresAt: number;
   readonly publicKey: PublicKeyCredentialRequestOptions;
   readonly nonce: string;
   readonly statement: Record<string, unknown>;
@@ -40,8 +44,12 @@ export function openSignerPanel(input: {
   readonly identity?: UnlockedIdentity;
   readonly onSigned: () => void;
 }): HTMLElement {
-  const request = parseStatement('signing_request', input.request.request.statement);
-  if (request.signers[input.signerIndex] === undefined) throw new Error('not_a_signer');
+  const request = parseStatement(
+    'signing_request',
+    input.request.request.statement
+  );
+  if (request.signers[input.signerIndex] === undefined)
+    throw new Error('not_a_signer');
   const signer = request.signers[input.signerIndex]!;
   const api = signingApi(input.deps, input.relicId, input.shareProof);
   const panel = document.createElement('aside');
@@ -148,77 +156,165 @@ export function openSignerPanel(input: {
       return;
     }
     status.textContent = 'Preparing your signature.';
-    void prepare().then((value) => {
-      if (current !== generation) return;
-      prepared = value;
-      sign.disabled = false;
-      status.textContent = 'Your passkey confirms it.';
-    }).catch((error: unknown) => {
-      if (current !== generation) return;
-      status.textContent = error instanceof Error ? error.message : 'Could not prepare the signature.';
-    });
+    void prepare()
+      .then((value) => {
+        if (current !== generation) return;
+        prepared = value;
+        sign.disabled = false;
+        status.textContent = 'Your passkey confirms it.';
+      })
+      .catch((error: unknown) => {
+        if (current !== generation) return;
+        status.textContent =
+          error instanceof Error
+            ? error.message
+            : 'Could not prepare the signature.';
+      });
   }
   async function prepare(): Promise<Prepared> {
     const options = await api.options(request.request_id);
-    if (options.request_id !== request.request_id || options.version !== request.version ||
-      options.version_digest !== request.ciphertext_sha256 || options.content_mac !== request.content_mac ||
-      options.request_sha256 !== signingRequestSha256(request) || options.signer_index !== input.signerIndex ||
-      options.signer_identity_id !== signer.identity_id || options.consent.id !== SIGN_CONSENT_ID ||
+    const now = input.deps.now ? input.deps.now() : Date.now();
+    const expiresAt = Math.min(Date.parse(options.expires_at), now + 240_000);
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      throw new Error('The signing request expired. Try again.');
+    }
+    if (
+      options.request_id !== request.request_id ||
+      options.version !== request.version ||
+      options.version_digest !== request.ciphertext_sha256 ||
+      options.content_mac !== request.content_mac ||
+      options.request_sha256 !== signingRequestSha256(request) ||
+      options.signer_index !== input.signerIndex ||
+      options.signer_identity_id !== signer.identity_id ||
+      options.consent.id !== SIGN_CONSENT_ID ||
       options.consent.text !== SIGN_CONSENT_TEXT ||
       options.public_key.rpId !== new URL(input.deps.serviceOrigin).hostname ||
       options.public_key.userVerification !== 'required' ||
-      (request.require_opened ? options.opened_receipt_sha256 === null : options.opened_receipt_sha256 !== null)) {
+      (request.require_opened
+        ? options.opened_receipt_sha256 === null
+        : options.opened_receipt_sha256 !== null)
+    ) {
       throw new Error('The signing request changed. Reload this relik.');
     }
-    if ((signer.identity_id !== null && input.identity?.identityId !== signer.identity_id) ||
-      (signer.identity_id === null && input.identity !== undefined)) throw new Error('The signing identity changed.');
-    const mark = await sealSignatureMark({ signingKey: input.signingKey, relicId: input.relicId,
-      version: request.version, mark: { v: 1, name: name.value.trim(), strokes: mode === 'typed' ? null : pad.strokes() } });
+    if (
+      (signer.identity_id !== null &&
+        input.identity?.identityId !== signer.identity_id) ||
+      (signer.identity_id === null && input.identity !== undefined)
+    )
+      throw new Error('The signing identity changed.');
+    const mark = await sealSignatureMark({
+      signingKey: input.signingKey,
+      relicId: input.relicId,
+      version: request.version,
+      mark: {
+        v: 1,
+        name: name.value.trim(),
+        strokes: mode === 'typed' ? null : pad.strokes(),
+      },
+    });
     const statement = {
       at: input.deps.now ? input.deps.now() : Date.now(),
-      ciphertext_sha256: request.ciphertext_sha256, consent: SIGN_CONSENT_ID,
-      content_mac: request.content_mac, mark_sha256: markCiphertextSha256(mark),
-      opened_receipt_sha256: options.opened_receipt_sha256, relic_id: input.relicId,
-      request_id: request.request_id, request_sha256: options.request_sha256,
-      signer_email: signer.email, signer_identity_id: signer.identity_id,
-      signer_index: input.signerIndex, version: request.version,
+      ciphertext_sha256: request.ciphertext_sha256,
+      consent: SIGN_CONSENT_ID,
+      content_mac: request.content_mac,
+      mark_sha256: markCiphertextSha256(mark),
+      opened_receipt_sha256: options.opened_receipt_sha256,
+      relic_id: input.relicId,
+      request_id: request.request_id,
+      request_sha256: options.request_sha256,
+      signer_email: signer.email,
+      signer_identity_id: signer.identity_id,
+      signer_index: input.signerIndex,
+      version: request.version,
     };
-    const bytes = statementBytes('signature', parseStatement('signature', statement));
-    const identitySignature = input.identity === undefined ? '' : await signStatement((message) => input.identity!.sign(message), bytes);
-    const challenge = await attestationChallenge(decodeBase64url(options.nonce), [bytes]);
-    const publicKey = requestOptionsFromJSON({ ...options.public_key, challenge: encodeBase64url(challenge) });
-    return { createdAt: Date.now(), publicKey, nonce: options.nonce, statement, identitySignature, mark };
+    const bytes = statementBytes(
+      'signature',
+      parseStatement('signature', statement)
+    );
+    const identitySignature =
+      input.identity === undefined
+        ? ''
+        : await signStatement(
+            (message) => input.identity!.sign(message),
+            bytes
+          );
+    const challenge = await attestationChallenge(
+      decodeBase64url(options.nonce),
+      [bytes]
+    );
+    const publicKey = requestOptionsFromJSON({
+      ...options.public_key,
+      challenge: encodeBase64url(challenge),
+    });
+    return {
+      expiresAt,
+      publicKey,
+      nonce: options.nonce,
+      statement,
+      identitySignature,
+      mark,
+    };
   }
   name.addEventListener('input', changed);
   consent.addEventListener('change', changed);
-  typed.addEventListener('click', () => { mode = 'typed'; updateMode(); changed(); });
-  drawn.addEventListener('click', () => { mode = 'drawn'; updateMode(); changed(); });
+  typed.addEventListener('click', () => {
+    mode = 'typed';
+    updateMode();
+    changed();
+  });
+  drawn.addEventListener('click', () => {
+    mode = 'drawn';
+    updateMode();
+    changed();
+  });
   sign.addEventListener('click', () => {
     const current = prepared;
-    if (!current || Date.now() - current.createdAt > 240_000) { changed(); return; }
+    if (
+      !current ||
+      (input.deps.now ? input.deps.now() : Date.now()) >= current.expiresAt
+    ) {
+      changed();
+      return;
+    }
     const credentials = input.deps.credentials ?? navigator.credentials;
     let pending: Promise<Credential | null>;
     try {
-      pending = credentials.get({ publicKey: current.publicKey, signal: ceremonySignal() });
+      pending = credentials.get({
+        publicKey: current.publicKey,
+        signal: ceremonySignal(),
+      });
     } catch (error) {
       pending = Promise.reject(error);
     }
     sign.disabled = true;
     status.textContent = 'Waiting for passkey';
-    void pending.then(async (credential) => {
-      if (credential === null) throw new Error('Passkey cancelled.');
-      await api.signature(request.request_id, {
-        nonce: current.nonce,
-        statements: [{ kind: 'signature', statement: current.statement, identity_signature: current.identitySignature }],
-        credential: authenticationResponseToJSON(credential),
-      }, current.mark);
-      status.textContent = 'You signed.';
-      input.onSigned();
-    }).catch((error: unknown) => {
-      status.textContent = error instanceof Error ? error.message : 'Could not sign.';
-      prepared = undefined;
-      changed();
-    });
+    void pending
+      .then(async (credential) => {
+        if (credential === null) throw new Error('Passkey cancelled.');
+        await api.signature(
+          request.request_id,
+          {
+            nonce: current.nonce,
+            statements: [
+              {
+                kind: 'signature',
+                statement: current.statement,
+                identity_signature: current.identitySignature,
+              },
+            ],
+            credential: authenticationResponseToJSON(credential),
+          },
+          current.mark
+        );
+        status.textContent = 'You signed.';
+        input.onSigned();
+      })
+      .catch((error: unknown) => {
+        status.textContent =
+          error instanceof Error ? error.message : 'Could not sign.';
+        prepared = undefined;
+        changed();
+      });
   });
   updateMode();
   document.body.appendChild(panel);

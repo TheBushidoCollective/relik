@@ -29,14 +29,26 @@ export interface SigningOptions {
 }
 
 /** The public proof is omitted for private reliks. Keys never go on the wire. */
-export function signingApi(deps: ViewerDeps, relicId: string, shareProof?: string) {
+export function signingApi(
+  deps: ViewerDeps,
+  relicId: string,
+  shareProof?: string
+) {
   const base = `/api/relics/${encodeURIComponent(relicId)}/signing`;
   const proof = shareProof === undefined ? {} : { share_proof: shareProof };
   return {
-    read: () => postJson(deps, `${base}/read`, proof) as Promise<SigningStateJSON>,
+    read: () =>
+      postJson(deps, `${base}/read`, proof) as Promise<SigningStateJSON>,
     options: (requestId: string) =>
-      postJson(deps, `${base}/options`, { ...proof, request_id: requestId }) as Promise<SigningOptions>,
-    signature: (requestId: string, attestation: unknown, markCiphertext: string) =>
+      postJson(deps, `${base}/options`, {
+        ...proof,
+        request_id: requestId,
+      }) as Promise<SigningOptions>,
+    signature: (
+      requestId: string,
+      attestation: unknown,
+      markCiphertext: string
+    ) =>
       postJson(deps, `${base}/signatures`, {
         ...proof,
         request_id: requestId,
@@ -49,7 +61,9 @@ export function signingApi(deps: ViewerDeps, relicId: string, shareProof?: strin
         layout_ciphertext: layoutCiphertext,
       }) as Promise<SigningRequestJSON>,
     cancel: (attestation: unknown) =>
-      postJson(deps, `${base}/cancel`, { attestation }) as Promise<SigningRequestJSON>,
+      postJson(deps, `${base}/cancel`, {
+        attestation,
+      }) as Promise<SigningRequestJSON>,
     certificate: (requestId: string) =>
       postJson(deps, `${base}/certificate`, {
         ...proof,
@@ -59,9 +73,14 @@ export function signingApi(deps: ViewerDeps, relicId: string, shareProof?: strin
 }
 
 /** Hash the original decrypted stream, including a folder's manifest. */
-export async function* signingContent(content: RelicContent): AsyncIterable<Uint8Array> {
+export async function* signingContent(
+  content: RelicContent
+): AsyncIterable<Uint8Array> {
   for (let start = 0; start < content.size; start += CONTENT_BATCH_BYTES) {
-    yield await content.read(start, Math.min(start + CONTENT_BATCH_BYTES, content.size));
+    yield await content.read(
+      start,
+      Math.min(start + CONTENT_BATCH_BYTES, content.size)
+    );
   }
 }
 
@@ -79,10 +98,16 @@ export async function verifyViewerSigningRequest(input: {
   readonly pdf: boolean;
 }): Promise<SigningLayout> {
   const { request } = input;
-  if (input.access === 'private' && request.owner.identity.identity_id !== input.pinnedOwnerIdentityId) {
+  if (
+    input.access === 'private' &&
+    request.owner.identity.identity_id !== input.pinnedOwnerIdentityId
+  ) {
     throw new Error('signing_owner_mismatch');
   }
-  const statement = parseStatement('signing_request', request.request.statement);
+  const statement = parseStatement(
+    'signing_request',
+    request.request.statement
+  );
   const checks = await verifySigningRequest({
     request: request.request,
     owner: request.owner,
@@ -96,10 +121,15 @@ export async function verifyViewerSigningRequest(input: {
       rpId: new URL(input.origin).hostname,
     },
   });
-  if (checks.some((check) => !check.ok)) throw new Error('signing_request_invalid');
+  if (checks.some((check) => !check.ok))
+    throw new Error('signing_request_invalid');
   const mac = await contentMac(input.signingKey, signingContent(input.content));
-  if (mac !== statement.content_mac) throw new Error('signing_content_mismatch');
-  if (request.request_id !== statement.request_id || request.version !== statement.version) {
+  if (mac !== statement.content_mac)
+    throw new Error('signing_content_mismatch');
+  if (
+    request.request_id !== statement.request_id ||
+    request.version !== statement.version
+  ) {
     throw new Error('signing_request_invalid');
   }
   const layout = await openSigningLayout({
@@ -109,6 +139,7 @@ export async function verifyViewerSigningRequest(input: {
     ciphertext: request.request.layout_ciphertext,
     signerCount: statement.signers.length,
   });
-  if (!input.pdf && layout.boxes.length !== 0) throw new Error('signing_layout_invalid');
+  if (!input.pdf && layout.boxes.length !== 0)
+    throw new Error('signing_layout_invalid');
   return layout;
 }

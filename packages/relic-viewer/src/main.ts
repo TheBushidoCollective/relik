@@ -1112,7 +1112,6 @@ export function buildBar(
     actions.appendChild(signing);
   }
 
-
   // Gated on there being history, not on the history being comparable. Those
   // were the same condition, which is why a download-only or oversize relic
   // offered no way into its own earlier versions while a notice on the page
@@ -11825,45 +11824,53 @@ export function renderReady(
     afterRender?.(document.body);
     trackRenderState(stage, wrap, viewToShow.route, viewToShow.documentKind);
     if (viewToShow.settings?.signing !== false) {
-      void import('./signing/controller.ts').then(({ mountSigning }) => {
-        if (disposed || activeView !== viewToShow || !stage.isConnected) return;
-        disposeSigning = mountSigning({
-          view: viewToShow,
-          relicId,
-          deps,
-          stage,
-          onAvailable: (open) => {
-            if (disposed || activeView !== viewToShow) return;
-            signingOpen = open;
-            replaceBar();
-          },
-          onOpenVersion: (version) => { void showVersion(version); },
-          onSignIn: (done) => {
-            const panel = document.createElement('aside');
-            panel.className = 'access-panel signing-panel';
-            panel.setAttribute('role', 'dialog');
-            panel.setAttribute('aria-label', 'Sign in to sign');
-            const body = document.createElement('div');
-            body.className = 'panel-body';
-            const outcome = document.createElement('p');
-            outcome.setAttribute('aria-live', 'polite');
-            const { form } = signInForm([], {
-              relicId,
-              fragment: viewToShow.access === 'private' ? '' : new URL(viewToShow.shareUrl).hash,
-              deps,
-              outcome,
-              label: 'Your email address',
-              onSignedIn: () => {
-                panel.remove();
-                done();
-              },
-            });
-            body.append(form, outcome);
-            panel.appendChild(body);
-            document.body.appendChild(panel);
-          },
-        });
-      }).catch(() => {});
+      void import('./signing/controller.ts')
+        .then(({ mountSigning }) => {
+          if (disposed || activeView !== viewToShow || !stage.isConnected)
+            return;
+          disposeSigning = mountSigning({
+            view: viewToShow,
+            relicId,
+            deps,
+            stage,
+            onAvailable: (open) => {
+              if (disposed || activeView !== viewToShow) return;
+              signingOpen = open;
+              replaceBar();
+            },
+            onOpenVersion: (version) => {
+              void showVersion(version);
+            },
+            onSignIn: (done) => {
+              const panel = document.createElement('aside');
+              panel.className = 'access-panel signing-panel';
+              panel.setAttribute('role', 'dialog');
+              panel.setAttribute('aria-label', 'Sign in to sign');
+              const body = document.createElement('div');
+              body.className = 'panel-body';
+              const outcome = document.createElement('p');
+              outcome.setAttribute('aria-live', 'polite');
+              const { form } = signInForm([], {
+                relicId,
+                fragment:
+                  viewToShow.access === 'private'
+                    ? ''
+                    : new URL(viewToShow.shareUrl).hash,
+                deps,
+                outcome,
+                label: 'Your email address',
+                onSignedIn: () => {
+                  panel.remove();
+                  done();
+                },
+              });
+              body.append(form, outcome);
+              panel.appendChild(body);
+              document.body.appendChild(panel);
+            },
+          });
+        })
+        .catch(() => {});
     }
   };
 
