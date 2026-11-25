@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { RelicFormatError } from '../src/errors.ts';
 import { hpkeOpen } from '../src/hpke.ts';
+import type { AttestPurpose } from '../src/private-wire.ts';
 import {
   attestationChallenge,
   canonicalJson,
@@ -369,6 +370,22 @@ describe('canonicalJson', () => {
       expect(() => canonicalJson(value)).toThrow(TypeError);
     }
   });
+});
+
+test('signing attestation purposes identify existing statement kinds', () => {
+  const kinds = {
+    relic_settings: 'relic_settings',
+    signing_request: 'signing_request',
+    signing_cancel: 'signing_cancel',
+    sign: 'signature',
+  } satisfies Record<
+    Extract<AttestPurpose, 'relic_settings' | 'signing_request' | 'signing_cancel' | 'sign'>,
+    StatementKind
+  >;
+  for (const kind of Object.values(kinds)) {
+    expect(STATEMENT_KINDS).toContain(kind);
+    expect(parseStatement(kind, SAMPLES[kind])).toEqual(SAMPLES[kind]);
+  }
 });
 
 describe('statementBytes', () => {
