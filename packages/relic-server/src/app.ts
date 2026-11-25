@@ -136,6 +136,7 @@ import {
 } from './private/publish.ts';
 import {
   completeSeal,
+  claimInvitation,
   bindOwner,
   deleteRelic,
   declineRequest,
@@ -1302,6 +1303,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
           if (session === undefined) return refuse('sign_in_required');
           await privateBody(request, 'invalid_statement');
           return Response.json({ invite: await revokeInvitation(env, normalizeEmail(session.email), relicId, fourth) });
+        }
+        if (third === 'invites' && fourth !== undefined && fifth === 'claim' && post) {
+          if (session === undefined) return refuse('sign_in_required');
+          env.limit('invite', ip, config.inviteRateLimit);
+          const body = await privateBody(request, 'invalid_statement');
+          const result = await claimInvitation(env, relicId, normalizeEmail(session.email), fourth, body);
+          return Response.json(result, { status: result.status === 'claimed' ? 201 : 200 });
         }
         if (
           third === 'invites' &&
@@ -3879,6 +3887,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       await store.deleteWraps(relicId, {});
       await store.deleteSeals(relicId);
       await store.deleteGrantsForRelic(relicId);
+      await store.deleteInvitesForRelic(relicId);
+      await store.deleteInviteClaimsForRelic(relicId);
       await store.deleteAccessRequestsForRelic(relicId);
       if (row.ownerIdentityId !== undefined) {
         await store.deleteOwnedRelic(row.ownerIdentityId, relicId);
@@ -4015,7 +4025,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ) {
       throw new ProblemError('private_access_denied', { relic_id: row.id });
     }
-    return readableVersions(env, row, me.kemKeyId);
+    return readableVersions(env, row, me.kemKeyId, me, owner);
   }
 
   /**

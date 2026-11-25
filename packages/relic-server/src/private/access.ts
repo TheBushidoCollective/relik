@@ -113,6 +113,11 @@ export async function sweepWrapsFor(
     const current = new Set(
       row === undefined ? [] : await recipientKeys(env, row, owner)
     );
+    for (const claim of await env.store.listInviteClaims(owned.relicId)) {
+      if (claim.revokedAt !== undefined) continue;
+      const claimant = await env.store.getIdentity(claim.identityId);
+      if (claimant !== undefined && claimant.retiredAt === undefined) current.add(claimant.kemKeyId);
+    }
     for (const keyId of keyIds) {
       if (current.has(keyId)) continue;
       await env.store.deleteWraps(owned.relicId, { recipientKeyId: keyId });
@@ -143,7 +148,7 @@ export async function standingOf(
   if (claim !== undefined && claim.revokedAt !== undefined) {
     return { role: 'revoked' };
   }
-  if (claim !== undefined) return { role: 'invited' };
+  if (claim !== undefined && claim.state === 'committed') return { role: 'invited' };
   const request = await env.store.getAccessRequest(row.id, me.identityId);
   if (request?.status === 'pending') return { role: 'requested', request };
   if (request?.status === 'declined') return { role: 'declined', request };
@@ -158,11 +163,20 @@ export function isDeleted(row: RelicRow, version: number): boolean {
 export async function readableVersions(
   env: PrivateEnv,
   row: RelicRow,
-  recipientKeyId: string
+  recipientKeyId: string,
+  me: IdentityRecord,
+  owner: IdentityRecord
 ): Promise<number[]> {
   const versions = new Set<number>();
+  const standing = await standingOf(env, row, owner, me);
+  const claim = await env.store.getInviteClaim(row.id, me.identityId);
   for (const wrap of await env.store.listWraps(row.id)) {
     if (wrap.recipientKeyId !== recipientKeyId) continue;
+    if (standing?.role === 'invited' || (standing?.role === 'grantee' && wrap.source === 'claim')) {
+      const claimCovers = claim?.state === 'committed' && claim.revokedAt === undefined && claim.versions.includes(wrap.version);
+      const grantCovers = standing.role === 'grantee' && standing.grant?.versions.includes(wrap.version) === true;
+      if (!claimCovers && !grantCovers) continue;
+    }
     if (wrap.version > (row.sealedVersion ?? 0)) continue;
     if (isDeleted(row, wrap.version)) continue;
     if ((await env.store.getSeal(row.id, wrap.version)) !== undefined) {
@@ -203,6 +217,14 @@ export async function requireRead(
   const wrap = await env.store.getWrap(row.id, version, me.kemKeyId);
   if (wrap === undefined) {
     throw new ProblemError('private_access_denied', { relic_id: row.id });
+  }
+  if (standing.role === 'invited' || (standing.role === 'grantee' && wrap.source === 'claim')) {
+    const claim = await env.store.getInviteClaim(row.id, me.identityId);
+    const permittedByClaim = claim !== undefined && claim.state === 'committed' && claim.revokedAt === undefined && claim.versions.includes(version);
+    const permittedByGrant = standing.role === 'grantee' && standing.grant?.versions.includes(version) === true;
+    if (!permittedByClaim && !permittedByGrant) {
+      throw new ProblemError('private_access_denied', { relic_id: row.id });
+    }
   }
   return wrap;
 }

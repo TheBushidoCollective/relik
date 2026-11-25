@@ -12,6 +12,7 @@ import {
 import { fakeGcs, storeOn } from './fake-gcs.ts';
 import {
   accessEvent,
+  attestation,
   accessRequest,
   DAY,
   GRANTEE_ID,
@@ -45,6 +46,33 @@ function row(overrides: Partial<RelicRow> = {}): RelicRow {
     ...overrides,
   };
 }
+
+test('invitation lifetimes retain their own expiry while claim rows extend under a prefix', async () => {
+  const gcs = fakeGcs();
+  const store = gcsStore({
+    bucket: 'relics', prefix: 'tenant/m', getAccessToken: async () => 'token',
+    host: 'https://gcs.test', fetch: gcs.fetch,
+  });
+  await store.putRelic(privateRelic());
+  const inviteId = 'a'.repeat(64);
+  await store.putInvite({
+    relicId: RELIC_ID, inviteId, ownerIdentityId: OWNER_ID, invitedEmail: 'ada@example.com',
+    invitePublicKey: 'public', versions: [1], expiresAt: NOW + DAY, createdAt: NOW,
+    status: 'open', wraps: [], attestation: attestation(),
+  });
+  await store.putInviteClaim({
+    relicId: RELIC_ID, identityId: GRANTEE_ID, ownerIdentityId: OWNER_ID, inviteIds: [inviteId], state: 'committed',
+    versions: [1], claimedAt: NOW, claim: { statement: {}, identitySignature: '' },
+  });
+  const invitePath = `tenant/m/invite/${RELIC_ID}/${inviteId}.json`;
+  const claimPath = `tenant/m/invite-claim/${RELIC_ID}/${GRANTEE_ID}.json`;
+  expect(gcs.objects.get(invitePath)?.customTime).toBe(new Date(NOW + DAY).toISOString());
+  await store.updateInvite(RELIC_ID, inviteId, (invite) => ({ ...invite, wraps: [] }));
+  expect(gcs.objects.get(invitePath)?.customTime).toBe(new Date(NOW + DAY).toISOString());
+  await store.extendPrivateLifetime(RELIC_ID, NOW + 40 * DAY);
+  expect(gcs.objects.get(invitePath)?.customTime).toBe(new Date(NOW + DAY).toISOString());
+  expect(gcs.objects.get(claimPath)?.customTime).toBe(new Date(NOW + 40 * DAY).toISOString());
+});
 
 describe('gcsStore', () => {
   test('a relik survives being written and read back', async () => {

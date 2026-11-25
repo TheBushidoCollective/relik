@@ -436,6 +436,7 @@ export interface InviteClaimRow {
   readonly relicId: string;
   readonly identityId: string;
   readonly ownerIdentityId: string;
+  readonly state: 'pending' | 'committed';
   readonly inviteIds: readonly string[];
   readonly versions: readonly number[];
   readonly claimedAt: number;
@@ -1069,6 +1070,7 @@ export interface RelicStore {
     relicId: string,
     identityId: string
   ): Promise<InviteClaimRow | undefined>;
+  listInviteClaims(relicId: string): Promise<readonly InviteClaimRow[]>;
   updateInviteClaim(
     relicId: string,
     identityId: string,
@@ -2288,6 +2290,10 @@ export class MemoryStore implements RelicStore {
     identityId: string
   ): Promise<InviteClaimRow | undefined> {
     return this.inviteClaims.get(compositeKey(relicId, identityId));
+  }
+
+  async listInviteClaims(relicId: string): Promise<readonly InviteClaimRow[]> {
+    return [...this.inviteClaims.values()].filter((claim) => claim.relicId === relicId);
   }
 
   async updateInviteClaim(

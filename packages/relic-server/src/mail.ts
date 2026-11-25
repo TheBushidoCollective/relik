@@ -590,6 +590,18 @@ export function inviteNoticeMail(p: {
   };
 }
 
+export function inviteClaimedMail(p: { readonly address: string; readonly accessUrl: string }): OutboundMail {
+  const paragraphs = [
+    `${p.address} accepted your invitation to a relik on Relik. They can open the versions you invited them to.`,
+    `To let them open later versions too, confirm in Access: ${p.accessUrl}`,
+  ];
+  return {
+    subject: `${p.address} accepted your invitation`,
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, [p.accessUrl]),
+  };
+}
+
 export function privateActivityMail(p: {
   readonly relicUrl: string;
   readonly stopUrl: string;

@@ -711,6 +711,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         'wrap',
         'seal',
         'grant',
+        'invite-claim',
         'access-request',
         'settings',
         'signing',
@@ -2299,6 +2300,10 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           key('invite-claim', relicId, `${identityId}.json`)
         )
       )?.value;
+    },
+
+    async listInviteClaims(relicId: string): Promise<readonly InviteClaimRow[]> {
+      return list<InviteClaimRow>(`${key('invite-claim', relicId)}/`);
     },
 
     async updateInviteClaim(
