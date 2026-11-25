@@ -952,6 +952,7 @@ describe('the MCP surface', () => {
       'relic_verify_certificate',
       'relic_cancel_signing',
       'relic_read_signing',
+      'relic_request_signatures',
       'relic_enroll_device',
       'relic_confirm_device',
       'relic_bind_owner',

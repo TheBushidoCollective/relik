@@ -88,7 +88,12 @@ import { readDecisions } from './decisions.ts';
 import { shareRelic } from './share.ts';
 import { type SettingsInput, updateSettings } from './settings.ts';
 import { verifyCertificate } from './verify-certificate.ts';
-import { cancelSigning, readSigning } from './signing.ts';
+import {
+  cancelSigning,
+  readSigning,
+  requestSignatures,
+  type RequestSignaturesInput,
+} from './signing.ts';
 import { type ProgramReport, programText } from './program/report.ts';
 import {
   cellResolutionLine,
@@ -229,6 +234,7 @@ export const SETTINGS_TOOL_NAME = 'relic_settings';
 export const VERIFY_CERTIFICATE_TOOL_NAME = 'relic_verify_certificate';
 export const CANCEL_SIGNING_TOOL_NAME = 'relic_cancel_signing';
 export const READ_SIGNING_TOOL_NAME = 'relic_read_signing';
+export const REQUEST_SIGNING_TOOL_NAME = 'relic_request_signatures';
 
 export const ENROLL_TOOL_NAME = 'relic_enroll_device';
 
@@ -1052,6 +1058,52 @@ export const LIST_TOOL_DEFINITION = {
       'order',
       'relics',
     ],
+    additionalProperties: false,
+  },
+} as const;
+
+export const REQUEST_SIGNING_TOOL_DEFINITION = {
+  name: REQUEST_SIGNING_TOOL_NAME,
+  title: 'Request signatures on a version',
+  description:
+    'Request signatures from named people using this machine’s certified owner device. Binds the owner first if needed. Public invitation drafts carry the full link and its key; they are not sent. Private invitations are sent by Relik. Signatures are made by a person in the viewer with their passkey. No tool signs or records a signature on anyone’s behalf.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      relic_id: { type: 'string' },
+      signers: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        items: {
+          type: 'object',
+          properties: {
+            email: { type: 'string' },
+            boxes: {
+              type: 'array',
+              maxItems: 20,
+              items: {
+                type: 'object',
+                properties: {
+                  page: { type: 'integer', minimum: 1, maximum: 10000 },
+                  x: { type: 'number' },
+                  y: { type: 'number' },
+                  w: { type: 'number' },
+                  h: { type: 'number' },
+                },
+                required: ['page', 'x', 'y', 'w', 'h'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['email'],
+          additionalProperties: false,
+        },
+      },
+      order: { enum: ['parallel', 'sequential'] },
+      require_opened: { type: 'boolean' },
+    },
+    required: ['relic_id', 'signers'],
     additionalProperties: false,
   },
 } as const;
@@ -2441,6 +2493,7 @@ export async function handleMessage(
             VERIFY_CERTIFICATE_TOOL_DEFINITION,
             CANCEL_SIGNING_TOOL_DEFINITION,
             READ_SIGNING_TOOL_DEFINITION,
+            REQUEST_SIGNING_TOOL_DEFINITION,
             ENROLL_TOOL_DEFINITION,
             CONFIRM_TOOL_DEFINITION,
             BIND_TOOL_DEFINITION,
@@ -2582,6 +2635,78 @@ async function callTool(
 
   if (params['name'] === SETTINGS_TOOL_NAME) {
     return callSettings(id, params, deps);
+  }
+
+  if (params['name'] === REQUEST_SIGNING_TOOL_NAME) {
+    const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+    const signers = args['signers'];
+    if (
+      typeof args['relic_id'] !== 'string' ||
+      !args['relic_id'] ||
+      !Array.isArray(signers) ||
+      signers.length < 1 ||
+      signers.length > 20 ||
+      (args['order'] !== undefined &&
+        args['order'] !== 'parallel' &&
+        args['order'] !== 'sequential') ||
+      (args['require_opened'] !== undefined &&
+        typeof args['require_opened'] !== 'boolean') ||
+      Object.keys(args).some(
+        (key) =>
+          !['relic_id', 'signers', 'order', 'require_opened'].includes(key)
+      ) ||
+      signers.some(
+        (s) =>
+          typeof s !== 'object' ||
+          s === null ||
+          Array.isArray(s) ||
+          typeof s.email !== 'string' ||
+          !/^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(s.email) ||
+          Object.keys(s).some((key) => key !== 'email' && key !== 'boxes') ||
+          (s.boxes !== undefined &&
+            (!Array.isArray(s.boxes) ||
+              s.boxes.length > 20 ||
+              s.boxes.some(
+                (b: unknown) =>
+                  typeof b !== 'object' ||
+                  b === null ||
+                  Array.isArray(b) ||
+                  Object.keys(b).sort().join(',') !== 'h,page,w,x,y' ||
+                  !Object.values(b).every(
+                    (v) => typeof v === 'number' && Number.isFinite(v)
+                  )
+              )))
+      ) ||
+      new Set(signers.map((s) => s.email.toLowerCase())).size !== signers.length
+    ) {
+      return errorResponse(
+        id,
+        ERROR_CODES.invalidParams,
+        'Invalid signing request arguments.'
+      );
+    }
+    try {
+      const result = await requestSignatures(
+        {
+          relicId: args['relic_id'],
+          signers: signers as RequestSignaturesInput['signers'],
+          order: args['order'] === 'sequential' ? 'sequential' : 'parallel',
+          requireOpened: args['require_opened'] === true,
+        },
+        deps
+      );
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: JSON.stringify(result) }],
+          structuredContent: result,
+          isError: false,
+        },
+      };
+    } catch (error) {
+      return { jsonrpc: '2.0', id, result: toolError(error) };
+    }
   }
 
   if (params['name'] === READ_SIGNING_TOOL_NAME) {
