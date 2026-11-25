@@ -61,7 +61,7 @@ Each is cheap to change.
 | D3 | Every signing request, public or private, needs an owner identity, so every certificate names a signed request. `relic_request_signatures` binds the device's owner first when the relik has none, and its description says so. | Unsigned public requests authorized by the token alone. |
 | D4 | The content MAC and an encrypted layout and mark use keys derived from the content key, the same way comments are encrypted (format.md:268). | A plain plaintext hash (format.md:239); layout and marks in the clear. |
 | D5 | Public lock means freeze: no republish while a request is open or after completion. Private lock means the signed version cannot be deleted, while republish and revocation stay allowed. Deleting a whole relik (private owner or operator) and expiry still remove everything. A locked relik's lifetime can be extended but not shortened. | Letting old public versions be minted again, which contradicts format.md:258. |
-| D6 | Every private open records a served receipt (written by `deliverKey`) and an opened receipt (signed by the reader), for every reader, not just signers. | Receipts for signers only. |
+| D6 | Every private open records a served receipt (written by `deliverKey`) and an opened receipt (signed by the reader), for every reader, not just signers. On a private relik the served receipt is also a **delivered** receipt: the key is wrapped to that reader's passkey identity, so only their passkey can ever turn what was served into contents. The owner view calls it "Delivered" for private relics and "Served" only where a link alone gives access (public). Jason, 2026-11-24: "you can even record private documents as served and delivered because people would need their passkey to even see the contents". The claim is limited to the recorded identity's key: it proves their key was handed over, not that a person read it (that is the opened receipt). | Receipts for signers only. |
 | D7 | `row.settings` holds `{suggestions, comments, signing, notifications}`. Decisions stay in `decisionsOpen` and lifetime stays in `expiresAt`. A missing value means on, except decisions, which keep their default of off. | A separate settings document. |
 | D8 | Closing comments does not apply to the publish token or the owner identity. | Closing comments for everyone, which breaks republish `addresses` acknowledgements. |
 | D9 | Turning notifications off stops change notices and comment and activity mail. Signing mail, access requests and grant mail still go, and signing mail honours each recipient's stop link. | |
@@ -576,7 +576,7 @@ Conventions follow `docs/plans/version-compare/plan.md:584-619`:
 - **C8:** "Waiting for {email} to sign first."
 - **C9:** "Signing is paused by the owner."
 - **C10:** Reader: "Comments are closed." Owner: "Comments are closed to readers. You can still comment."
-- **C12:** "Served: Relik handed over their key (Relik's record). Opened: their browser opened and checked this version (signed by them)."
+- **C12:** "Delivered: Relik handed their passkey the key to this version (Relik's record), and only that passkey can open it. Opened: their browser opened and checked this version (signed by them). On a public relik there is no delivered record, only whether the page was opened by a signer."
 
 ## 11. End-to-end proof (S8)
 
@@ -600,7 +600,7 @@ Conventions follow `docs/plans/version-compare/plan.md:584-619`:
 8. `…_8_LOCKED republish=409 shorten=409 extend=200`
 9. `…_9_TAMPER field_flip=invalid content_swap=mismatch`
 10. `…_10_PRIVATE_REQUEST signer_without_grant=409 invites_generic=true`
-11. `…_11_RECEIPTS served=true opened=verified api_only_signer_options=409 signing_open_required`
+11. `…_11_RECEIPTS delivered=true (private) opened=verified api_only_signer_options=409 signing_open_required`
 12. `…_12_PRIVATE_COMPLETE cert=valid identity_signatures=2 opened_receipts=2 delete_locked_version=409 mails_name_title=false`
 13. `…_13_LIFETIME private_extend_customtime_moved=true private_shorten_access_ends=410`
 14. `…_14_MCP_NEVER_SIGNS record_tools=0 read_signing=ok verify_tool=valid`
