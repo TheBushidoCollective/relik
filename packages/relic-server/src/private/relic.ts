@@ -11,6 +11,7 @@
  */
 
 import type { PasskeyRecord } from '../store.ts';
+import { assertVersionUnlocked } from '../store.ts';
 import { settingsView } from '../settings.ts';
 import {
   decodeBase64url,
@@ -1096,7 +1097,11 @@ export async function deleteRelic(
     readonly passkeys: PasskeyRecord | undefined;
     readonly attestation: unknown;
   }
-): Promise<{ deleted_versions: number[] | 'all'; relic_deleted: boolean }> {
+): Promise<{
+  deleted_versions: number[] | 'all';
+  relic_deleted: boolean;
+  signing_deleted?: number;
+}> {
   const { row, owner } = await ownedPrivate(env, input.email, input.relicId);
   const verified = await verifyAttestation(env, {
     bundle: input.attestation,
@@ -1129,6 +1134,7 @@ export async function deleteRelic(
     await env.store.deleteOptOutsForRelic(row.id);
     await env.store.deleteDecisionsForRelic(row.id);
     await env.store.deleteSettingsChanges(row.id);
+    const signingDeleted = await env.store.deleteSigningForRelic(row.id);
     await env.store.deleteWraps(row.id, {});
     await env.store.deleteSeals(row.id);
     await env.store.deleteGrantsForRelic(row.id);
@@ -1138,28 +1144,37 @@ export async function deleteRelic(
     return {
       deleted_versions: Array.from({ length: row.version }, (_, i) => i + 1),
       relic_deleted: true,
+      signing_deleted: signingDeleted,
     };
   }
 
   const list = versions as number[];
+  for (const version of list) assertVersionUnlocked(row, version);
   if (list.includes(row.version)) {
     throw new ProblemError('cannot_delete_current_version', {
       version: row.version,
     });
   }
-  for (const version of list) {
-    if (version > row.version) {
-      throw new ProblemError('invalid_relic_version', { relic_id: row.id });
+  const updated = await env.store.updateRelic(row.id, (cur) => {
+    for (const version of list) {
+      assertVersionUnlocked(cur, version);
+      if (version === cur.version)
+        throw new ProblemError('cannot_delete_current_version', { version });
+      if (version > cur.version)
+        throw new ProblemError('invalid_relic_version', { relic_id: row.id });
     }
+    return {
+      ...cur,
+      deletedVersions: [
+        ...new Set([...(cur.deletedVersions ?? []), ...list]),
+      ].sort((a, b) => a - b),
+    };
+  });
+  if (updated === undefined) throw new ProblemError('relic_removed');
+  for (const version of list) {
     await env.store.deleteWraps(row.id, { version });
     await env.store.deleteSeals(row.id, version);
     await env.storage.delete(env.objectKey(row.id, version));
-    await env.store.updateRelic(row.id, (cur) => ({
-      ...cur,
-      deletedVersions: [
-        ...new Set([...(cur.deletedVersions ?? []), version]),
-      ].sort((a, b) => a - b),
-    }));
     await logAccess(env, owner.identityId, row.id, 'delete', {
       actorIdentityId: owner.identityId,
       version,

@@ -379,7 +379,10 @@ test('signing attestation purposes identify existing statement kinds', () => {
     signing_cancel: 'signing_cancel',
     sign: 'signature',
   } satisfies Record<
-    Extract<AttestPurpose, 'relic_settings' | 'signing_request' | 'signing_cancel' | 'sign'>,
+    Extract<
+      AttestPurpose,
+      'relic_settings' | 'signing_request' | 'signing_cancel' | 'sign'
+    >,
     StatementKind
   >;
   for (const kind of Object.values(kinds)) {

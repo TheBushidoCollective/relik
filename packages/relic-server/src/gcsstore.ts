@@ -28,6 +28,7 @@ import {
   type AccessEvent,
   type AccessRequestRow,
   type AuthLinkRow,
+  assertPublicRepublishUnlocked,
   applyCommentPatch,
   type CommentedRelic,
   type CommentPatch,
@@ -47,6 +48,10 @@ import {
   type PasskeyRecord,
   type RelicCover,
   type RelicRow,
+  type ReceiptRow,
+  type SignatureRow,
+  type SigningRequestRow,
+  updateSigningStatus,
   type SettingsChangeRow,
   type RelicStore,
   type SealRow,
@@ -459,6 +464,101 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     await remove(key('grant-by-grantee', granteeIdentityId, `${relicId}.json`));
   }
   return {
+    async putSigningRequest(id, requestId, row) {
+      return put(
+        key('signing', id, requestId, 'request.json'),
+        row,
+        '0',
+        await privateCustomTime(id)
+      );
+    },
+    async getSigningRequest(id, requestId) {
+      return (
+        await get<SigningRequestRow>(
+          key('signing', id, requestId, 'request.json')
+        )
+      )?.value;
+    },
+    async listSigningRequests(id) {
+      const names = (await listObjectNames(`${key('signing', id)}/`)).filter(
+        (name) => name.endsWith('/request.json')
+      );
+      const rows = await mapConcurrent(names, 16, (name) =>
+        get<SigningRequestRow>(name)
+      );
+      return rows
+        .flatMap((row) => (row === undefined ? [] : [row.value]))
+        .sort((a, b) => b.createdAt - a.createdAt);
+    },
+    async updateSigningRequest(id, requestId, change) {
+      return mutateDoc(
+        key('signing', id, requestId, 'request.json'),
+        (row: SigningRequestRow) => updateSigningStatus(row, change),
+        await privateCustomTime(id),
+        'signing request'
+      );
+    },
+    async putSignature(id, requestId, row) {
+      return put(
+        key('signing', id, requestId, `signature-${row.signerIndex}.json`),
+        row,
+        '0',
+        await privateCustomTime(id)
+      );
+    },
+    async listSignatures(id, requestId) {
+      const names = (
+        await listObjectNames(`${key('signing', id, requestId)}/`)
+      ).filter((name) => /\/signature-\d+\.json$/.test(name));
+      const rows = await mapConcurrent(names, 16, (name) =>
+        get<SignatureRow>(name)
+      );
+      return rows
+        .flatMap((row) => (row === undefined ? [] : [row.value]))
+        .sort((a, b) => a.signerIndex - b.signerIndex);
+    },
+    async putCertificate(id, requestId, certificate) {
+      return put(
+        key('signing', id, requestId, 'certificate.json'),
+        certificate,
+        '0',
+        await privateCustomTime(id)
+      );
+    },
+    async getCertificate(id, requestId) {
+      return (
+        await get<Record<string, unknown>>(
+          key('signing', id, requestId, 'certificate.json')
+        )
+      )?.value;
+    },
+    async putReceipt(id, row) {
+      return put(
+        key(
+          'receipt',
+          id,
+          String(row.version),
+          row.identityId,
+          `${row.kind}.json`
+        ),
+        row,
+        '0',
+        await privateCustomTime(id)
+      );
+    },
+    async listReceipts(id, version) {
+      return list<ReceiptRow>(
+        `${key('receipt', id)}/${version === undefined ? '' : `${version}/`}`
+      );
+    },
+    async deleteSigningForRelic(id) {
+      const names = [
+        ...(await listObjectNames(`${key('signing', id)}/`)),
+        ...(await listObjectNames(`${key('receipt', id)}/`)),
+      ];
+      for (const name of names) await remove(name);
+      return names.length;
+    },
     async appendSettingsChange(
       id: string,
       row: SettingsChangeRow
@@ -497,6 +597,8 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         'grant',
         'access-request',
         'settings',
+        'signing',
+        'receipt',
       ];
       const reverse = ['author_relic', 'grant-by-grantee', 'owner-relic'];
       const names = new Set<string>();
@@ -675,6 +777,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       decisionsUpdate?: { readonly decisionsOpen: boolean }
     ): Promise<RelicRow | undefined> {
       return mutateRelic(id, (row) => {
+        assertPublicRepublishUnlocked(row);
         const { noticePending: _priorPending, ...restRow } = row;
         return {
           ...restRow,
