@@ -487,6 +487,44 @@ test('a signing request grants its named private signer with the same attestatio
   expect(saved?.attestation.statements[0]?.kind).toBe('signing_request');
 });
 
+test('a grant that applies stays when the request it came with is refused, and the refusal lists it', async () => {
+  const f = await fixture();
+  await f.enablePrivate();
+  await f.store.deleteGrant(RELIC_ID, f.first.identityId);
+  await f.store.deleteGrant(RELIC_ID, f.second.identityId);
+  const reader = await f.store.getIdentity(f.first.identityId);
+  await f.store.deleteWraps(RELIC_ID, { recipientKeyId: reader!.kemKeyId });
+  const grantStatement = {
+    at: NOW,
+    fingerprint_typed: await identityFingerprint(f.first.identityId, f.first.email),
+    grantee_email: f.first.email,
+    grantee_identity_id: f.first.identityId,
+    owner_identity_id: f.owner.identityId,
+    relic_id: RELIC_ID,
+    versions: [1],
+  };
+  const signature = await signStatement(
+    async (bytes) => new Uint8Array(await crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      f.owner.keys.sig.privateKey,
+      bytes as BufferSource
+    )),
+    statementBytes('grant', grantStatement)
+  );
+  const encrypted = await wrapVersionKey({
+    recipientPublicKey: f.first.keys.kemPublicKey,
+    relicId: RELIC_ID,
+    version: 1,
+    key: randomBytes(16),
+  });
+  // The second signer has no grant, so the request is refused after the first grant applied.
+  await f.open('parallel', true, false, 1, [f.first, f.second], undefined, 409, {
+    grants: [{ statement: grantStatement, identity_signature: signature }],
+    wraps: [{ recipient_key_id: encrypted.recipientKeyId, version: 1, enc: encrypted.enc, ct: encrypted.ct }],
+  });
+  expect(await f.store.getGrant(RELIC_ID, f.first.identityId)).toBeDefined();
+});
+
 test('two public signatures complete across instances and the certificate verifies', async () => {
   const f = await fixture();
   const request = await f.open();

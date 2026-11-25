@@ -38,6 +38,8 @@ import {
   type DeviceEnrollmentRow,
   type DeviceRecord,
   type GrantRow,
+  type InviteClaimRow,
+  type InviteRow,
   type IdentityRecord,
   type KemHolder,
   looksLikeEmail,
@@ -2220,6 +2222,101 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           .replace(/\.json$/, '');
         await removeGrant(relicId, granteeIdentityId);
       }
+      return names.length;
+    },
+
+    /**
+     * Create-only. An invitation's `customTime` is its own expiry, fixed when
+     * it is created and derived the same way on every rewrite, so it never
+     * needs lowering (the owner's expiry is already clamped to the relic's).
+     */
+    async putInvite(row: InviteRow): Promise<boolean> {
+      return put(
+        key('invite', row.relicId, `${row.inviteId}.json`),
+        row,
+        '0',
+        new Date(row.expiresAt).toISOString()
+      );
+    },
+
+    async getInvite(
+      relicId: string,
+      inviteId: string
+    ): Promise<InviteRow | undefined> {
+      return (await get<InviteRow>(key('invite', relicId, `${inviteId}.json`)))
+        ?.value;
+    },
+
+    async listInvites(relicId: string): Promise<readonly InviteRow[]> {
+      const rows = await list<InviteRow>(`${key('invite', relicId)}/`);
+      return [...rows].sort(
+        (a, b) =>
+          a.createdAt - b.createdAt || (a.inviteId < b.inviteId ? -1 : 1)
+      );
+    },
+
+    async updateInvite(
+      relicId: string,
+      inviteId: string,
+      change: (r: InviteRow) => InviteRow
+    ): Promise<InviteRow | undefined> {
+      const name = key('invite', relicId, `${inviteId}.json`);
+      const current = await get<InviteRow>(name);
+      if (current === undefined) return undefined;
+      return mutateDoc(
+        name,
+        change,
+        new Date(current.value.expiresAt).toISOString(),
+        'invite'
+      );
+    },
+
+    async deleteInvitesForRelic(relicId: string): Promise<number> {
+      const names = await listObjectNames(`${key('invite', relicId)}/`);
+      for (const name of names) await remove(name);
+      return names.length;
+    },
+
+    async putInviteClaim(row: InviteClaimRow): Promise<boolean> {
+      return put(
+        key('invite-claim', row.relicId, `${row.identityId}.json`),
+        row,
+        '0',
+        await privateCustomTime(row.relicId)
+      );
+    },
+
+    async getInviteClaim(
+      relicId: string,
+      identityId: string
+    ): Promise<InviteClaimRow | undefined> {
+      return (
+        await get<InviteClaimRow>(
+          key('invite-claim', relicId, `${identityId}.json`)
+        )
+      )?.value;
+    },
+
+    async updateInviteClaim(
+      relicId: string,
+      identityId: string,
+      change: (r: InviteClaimRow) => InviteClaimRow
+    ): Promise<InviteClaimRow | undefined> {
+      return mutateDoc(
+        key('invite-claim', relicId, `${identityId}.json`),
+        change,
+        await privateCustomTime(relicId),
+        'invite claim'
+      );
+    },
+
+    async deleteInviteClaim(relicId: string, identityId: string): Promise<void> {
+      await remove(key('invite-claim', relicId, `${identityId}.json`));
+    },
+
+    async deleteInviteClaimsForRelic(relicId: string): Promise<number> {
+      const names = await listObjectNames(`${key('invite-claim', relicId)}/`);
+      for (const name of names) await remove(name);
       return names.length;
     },
 
