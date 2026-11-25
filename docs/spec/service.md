@@ -976,6 +976,32 @@ refused. Read and write requests use separate signing rate budgets, and session
 writes require JSON. A paused write is refused before it consumes an attestation
 nonce.
 
+All three routes accept JSON. Creation takes `{attestation, layout_ciphertext}`
+for an owner session, or `{publish_token, request, layout_ciphertext}` for a
+device. The device request holds `statement`, `signature`, `signer_kind` set to
+`device`, and `device_id`. Cancellation takes `{attestation}` or
+`{publish_token, cancel}` with the same device fields. The read body takes
+`share_proof` or `publish_token` when needed. Creation returns 201 and the
+request; cancellation returns 200 and the request; read returns 200 with
+`relic_id`, `current_version`, `locked_versions`, `me`, and `requests`.
+
+The request contains the signed statement, signature, signer kind, attestation
+when present, encrypted layout, owner identity and optional device, signer
+status and any cancellation. An open signer is ready, waiting, or needs access;
+a signed signer includes the recorded signature. The owner and publisher can
+see each signer's served and opened times. Other readers do not receive those
+times or the signed opened receipt in the per-signer records.
+
+Request creation may refuse `invalid_signing_request` with `signing_check`,
+`signing_closed`, `share_unavailable`, `signing_digest_mismatch`,
+`version_locked`, `signing_in_progress`, or `signer_without_access`. Both
+mutations can refuse owner, device, statement, or passkey authorization.
+Cancellation also refuses `signing_request_not_found` or
+`signing_request_closed`. Reads can refuse `invalid_share_proof`,
+`invalid_publish_token`, `sign_in_required`, or `private_access_denied`.
+All routes can refuse a malformed id, a missing or removed relik, or the
+signing rate limit. Mutations also refuse an expired relik and a paused service.
+
 The server cannot open the layout. It checks the encoded envelope, its size,
 and the signed hash; clients validate the plaintext layout when sealing and
 opening it. The signer and owner can check it with the signing key. The
