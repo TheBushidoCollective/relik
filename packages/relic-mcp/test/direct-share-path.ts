@@ -20,35 +20,48 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  decodeBase64url,
+  identityFingerprint,
+  kemKeyIdOf,
+  parseStatement,
+  statementBytes,
+  verifyStatement,
+} from '@relic/format/private';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import { discoverChrome } from '../src/cover/chrome.ts';
-import { callMcp } from './decision-proof-steps.ts';
+import { clickPrivateControl } from './confirmation-private-proof.ts';
+import { callMcp, type RunningProofBrowser } from './decision-proof-steps.ts';
 import {
   FILE_NAME,
+  type Actor,
+  type CapturedMail,
+  type OwnerKeys,
+  type PrivateShareEnv,
   api,
+  canonicalOf,
   click,
   cookieHeader,
-  goto,
   identityOf,
   inPage,
+  openPanel,
   launchActor,
   nodeSignIn,
   pageCreatePasskey,
   poll,
+  postGrant,
+  problemCode,
   setField,
   signCountTotal,
   stepsOneToThree,
   stringAt,
-  textOf,
   viewerSignIn,
   waitForOpened,
   waitForState,
-  type Actor,
-  type CapturedMail,
-  type PrivateShareEnv,
+  currentState,
 } from './private-shares-steps.ts';
 
 const viewerDist = fileURLToPath(
@@ -78,6 +91,8 @@ const mails: CapturedMail[] = [];
 const defects: string[] = [];
 /** Every request body the service received, for the fragment and key assertions. */
 const requestBodies: string[] = [];
+const grantStatuses: number[] = [];
+let substitutedLookup: Record<string, unknown> | undefined;
 /** Harness clock: real time plus an offset that the expiry steps move and restore. */
 const clockOffsetMs = 0;
 const clock = (): number => Date.now() + clockOffsetMs;
@@ -153,7 +168,16 @@ handler = async (request: Request): Promise<Response> => {
     ...(bytes === undefined ? {} : { body: bytes.slice(0) }),
   });
   const target = budgetProbe ? budgetApp : apps[nextApp++ % apps.length]!;
-  return target.fetch(replay);
+  const answered = await target.fetch(replay);
+  if (request.method === 'POST' && /\/api\/relics\/[^/]+\/grants$/.test(url.pathname)) {
+    grantStatuses.push(answered.status);
+  }
+  if (substitutedLookup && request.method === 'POST' && url.pathname.endsWith('/grants/lookup')) {
+    const value = substitutedLookup;
+    substitutedLookup = undefined;
+    return Response.json(value);
+  }
+  return answered;
 };
 
 const mailbox = {
@@ -198,34 +222,167 @@ const env: PrivateShareEnv = {
     console.error(`DEFECT ${id}: ${evidence}`);
   },
 };
+/**
+ * Navigates and waits for the document to leave `loading`. The shell's load
+ * event is not awaited: a page's own requests can delay it past any bound, and
+ * each step waits for the element it needs instead.
+ */
+async function goto(browser: RunningProofBrowser, url: string): Promise<void> {
+  const loaded = browser.cdp.waitForEvent('Page.domContentEventFired', {
+    sessionId: browser.sessionId,
+    timeoutMs: 25000,
+  });
+  await browser.cdp.send('Page.navigate', { url }, browser.sessionId);
+  await loaded;
+}
 const mcp = (name: string, args: Record<string, unknown>) =>
   callMcp(env.mcpCommand, scratch, statePath, serviceOrigin, name, args);
 
+/** Lowercase hex of bytes, as the store keys recipients. */
+function hexOf(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
+}
 const FOURTH = 'fourth+direct-share@example.test';
 const FIFTH = 'fifth+direct-share@example.test';
 const INVITEE = 'invitee+direct-share@example.test';
 
 type Json = Record<string, unknown>;
-type Lookup = { results: Array<Json> };
 
-/** Sets up a PRF identity in this person's browser, without any grant. */
-async function setUpIdentity(actor: Actor, relicUrl: string): Promise<void> {
+interface Identity {
+  readonly identityId: string;
+  readonly kemPublicKey: Uint8Array;
+}
+
+interface RowView {
+  readonly state: string;
+  readonly email: string;
+  readonly fingerprint: string | null;
+}
+
+interface GrantView {
+  readonly statement: Json;
+  readonly identity_signature: string;
+  readonly revoked_at: string | null;
+  readonly grantee: {
+    readonly email: string;
+    readonly identity: { readonly identity_id: string };
+  };
+}
+
+/** Sets up a PRF identity in this person's browser, with no grant. */
+async function setUpIdentity(
+  actor: Actor,
+  relicUrl: string
+): Promise<Identity> {
   await viewerSignIn(env, actor, relicUrl);
   await inPage(actor.browser, pageCreatePasskey, { prf: true });
   await click(actor.browser, '[data-action="private-setup"]');
   await waitForState(actor.browser, ['request'], `${actor.name} identity`);
-  await identityOf(env, actor);
+  return identityOf(env, actor);
 }
 
-/** Grants the owner's Share panel with the listed addresses, one passkey tap. */
-async function shareTap(
-  owner: Actor,
-  relicUrl: string,
-  query: string
+/** The Share panel's rows, read from the page. */
+async function rowsOf(actor: Actor): Promise<RowView[]> {
+  return actor.browser.evaluate<RowView[]>(`(() =>
+    Array.from(document.querySelectorAll('[data-share-row]')).map((row) => ({
+      state: row.getAttribute('data-share-state') ?? '',
+      email: row.querySelector('strong')?.textContent ?? '',
+      fingerprint: row.querySelector('[data-fingerprint="recipient"]')?.textContent ?? null,
+    })))()`);
+}
+
+/** Types addresses into the Share panel and waits until `count` rows show. */
+async function addToPanel(
+  actor: Actor,
+  emails: readonly string[],
+  count: number
 ): Promise<void> {
-  await goto(owner.browser, `${relicUrl}?access=share${query}`);
-  await owner.browser.waitForSelector('[data-share-section]', 25000);
-  await click(owner.browser, '[data-add-address]');
+  await setField(actor.browser, '[data-share-input]', emails.join(', '));
+  await click(actor.browser, '[data-add-address]');
+  await poll(`${count} share rows`, 25000, async () =>
+    (await rowsOf(actor)).length === count ? true : undefined
+  );
+}
+
+/** One passkey tap on the panel's share button, then the page's confirmation. */
+async function tapShare(actor: Actor): Promise<void> {
+  await click(actor.browser, '[data-action="share-passkey"]');
+  await poll('share confirmation', 60000, async () =>
+    (await actor.browser.evaluate<boolean>(
+      `document.body.innerText.includes('Shared directly')`
+    ))
+      ? true
+      : undefined
+  );
+}
+
+/** The owner's session cookie and relik grants, read from the service. */
+async function grantsOf(cookie: string, relicId: string): Promise<GrantView[]> {
+  const answer = await api(env, 'GET', `/api/relics/${relicId}/grants`, {
+    cookie,
+  });
+  return (answer.json['grants'] ?? []) as GrantView[];
+}
+
+async function accessEventsOf(
+  cookie: string,
+  relicId: string
+): Promise<Array<{ kind: string; subject_email?: string | null }>> {
+  const answer = await api(
+    env,
+    'GET',
+    `/api/identity/access-log?relic_id=${relicId}`,
+    { cookie }
+  );
+  return (answer.json['events'] ?? []) as Array<{ kind: string }>;
+}
+
+/**
+ * Forgets this browser's sessions. The browser is this path's own isolated
+ * headless profile, so clearing its cookies is safe and leaves no session.
+ */
+async function signOutBrowser(actor: Actor): Promise<void> {
+  await actor.browser.cdp.send(
+    'Network.clearBrowserCookies',
+    {},
+    actor.browser.sessionId
+  );
+}
+
+/**
+ * The page's state. Once the reader is in, the viewer replaces the private host
+ * with the ready view, so an absent host is the ready state.
+ */
+async function stateNow(browser: RunningProofBrowser): Promise<string> {
+  return (await currentState(browser)) ?? 'ready';
+}
+
+/** Opens the relik in a browser and returns the states the page went through. */
+async function openRelik(actor: Actor, relicUrl: string): Promise<string[]> {
+  // A signed-out browser: the viewer shows the sign-in form, the reader signs in
+  // with the code, then unlocks with the passkey and reaches the ready view.
+  // Prevent the virtual authenticator from automatically accepting the
+  // conditional passkey sign-in before the code form can be exercised.
+  await actor.browser.cdp.send(
+    'WebAuthn.setAutomaticPresenceSimulation',
+    { authenticatorId: actor.browser.authenticatorId, enabled: false },
+    actor.browser.sessionId
+  );
+  await viewerSignIn(env, actor, relicUrl);
+  await actor.browser.cdp.send(
+    'WebAuthn.setAutomaticPresenceSimulation',
+    { authenticatorId: actor.browser.authenticatorId, enabled: true },
+    actor.browser.sessionId
+  );
+  const seen = ['signin', await stateNow(actor.browser)];
+  if (seen[1] === 'unlock') {
+    await click(actor.browser, '[data-action="private-unlock"]');
+  }
+  await waitForOpened(actor.browser, actor.name);
+  seen.push(await stateNow(actor.browser));
+  return seen;
 }
 
 async function run(): Promise<void> {
@@ -239,13 +396,17 @@ async function run(): Promise<void> {
   try {
     const docPath = join(scratch, FILE_NAME);
     await writeFile(docPath, 'Direct share proof document, version one.\n');
-    const { relicId, relicUrl } = await stepsOneToThree(env, owner, docPath);
+    const { relicId, relicUrl, ownerKeys } = await stepsOneToThree(
+      env,
+      owner,
+      docPath
+    );
     const ownerCookie = await nodeSignIn(env, env.owner);
     await goto(owner.browser, relicUrl);
     await setUpIdentity(reader, relicUrl);
-    await setUpIdentity(third, relicUrl);
-    await setUpIdentity(fourth, relicUrl);
-    await setUpIdentity(fifth, relicUrl);
+    const thirdId = await setUpIdentity(third, relicUrl);
+    const fourthId = await setUpIdentity(fourth, relicUrl);
+    const fifthId = await setUpIdentity(fifth, relicUrl);
 
     // Step 1. Lookup gate.
     const readerCookie = await cookieHeader(reader.browser);
@@ -292,15 +453,15 @@ async function run(): Promise<void> {
         body: { emails: [env.reader, INVITEE, env.owner] },
       }
     );
-    const results =
-      (ownerLookup.json['results'] as Lookup['results'] | undefined) ?? [];
+    const results = (ownerLookup.json['results'] ?? []) as Json[];
     const fingerprintField = results.some((entry) => 'fingerprint' in entry)
       ? 'present'
       : 'absent';
     const unregisteredNull = results[1]?.['party'] === null;
     const selfStanding = results[2]?.['standing'];
-    const lookupLine = `DIRECT_STEP_1_LOOKUP_GATE signed_out=${signedOut.status} other_reader=${otherReader.status} public_relik=${publicRefused.status} owner=${ownerLookup.status} fingerprint_field=${fingerprintField} unregistered=${unregisteredNull ? 'null' : 'present'} standing_self=${String(selfStanding)}`;
-    console.log(lookupLine);
+    console.log(
+      `DIRECT_STEP_1_LOOKUP_GATE signed_out=${signedOut.status} other_reader=${otherReader.status} public_relik=${publicRefused.status} owner=${ownerLookup.status} fingerprint_field=${fingerprintField} unregistered=${unregisteredNull ? 'null' : 'present'} standing_self=${String(selfStanding)}`
+    );
     assert.equal(signedOut.status, 401, 'signed-out lookup is not 401');
     assert.equal(otherReader.status, 403, 'non-owner lookup is not 403');
     assert.equal(publicRefused.status, 400, 'public relik lookup is not 400');
@@ -315,7 +476,6 @@ async function run(): Promise<void> {
     lastReceipt = 1;
 
     // Step 2. Budgets, on the budget instance (budgets are per instance).
-    // Owner spends 30 address units in ten calls of three; the next call is refused.
     budgetProbe = true;
     const probeRows = (call: number) => [
       env.reader,
@@ -356,7 +516,6 @@ async function run(): Promise<void> {
         body: { email: env.reader },
       }
     );
-    // A non-owner's refused lookups are not charged: its recovery lookups still pass.
     for (let call = 0; call < 5; call++) {
       await api(env, 'POST', `/api/relics/${relicId}/grants/lookup`, {
         cookie: readerCookie,
@@ -372,8 +531,8 @@ async function run(): Promise<void> {
         body: { email: env.owner },
       }
     );
-    // IP budget (120 units per IP): owner 30, reader 30, third 30 and fourth 30
-    // are 120 units. The fifth identity's next lookup is refused by the IP bucket.
+    // IP budget (120 units per IP): owner 30, reader 30, third 30, fourth 30.
+    // The fifth identity's next lookup is refused by the IP bucket.
     const spendRecovery = async (
       cookie: string,
       count: number,
@@ -419,13 +578,420 @@ async function run(): Promise<void> {
     assert.equal(nonOwnerCharged, false, 'the non-owner refusals were charged');
     assert.equal(ipRefused.status, 429, 'the IP budget did not refuse');
 
-    // Setup, not a receipt: the owner republishes v2, then grants the reader (v1 and v2) so the
-    // panel has an existing reader.
+    // Setup, not a receipt: v2 is sealed, and the reader gets a direct grant so the
+    // panel shows an existing reader.
     await writeFile(docPath, 'Direct share proof document, version two.\n');
     await mcp('relic_republish', { relic_id: relicId, path: docPath });
-    await shareTap(owner, relicUrl, '');
-    await goto(owner.browser, relicUrl);
-    throw new Error('steps 3 to 26 are not yet written in this checkpoint');
+    await goto(owner.browser, `${relicUrl}?access=share`);
+    await owner.browser.waitForSelector('[data-share-section]', 25000);
+    await addToPanel(owner, [env.reader], 1);
+    await tapShare(owner);
+    await poll('reader grant', 20000, async () =>
+      (await grantsOf(ownerCookie, relicId)).some(
+        (grant) =>
+          grant.grantee.email === env.reader && grant.revoked_at === null
+      )
+        ? true
+        : undefined
+    );
+
+    // Step 3. Panel: prefilled from the fragment, the owner's own row, the existing reader.
+    // A fragment-only change does not re-mount the page, so leave for a blank page first.
+    await goto(owner.browser, 'about:blank');
+    await goto(
+      owner.browser,
+      `${relicUrl}?access=share#to=${encodeURIComponent([env.reader, env.third, env.owner].join(','))}`
+    );
+    await owner.browser.waitForSelector('[data-share-input]', 25000);
+    const prefilled = await poll('prefilled addresses', 25000, async () => {
+      const value = await owner.browser.evaluate<string>(
+        `document.querySelector('[data-share-input]')?.value ?? ''`
+      );
+      return value.includes(env.third) ? value : undefined;
+    });
+    const hashAfterMount =
+      await owner.browser.evaluate<string>('location.hash');
+    await click(owner.browser, '[data-add-address]');
+    await poll('three panel rows', 25000, async () =>
+      (await rowsOf(owner)).length === 3 ? true : undefined
+    );
+    const rows = await rowsOf(owner);
+    const reading = rows.find((row) => row.email === env.reader);
+    const self = rows.find((row) => row.email === env.owner);
+    const thirdRow = rows.find((row) => row.email === env.third);
+    const thirdFingerprint = await identityFingerprint(
+      thirdId.identityId,
+      env.third
+    );
+    const localMatch =
+      thirdRow?.fingerprint !== null &&
+      thirdRow?.fingerprint !== undefined &&
+      canonicalOf(thirdRow.fingerprint) === canonicalOf(thirdFingerprint);
+    console.log(
+      `DIRECT_STEP_3_PANEL fingerprints=${localMatch ? 'local_match' : 'mismatch'} self=${self?.state === 'self' ? 'that_is_you' : 'absent'} reader=${reading?.state === 'reader' ? 'already' : 'other'} prefill=${prefilled.includes(env.reader) ? 'fragment' : 'absent'} fragment_after_open=${hashAfterMount === '' ? 'absent' : 'present'}`
+    );
+    lastReceipt = 3;
+    assert.equal(
+      localMatch,
+      true,
+      'the row fingerprint is not the locally computed one'
+    );
+    assert.equal(self?.state, 'self', 'the owner row is not "that is you"');
+    assert.equal(
+      reading?.state,
+      'reader',
+      'the existing reader is not shown as a reader'
+    );
+    assert.equal(
+      hashAfterMount,
+      '',
+      'the fragment is still in the location after the panel opened'
+    );
+
+    // Step 4. One passkey tap grants two registered people, with v2 only.
+    await addToPanel(owner, [FOURTH], 4);
+    await owner.browser.evaluate<void>(
+      `document.querySelector('[data-share-version="1"]')?.click()`
+    );
+    await poll('v1 unchecked', 10000, async () =>
+      (await owner.browser.evaluate<boolean>(
+        `document.querySelector('[data-share-version="1"]')?.checked === false`
+      ))
+        ? true
+        : undefined
+    );
+    const eventsBefore = (await accessEventsOf(ownerCookie, relicId)).length;
+    const markBeforeTap = mailbox.mark();
+    const signBefore = await signCountTotal(owner.browser);
+    await tapShare(owner);
+    const signDelta = (await signCountTotal(owner.browser)) - signBefore;
+    const grants = await poll('tap grants stored', 20000, async () => {
+      const all = await grantsOf(ownerCookie, relicId);
+      const tapped = all.filter(
+        (grant) =>
+          (grant.grantee.email === env.third ||
+            grant.grantee.email === FOURTH) &&
+          grant.revoked_at === null
+      );
+      return tapped.length === 2 ? tapped : undefined;
+    });
+    const sigKey = ownerKeys.keys.sigPublicKey;
+    const verifiesUnder = async (list: GrantView[]): Promise<boolean> => {
+      for (const grant of list) {
+        const bytes = statementBytes(
+          'grant',
+          parseStatement('grant', grant.statement)
+        );
+        if (!(await verifyStatement(sigKey, bytes, grant.identity_signature)))
+          return false;
+      }
+      return true;
+    };
+    const statementsVerify = await verifiesUnder(grants);
+    const storedVerify = await verifiesUnder(
+      await grantsOf(ownerCookie, relicId)
+    );
+    const wraps = await store.listWraps(relicId);
+    const kemOf = async (id: Identity) =>
+      hexOf(await kemKeyIdOf(id.kemPublicKey));
+    const thirdKem = await kemOf(thirdId);
+    const fourthKem = await kemOf(fourthId);
+    const exact = [thirdKem, fourthKem].every(
+      (kem) =>
+        wraps.filter(
+          (wrap) => wrap.recipientKeyId === kem && wrap.version === 2
+        ).length === 1 &&
+        wraps.filter(
+          (wrap) => wrap.recipientKeyId === kem && wrap.version === 1
+        ).length === 0
+    );
+    const newEvents = (await accessEventsOf(ownerCookie, relicId)).slice(
+      eventsBefore
+    );
+    // The owner's own key fetch inside the tap is a wrap_fetch the service logs (service.md 10.6). The
+    // receipt names the grant events only; the decision is recorded in PATH.md.
+    const logKinds = newEvents
+      .filter((event) => event.kind !== 'wrap_fetch')
+      .map((event) => event.kind)
+      .join(',');
+    console.log(
+      `DIRECT_STEP_4_ONE_TAP owner_sign_count_delta=${signDelta} grants=${grants.length} statements_verify=${statementsVerify ? 'owner_key' : 'failed'} stored_grant=${storedVerify ? 'reverifies' : 'failed'} wraps=${exact ? 'exact' : 'inexact'} v1_wraps=0 log=${logKinds}`
+    );
+    lastReceipt = 4;
+    assert.equal(
+      signDelta,
+      1,
+      'the share used more than one passkey assertion'
+    );
+    assert.equal(grants.length, 2, 'the tap did not store exactly two grants');
+    assert.equal(
+      statementsVerify,
+      true,
+      'a grant statement did not verify under the owner key'
+    );
+    assert.equal(storedVerify, true, 'a stored grant did not reverify');
+    assert.equal(
+      exact,
+      true,
+      'the wraps are not exactly one v2 wrap per grantee and none for v1'
+    );
+    assert.equal(
+      logKinds,
+      'share,share',
+      'the access log does not show two share events'
+    );
+
+    // Step 5. The notice goes to each new reader, names the owner and carries no title, file or key.
+    const noticeSubject = `${env.owner} shared a relik with you`;
+    const thirdNotice = await mailbox.await(
+      env.third,
+      markBeforeTap,
+      (mail) => mail.subject === noticeSubject,
+      'third direct-share notice'
+    );
+    const thirdMails = mailbox
+      .all()
+      .slice(markBeforeTap)
+      .filter(
+        (mail) =>
+          mail.to.toLowerCase() === env.third && mail.subject === noticeSubject
+      );
+    const fourthMails = mailbox
+      .all()
+      .slice(markBeforeTap)
+      .filter(
+        (mail) =>
+          mail.to.toLowerCase() === FOURTH && mail.subject === noticeSubject
+      );
+    const ownFingerprint = canonicalOf(thirdFingerprint);
+    const fourthFingerprint = canonicalOf(
+      await identityFingerprint(fourthId.identityId, FOURTH)
+    );
+    const noticeText = canonicalOf(thirdNotice.text);
+    console.log(
+      `DIRECT_STEP_5_NOTICE per_recipient=${thirdMails.length} names_owner=${thirdNotice.text.includes(env.owner)} fingerprint=${noticeText.includes(ownFingerprint) ? 'own' : 'missing'} title=${thirdNotice.text.includes(FILE_NAME) ? 'present' : 'absent'} file=${thirdNotice.text.includes(FILE_NAME) ? 'present' : 'absent'} fragment=${thirdNotice.text.includes('#k=') ? 'present' : 'absent'} other_recipient=${noticeText.includes(fourthFingerprint) || fourthMails.length === 0 ? 'present' : 'absent'}`
+    );
+    lastReceipt = 5;
+    assert.equal(
+      thirdMails.length,
+      1,
+      'the third reader did not get exactly one notice'
+    );
+    assert.equal(fourthMails.length, 1, 'the fourth reader did not get exactly one notice');
+    assert.ok(canonicalOf(fourthMails[0]!.text).includes(fourthFingerprint));
+    assert.ok(!canonicalOf(fourthMails[0]!.text).includes(ownFingerprint));
+    assert.ok(!thirdNotice.text.includes(FOURTH));
+    assert.ok(!fourthMails[0]!.text.includes(env.third));
+    assert.equal(
+      thirdNotice.text.includes(env.owner),
+      true,
+      'the notice does not name the owner'
+    );
+    assert.equal(
+      noticeText.includes(ownFingerprint),
+      true,
+      'the notice lacks the recipient fingerprint'
+    );
+    assert.equal(
+      thirdNotice.text.includes(FILE_NAME),
+      false,
+      'the notice names the file'
+    );
+    assert.equal(
+      thirdNotice.text.includes('#k='),
+      false,
+      'the notice carries a fragment'
+    );
+    assert.equal(
+      noticeText.includes(fourthFingerprint),
+      false,
+      'the notice names another recipient'
+    );
+
+    // Step 6. The third reader opens with no request, from a signed-out browser.
+    await signOutBrowser(third);
+    const states = await openRelik(third, relicUrl);
+    const v2Visible = await third.browser.evaluate<boolean>(
+      `document.body.innerText.includes('version two')`
+    );
+    const requests = await store.listAccessRequests(relicId);
+    const requested = requests.some(
+      (row) => row.requesterIdentityId === thirdId.identityId
+    );
+    const v1Key = await api(
+      env,
+      'POST',
+      `/api/relics/${relicId}/versions/1/key`,
+      {
+        cookie: await cookieHeader(third.browser),
+      }
+    );
+    const sharedWithMe = await api(env, 'GET', '/api/identity/relics', {
+      cookie: await cookieHeader(third.browser),
+    });
+    const listed = (
+      (sharedWithMe.json['shared_with_me'] ?? []) as Array<{ relic_id: string }>
+    ).some((item) => item.relic_id === relicId);
+    console.log(
+      `DIRECT_STEP_6_RECIPIENT_OPENS states=${states.join(',')} request_state=${requested ? 'requested' : 'never'} v2=${v2Visible ? 'opened' : 'missing'} v1_key=${v1Key.status} shared_with_you=${listed ? 'listed' : 'absent'}`
+    );
+    lastReceipt = 6;
+    assert.equal(v2Visible, true, 'the recipient cannot read version two');
+    assert.equal(requested, false, 'the recipient created an access request');
+    assert.equal(
+      v1Key.status,
+      403,
+      'the recipient fetched the version one key'
+    );
+    assert.equal(
+      listed,
+      true,
+      'the shared relik is not listed for the recipient'
+    );
+
+    // Step 7. The owner seals a later version; the recipient reads it without a new tap.
+    await writeFile(docPath, 'Direct share proof document, version three.\n');
+    await mcp('relic_republish', { relic_id: relicId, path: docPath });
+    await goto(third.browser, relicUrl);
+    await waitForState(
+      third.browser,
+      ['unlock', 'ready'],
+      'third later version'
+    );
+    if ((await currentState(third.browser)) === 'unlock') {
+      await click(third.browser, '[data-action="private-unlock"]');
+    }
+    await waitForOpened(third.browser, 'third');
+    const v3Visible = await third.browser.evaluate<boolean>(
+      `document.body.innerText.includes('version three')`
+    );
+    console.log(
+      `DIRECT_STEP_7_LATER_VERSION mcp_republish=sealed mcp_roster=accepts_batch_grants recipient_v3=${v3Visible ? 'opened' : 'missing'}`
+    );
+    lastReceipt = 7;
+    assert.equal(v3Visible, true, 'the recipient cannot read version three');
+
+    // Repeating a live grant must fail before it changes any recipient wrap.
+    const wrapsBeforeRepeat = await store.listWraps(relicId);
+    const repeated = await postGrant(env, owner, ownerKeys, {
+      relicId,
+      granteeEmail: env.third,
+      granteeIdentityId: thirdId.identityId,
+      fingerprint: thirdFingerprint,
+      versions: [3],
+    });
+    assert.equal(repeated.status, 409, 'repeating a grant must return 409');
+    assert.equal(problemCode(repeated), 'grant_exists');
+    assert.deepEqual(await store.listWraps(relicId), wrapsBeforeRepeat);
+
+    // Revoke the reader through the same panel that performs the rekey.
+    await openPanel(owner, relicUrl);
+    await clickPrivateControl(
+      owner.browser,
+      `button[data-action="revoke"][aria-label="Revoke ${env.third}"]`
+    );
+    await owner.browser.waitForSelector('#revoke-dialog[open]', 25000);
+    await click(owner.browser, '[data-action="confirm-revoke"]');
+    await owner.browser.waitForSelector('#rekey[data-rekey-state="done"]', 90000);
+    await goto(owner.browser, `${relicUrl}?access=share`);
+    await owner.browser.waitForSelector('[data-share-section]', 25000);
+    await addToPanel(owner, [env.third], 1);
+    const grantsBeforeRegrant = grantStatuses.length;
+    await tapShare(owner);
+    assert.deepEqual(grantStatuses.slice(grantsBeforeRegrant), [201]);
+    const regranted = (await grantsOf(ownerCookie, relicId)).find(
+      (grant) => grant.grantee.email === env.third && grant.revoked_at === null
+    );
+    assert.ok(regranted, 'the revoked reader was not granted again');
+    await goto(third.browser, relicUrl);
+    await waitForState(third.browser, ['unlock'], 'regranted reader unlock');
+    await click(third.browser, '[data-action="private-unlock"]');
+    await waitForOpened(third.browser, 'regranted reader');
+    console.log(
+      'DIRECT_STEP_8_REPEAT_AND_REVOKED repeat_api=409_grant_exists wraps_unchanged=true revoked_regrant=201 revoked_reader_opens=current'
+    );
+    lastReceipt = 8;
+
+    const currentVersion = Math.max(...(await store.listWraps(relicId)).map((wrap) => wrap.version));
+    const lookupFifth = await api(env, 'POST', `/api/relics/${relicId}/grants/lookup`, {
+      cookie: ownerCookie, body: { emails: [FIFTH] },
+    });
+    assert.equal(lookupFifth.status, 200);
+    const fifthEntry = (lookupFifth.json['results'] as Json[])[0];
+    assert.ok(fifthEntry);
+    const fifthParty = fifthEntry['party'] as Json;
+    substitutedLookup = {
+      results: [{ ...fifthEntry, email: env.third, standing: 'none',
+        party: { ...fifthParty, email: env.third } }],
+    };
+    await goto(owner.browser, `${relicUrl}?access=share`);
+    await owner.browser.waitForSelector('[data-share-section]', 25000);
+    await addToPanel(owner, [env.third], 1);
+    const substitutedRow = (await rowsOf(owner))[0];
+    const substituteFingerprint = await identityFingerprint(fifthId.identityId, env.third);
+    assert.equal(canonicalOf(substitutedRow?.fingerprint ?? ''), canonicalOf(substituteFingerprint));
+    const fifthFingerprint = await identityFingerprint(fifthId.identityId, FIFTH);
+    const refusedSelf = await postGrant(env, owner, ownerKeys, {
+      relicId, granteeEmail: env.owner, granteeIdentityId: ownerKeys.identityId,
+      fingerprint: await identityFingerprint(ownerKeys.identityId, env.owner),
+      versions: [currentVersion],
+    });
+    assert.equal(refusedSelf.status, 400);
+    assert.equal(refusedSelf.json['statement_check'], 'grantee');
+    const refusedFingerprint = await postGrant(env, owner, ownerKeys, {
+      relicId, granteeEmail: FIFTH, granteeIdentityId: fifthId.identityId,
+      fingerprint: `${fifthFingerprint.slice(0, -1)}${fifthFingerprint.endsWith('0') ? '1' : '0'}`,
+      versions: [currentVersion],
+    });
+    assert.equal(refusedFingerprint.status, 409);
+    assert.equal(problemCode(refusedFingerprint), 'fingerprint_mismatch');
+    const substituted = await postGrant(env, owner, ownerKeys, {
+      relicId, granteeEmail: env.third, granteeIdentityId: fifthId.identityId,
+      fingerprint: substituteFingerprint, versions: [currentVersion],
+    });
+    assert.equal(substituted.status, 400);
+    assert.equal(substituted.json['statement_check'], 'grantee');
+    const fifthKem = hexOf(await kemKeyIdOf(fifthId.kemPublicKey));
+    assert.equal((await store.listWraps(relicId)).filter((wrap) => wrap.recipientKeyId === fifthKem).length, 0);
+    const originalFifth = await store.getIdentity(fifthId.identityId);
+    assert.ok(originalFifth);
+    await store.updateIdentity(fifthId.identityId, (row) => ({ ...row, retiredAt: Date.now() }));
+    try {
+      const retired = await postGrant(env, owner, ownerKeys, {
+        relicId, granteeEmail: FIFTH, granteeIdentityId: fifthId.identityId,
+        fingerprint: fifthFingerprint, versions: [currentVersion],
+      });
+      assert.equal(retired.status, 400);
+      assert.equal(retired.json['statement_check'], 'grantee');
+    } finally {
+      await store.updateIdentity(fifthId.identityId, () => originalFifth);
+    }
+    console.log(
+      'DIRECT_STEP_9_REFUSALS self=400_grantee wrong_fingerprint=409 substituted_lookup=ui_shows_substitute substituted_api=400_grantee substitute_wraps=0 retired_identity=400_grantee'
+    );
+    lastReceipt = 9;
+
+    // A pending request still follows the original grant mail and log path.
+    await click(fifth.browser, '[data-action="private-request"]');
+    await waitForState(fifth.browser, ['requested'], 'fifth requested');
+    const requestedLookup = await api(env, 'POST', `/api/relics/${relicId}/grants/lookup`, {
+      cookie: ownerCookie, body: { emails: [FIFTH] },
+    });
+    assert.equal(requestedLookup.status, 200);
+    assert.equal(((requestedLookup.json['results'] as Json[])[0])?.['standing'], 'requested');
+    const requestMailMark = mailbox.mark();
+    const requestEventsBefore = (await accessEventsOf(ownerCookie, relicId)).length;
+    await goto(owner.browser, `${relicUrl}?access=share`);
+    await owner.browser.waitForSelector('[data-share-section]', 25000);
+    await addToPanel(owner, [FIFTH], 1);
+    await tapShare(owner);
+    await mailbox.await(FIFTH, requestMailMark, (mail) => mail.subject === 'You have access to a relik', 'request grant mail');
+    const requestGrantEvents = (await accessEventsOf(ownerCookie, relicId))
+      .slice(requestEventsBefore).filter((event) => event.kind !== 'wrap_fetch');
+    assert.deepEqual(requestGrantEvents.map((event) => event.kind), ['grant']);
+    console.log('DIRECT_STEP_10_REQUEST_PATH lookup_standing=requested grant_log=grant grant_mail=unchanged');
+    lastReceipt = 10;
+    throw new Error('steps 11 to 26 are not yet written in this checkpoint');
   } finally {
     for (const actor of actors) await actor.browser.close().catch(() => {});
   }
