@@ -444,6 +444,7 @@ class PrivateReader {
   private panelHost: HTMLElement | undefined;
   private requestCount: HTMLElement | undefined;
   private detached = false;
+  private sharePrefill: readonly string[] = [];
   private inviteRef: { readonly inviteId: string; readonly d: Uint8Array | undefined } | undefined;
   private invitation: VerifiedInvitation | undefined;
   private verifiedAt: number | undefined;

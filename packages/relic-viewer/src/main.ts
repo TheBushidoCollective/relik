@@ -11657,6 +11657,8 @@ export function renderReady(
             },
           }),
       ...(activeView.settings?.decisions === false || activeView.viewOnly === true
+      ...(activeView.settings?.decisions === false ||
+      activeView.viewOnly === true
         ? {}
         : { onDecide: toggleDecisions }),
       ...(decisionTally === undefined ? {} : { decisionTally }),
@@ -11829,10 +11831,15 @@ export function renderReady(
     thread?.attach(wrap);
     afterRender?.(document.body);
     trackRenderState(stage, wrap, viewToShow.route, viewToShow.documentKind);
-    if (!viewToShow.viewOnly)
     void import('./signing/controller.ts')
       .then(({ mountSigning }) => {
-        if (disposed || activeView !== viewToShow || !stage.isConnected) return;
+        if (
+          disposed ||
+          activeView !== viewToShow ||
+          viewToShow.viewOnly === true ||
+          !stage.isConnected
+        )
+          return;
         disposeSigning = mountSigning({
           view: viewToShow,
           relicId,
