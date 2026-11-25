@@ -12,7 +12,7 @@ import { layoutCiphertextSha256 } from '@relic/format/signing';
 import { createApp } from '../src/app.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { gcsStore } from '../src/gcsstore.ts';
-import { MemoryStore, type RelicStore } from '../src/store.ts';
+import { MemoryStore, type RelicRow, type RelicStore } from '../src/store.ts';
 import { fakeGcs } from './fake-gcs.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
 import {
@@ -696,4 +696,39 @@ test('owner authentication precedes request verification', async () => {
   expect((await (await submit('other@example.com')).json()).code).toBe(
     'owner_required'
   );
+});
+
+test('ambiguous CAS failure does not cancel a request that actually opened', async () => {
+  class AmbiguousStore extends MemoryStore {
+    failAfterCommit = false;
+    override async updateRelic(
+      id: string,
+      change: (row: RelicRow) => RelicRow
+    ): Promise<RelicRow | undefined> {
+      const result = await super.updateRelic(id, change);
+      if (this.failAfterCommit && result?.signingOpen !== undefined) {
+        this.failAfterCommit = false;
+        throw new Error('response lost after commit');
+      }
+      return result;
+    }
+  }
+  const store = new AmbiguousStore();
+  const { a, make } = await setup(store);
+  const request = await make();
+  store.failAfterCommit = true;
+  await expect(a.fetch(post(request))).rejects.toThrow(
+    'response lost after commit'
+  );
+  expect((await store.getRelic(RELIC_ID))?.signingOpen?.requestId).toBe(
+    request.request.statement.request_id
+  );
+  expect(
+    (
+      await store.getSigningRequest(
+        RELIC_ID,
+        request.request.statement.request_id
+      )
+    )?.status
+  ).toBe('open');
 });

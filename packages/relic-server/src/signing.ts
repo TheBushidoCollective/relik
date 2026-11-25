@@ -463,11 +463,14 @@ export async function createSigningRequest(
     });
     if (updated === undefined) throw new ProblemError('relic_not_found');
   } catch (error) {
-    await env.store.updateSigningRequest(
-      row.id,
-      statement.request_id,
-      (current) => ({ ...current, status: 'cancelled', cancelledAt: env.now })
-    );
+    const latest = await env.store.getRelic(row.id);
+    if (latest?.signingOpen?.requestId !== statement.request_id) {
+      await env.store.updateSigningRequest(
+        row.id,
+        statement.request_id,
+        (current) => ({ ...current, status: 'cancelled', cancelledAt: env.now })
+      );
+    }
     throw error;
   }
   if ((await env.store.getTombstone(row.id)) !== undefined) {
