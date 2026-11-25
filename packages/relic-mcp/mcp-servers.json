@@ -2,7 +2,10 @@
   "relic": {
     "type": "stdio",
     "command": "npx",
-    "args": ["-y", "relic-mcp@0.19.0"],
+    "args": [
+      "-y",
+      "relic-mcp@0.19.0"
+    ],
     "env": {
       "RELIC_CLIENT_NAME": "relic-plugin/0.19.0"
     }

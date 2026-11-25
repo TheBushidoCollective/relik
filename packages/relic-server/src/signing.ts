@@ -842,9 +842,11 @@ export async function signingOptions(
     if (identity === undefined) throw new ProblemError('identity_required');
     if (identity.identityId !== statement.signers[index]?.identity_id)
       throw new ProblemError('signer_identity_changed');
-    const grant = await env.store.getGrant(row.id, identity.identityId);
-    if (grant === undefined || grant.revokedAt !== undefined)
-      throw new ProblemError('private_access_denied');
+    if (identity.identityId !== row.ownerIdentityId) {
+      const grant = await env.store.getGrant(row.id, identity.identityId);
+      if (grant === undefined || grant.revokedAt !== undefined)
+        throw new ProblemError('private_access_denied');
+    }
     await requireRead(
       env,
       row,
@@ -959,9 +961,11 @@ export async function recordSignature(
   if (identity !== undefined) {
     if (identity.identityId !== statement.signers[index]?.identity_id)
       throw new ProblemError('signer_identity_changed');
-    const grant = await env.store.getGrant(row.id, identity.identityId);
-    if (grant === undefined || grant.revokedAt !== undefined)
-      throw new ProblemError('private_access_denied');
+    if (identity.identityId !== row.ownerIdentityId) {
+      const grant = await env.store.getGrant(row.id, identity.identityId);
+      if (grant === undefined || grant.revokedAt !== undefined)
+        throw new ProblemError('private_access_denied');
+    }
     await requireRead(
       env,
       row,
