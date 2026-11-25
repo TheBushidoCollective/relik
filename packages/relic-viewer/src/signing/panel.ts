@@ -182,6 +182,10 @@ export function openSignerPanel(input: {
       status.textContent = 'Tick the box above to sign.';
       return;
     }
+    if (mode === 'drawn' && pad.strokes().length === 0) {
+      status.textContent = 'Draw your mark to sign.';
+      return;
+    }
     status.textContent = 'Preparing your signature.';
     void prepare()
       .then((value) => {

@@ -106,6 +106,11 @@ export async function signerCases(): Promise<void> {
   await untilStatus('Your passkey confirms it.');
   if (button.disabled)
     throw new Error('Sign did not enable after valid preparation');
+  const tabs = [...panel.querySelectorAll<HTMLButtonElement>('.seg button')];
+  tabs.find((entry) => entry.textContent === 'Draw')!.click();
+  if (!button.disabled) throw new Error('An empty drawn mark enabled Sign');
+  tabs.find((entry) => entry.textContent === 'Type')!.click();
+  await untilStatus('Your passkey confirms it.');
   insideClick = true;
   button.click();
   insideClick = false;

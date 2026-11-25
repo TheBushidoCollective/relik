@@ -127,7 +127,7 @@ export function openSigningStatus(input: {
     const scope = document.createElement('p');
     scope.className = 'panel-meta';
     scope.textContent =
-      'These receipt times are reported by the service. The opened receipt is independently checked when it accompanies a verified signature.';
+      'These receipt times are reported by the service. The receipt signature is checked when opened is required by a verified signature.';
     body.appendChild(scope);
   }
   const notice = document.createElement('p');

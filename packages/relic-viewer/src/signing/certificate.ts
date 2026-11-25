@@ -123,9 +123,16 @@ export async function openSigningCertificate(input: {
   const checksTitle = document.createElement('h3');
   checksTitle.textContent = 'Checks';
   checks.appendChild(checksTitle);
+  const grouped = new Map<string, Array<(typeof report.checks)[number]>>();
   for (const check of report.checks) {
+    const group = grouped.get(check.id) ?? [];
+    group.push(check);
+    grouped.set(check.id, group);
+  }
+  for (const [id, group] of grouped) {
+    const failed = group.find((check) => !check.ok);
     const row = document.createElement('p');
-    row.textContent = `${check.ok ? 'Passed' : 'Failed'}: ${check.id}${check.detail ? ` (${check.detail})` : ''}`;
+    row.textContent = `${failed ? 'Failed' : 'Passed'}: ${id}${group.length > 1 ? ` ×${group.length}` : ''}${failed?.detail ? ` (${failed.detail})` : ''}`;
     checks.appendChild(row);
   }
   body.appendChild(checks);
