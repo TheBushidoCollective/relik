@@ -1024,7 +1024,7 @@ The pin is set at first open and never changes. A pin mismatch is a hard refusal
 
 The owner can open Settings from the band and change suggested edits, comments, decisions, signing, notification emails and lifetime with one passkey attestation. The public mint supplies settings, and a signed-in public reader's access response identifies whether they can manage them. Private readers receive settings with their access response.
 
-Closing comments hides the reader's composer and reply and edit actions. The owner can still comment. Turning off suggested edits removes the suggesting controls when the relik is opened; an already open page can still send a suggestion until it reloads. Existing suggestions remain readable. Turning off signing hides the signing controls.
+Closing comments hides the reader's composer and reply and edit actions. The owner can still comment. Turning off suggested edits removes the suggesting controls when the relik is opened; an already open page can still send a suggestion until it reloads. Existing suggestions remain readable. When signing is off, a named signer on a trusted open request sees "Signing is paused by the owner." and a disabled sign control. Without an open request, signing controls remain hidden.
 
 Private lifetimes are limited to 365 days from the change. Shortening ends access sooner but, inferred from GCS customTime semantics, does not move stored-copy erasure earlier. Production GCS lifetime extension behaviour has not been proven locally.
 

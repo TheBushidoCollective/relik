@@ -22,6 +22,15 @@ import { openSigningCertificate } from './certificate.ts';
 import { openSigningComposer } from './composer.ts';
 import { openSignerPanel } from './panel.ts';
 import { openSigningStatus } from './status.ts';
+export function showPausedSigning(
+  signingEnabled: boolean,
+  status: string | undefined,
+  listedSigner: boolean,
+  trusted: boolean
+): boolean {
+  return !signingEnabled && status === 'open' && listedSigner && trusted;
+}
+
 
 /** All async results decorate the mounted page; they never redraw the document. */
 export function mountSigning(input: {
@@ -45,7 +54,6 @@ export function mountSigning(input: {
     input.onAvailable(undefined);
     replacement = mountSigning(input);
   };
-  if (view.settings?.signing === false) return () => {};
   void (async () => {
     const key = await keyForView(view)(view.version);
     const signingKey = await deriveSigningKey(key);
@@ -137,8 +145,11 @@ export function mountSigning(input: {
       signerIndex === undefined
         ? undefined
         : request?.signers.find((entry) => entry.index === signerIndex);
+    const paused = view.settings?.signing === false;
+    if (paused && !showPausedSigning(false, request?.status, signer !== undefined, trusted))
+      return;
     const canSign =
-      trusted && request?.status === 'open' && signer?.status === 'ready';
+      !paused && trusted && request?.status === 'open' && signer?.status === 'ready';
     if (request && trusted && signerIndex !== undefined) {
       const banner = document.createElement('div');
       banner.className = 'signing-strip';
@@ -160,6 +171,16 @@ export function mountSigning(input: {
       fingerprintLabel.className = 'signing-fingerprint';
       fingerprintLabel.textContent = `Owner ${fingerprint}`;
       banner.append(description, fingerprintLabel);
+      if (paused) {
+        const notice = document.createElement('span');
+        notice.textContent = 'Signing is paused by the owner.';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn primary';
+        button.textContent = 'Sign here';
+        button.disabled = true;
+        banner.append(notice, button);
+      }
       const row = input.stage.closest('.relic-row');
       if (row) row.before(banner);
       else input.stage.prepend(banner);

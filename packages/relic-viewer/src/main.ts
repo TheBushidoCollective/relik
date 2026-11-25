@@ -11823,7 +11823,6 @@ export function renderReady(
     thread?.attach(wrap);
     afterRender?.(document.body);
     trackRenderState(stage, wrap, viewToShow.route, viewToShow.documentKind);
-    if (viewToShow.settings?.signing !== false) {
       void import('./signing/controller.ts')
         .then(({ mountSigning }) => {
           if (disposed || activeView !== viewToShow || !stage.isConnected)
@@ -11871,7 +11870,6 @@ export function renderReady(
           });
         })
         .catch(() => {});
-    }
   };
 
   const showVersion = async (v: number): Promise<void> => {

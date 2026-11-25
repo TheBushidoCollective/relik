@@ -12,6 +12,7 @@ import {
   verifyViewerSigningRequest,
 } from '../src/signing/api.ts';
 import { signingPagesFit } from '../src/signing/boxes.ts';
+import { showPausedSigning } from '../src/signing/controller.ts';
 import type { ViewerDeps } from '../src/viewer.ts';
 
 test('signing transport sends the exact public and private wire bodies', async () => {
@@ -65,6 +66,15 @@ test('signing transport sends the exact public and private wire bodies', async (
       body: { attestation: { nonce: 'cancel' } },
     },
   ]);
+});
+
+test('a paused signing notice is limited to listed signers of trusted open requests', () => {
+  expect(showPausedSigning(false, 'open', true, true)).toBe(true);
+  expect(showPausedSigning(true, 'open', true, true)).toBe(false);
+  expect(showPausedSigning(false, undefined, true, true)).toBe(false);
+  expect(showPausedSigning(false, 'complete', true, true)).toBe(false);
+  expect(showPausedSigning(false, 'open', false, true)).toBe(false);
+  expect(showPausedSigning(false, 'open', true, false)).toBe(false);
 });
 
 test('a private request cannot substitute another owner', async () => {

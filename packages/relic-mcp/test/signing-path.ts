@@ -16,8 +16,8 @@ import { MemoryStore } from '@relic/server/src/store.ts';
 import { callMcp } from './decision-proof-steps.ts';
 import {
   approveDeviceFromProcess, bootstrapOwner, goto, inPage, launchActor,
-  nodeSignIn, pageCreatePasskey, poll, sessionCookieParams,
-  type Actor, type CapturedMail, type PrivateShareEnv,
+  nodeSignIn, pageCreatePasskey, poll, sessionCookieParams, click, waitForState, waitForOpened,
+  stepsFourAndFive, stepSeven, type Actor, type CapturedMail, type PrivateShareEnv,
 } from './private-shares-steps.ts';
 
 const chromePath = process.env['RELIC_CHROME_PATH'];
@@ -43,8 +43,12 @@ const options = {
 };
 const apps = [createApp(options), createApp(options)];
 let next = 0;
+let denyOpenedFor = '';
 handler = async request => {
   const url = new URL(request.url);
+  if (denyOpenedFor && url.pathname === `/api/relics/${denyOpenedFor}/receipts/opened`) {
+    return Response.json({code: 'service_paused'}, {status:503});
+  }
   if (url.pathname.startsWith('/__storage/upload/') && request.method === 'PUT') {
     storage.put(url.pathname.slice('/__storage/upload/'.length), new Uint8Array(await request.arrayBuffer()));
     return new Response(null, { status: 200 });
@@ -109,7 +113,14 @@ try {
   await reader.browser.cdp.send('Network.setCookie', sessionCookieParams(env, readerCookie), reader.browser.sessionId);
   await goto(reader.browser, `${origin}/dashboard`);
   await inPage(reader.browser, pageCreatePasskey, { prf: true });
+  await mcp('relic_settings', { relic_id: id, signing: false });
   await goto(reader.browser, text(published.url));
+  await poll('paused signing notice', 15000, async () =>
+    (await reader.browser.evaluate<boolean>(`document.body.innerText.includes('Signing is paused by the owner.') && !!Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Sign here' && b.disabled)`)) ? true : undefined
+  );
+  console.log('SIGNING_PAUSED notice=present sign=disabled');
+  await mcp('relic_settings', { relic_id: id, signing: true });
+  await goto(reader.browser, `${origin}/${id}?refresh=signing${new URL(text(published.url)).hash}`);
   await poll('sign here button', 15000, async () => (await reader.browser.evaluate<boolean>(`Array.from(document.querySelectorAll('button')).some(b => b.textContent === 'Sign here')`)) ? true : undefined).catch(async error => {
     throw new Error(`${error.message}: ${await reader.browser.evaluate<string>('document.body.innerText')}`);
   });
@@ -175,7 +186,82 @@ try {
   assert.equal(unchecked.valid, false);
   assert.equal((unchecked.trust as { owner: string }).owner, 'unchecked');
   console.log('PUBLIC_CERTIFICATE downloaded=true trusted=valid untrusted=unchecked content=match');
-  throw new Error('private path not yet exercised');
+  const privateFile = join(scratch, 'private-proof.txt');
+  await Bun.write(privateFile, 'Private signing acceptance path\n');
+  const privatePublished = await mcp('relic_publish', { path: privateFile, private: true });
+  const privateId = text(privatePublished.relic_id);
+  const privateUrl = text(privatePublished.url);
+  await goto(owner.browser, privateUrl);
+  await waitForState(owner.browser, ['unlock'], 'private owner unlock');
+  await click(owner.browser, '[data-action="private-unlock"]');
+  await waitForOpened(owner.browser, 'private owner');
+  const privateEnv: PrivateShareEnv = { ...env, reader: 'private-ana+signing@example.test' };
+  const privateReader = await launchActor(privateEnv, 'private-ana', privateEnv.reader, true);
+  actors.push(privateReader);
+  const privateIdentity = await stepsFourAndFive(privateEnv, owner, privateReader, privateId, privateUrl, ownerKeys);
+  denyOpenedFor = privateId;
+  await stepSeven(privateEnv, owner, privateReader, privateId, privateUrl, privateIdentity);
+  const privateRequest = await mcp('relic_request_signatures', {
+    relic_id: privateId, signers: [{email: env.owner}, {email: privateEnv.reader}], order: 'parallel', require_opened: true,
+  });
+  assert.equal(privateRequest.status, 'open');
+  const deniedOpened = await privateReader.browser.evaluate<{ status: number; code: string }>(`(async () => {
+    const response = await fetch(${JSON.stringify(`/api/relics/${privateId}/signing/options`)}, {
+      method:'POST', headers: {'content-type':'application/json'}, body:JSON.stringify({request_id:${JSON.stringify(privateRequest.request_id)}})
+    });
+    return {status:response.status, code:(await response.json()).code};
+  })()`);
+  assert.deepEqual(deniedOpened, {status:409, code:'signing_open_required'});
+  denyOpenedFor = '';
+  await goto(privateReader.browser, `${privateUrl}?refresh=1`);
+  await waitForState(privateReader.browser, ['unlock'], 'private reader unlock');
+  await click(privateReader.browser, '[data-action="private-unlock"]');
+  await waitForOpened(privateReader.browser, 'private reader');
+  const receipts = await poll('private opened receipt', 15000, async () => {
+    const rows = (await store.listReceipts(privateId, 1)).filter(row => row.identityId === privateIdentity.identityId);
+    return rows.some(row => row.kind === 'opened') && rows.some(row => row.kind === 'served') ? rows : undefined;
+  });
+  assert.equal(receipts.some(row => row.kind === 'served'), true);
+  console.log('PRIVATE_RECEIPTS delivered=true opened=true require_opened_refused=409');
+  for (const [actor, signerName] of [[privateReader, 'Private Ana'], [owner, 'Private Owner']] as const) {
+    if (actor === owner) {
+      await goto(owner.browser, `${privateUrl}?refresh=owner`);
+      await waitForState(owner.browser, ['unlock'], 'private owner unlock for signing');
+      await click(owner.browser, '[data-action="private-unlock"]');
+      await waitForOpened(owner.browser, 'private owner signing');
+    }
+    await poll(`${signerName} sign control`, 15000, async () =>
+      await actor.browser.evaluate<boolean>(`Array.from(document.querySelectorAll('button')).some(b => b.textContent === 'Sign here' && !b.disabled)`) ? true : undefined
+    );
+    await actor.browser.evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Sign here' && !b.disabled).click()`);
+    await actor.browser.waitForSelector('.signing-panel input');
+    await actor.browser.evaluate(`(() => {
+      const panel = document.querySelector('.signing-panel');
+      const name = panel.querySelector('input:not([type=checkbox])');
+      name.value = ${JSON.stringify(signerName)};
+      name.dispatchEvent(new Event('input', {bubbles:true}));
+      panel.querySelector('input[type=checkbox]').click();
+    })()`);
+    await poll(`${signerName} signature prepared`, 15000, async () =>
+      await actor.browser.evaluate<boolean>(`!!document.querySelector('.signing-panel .sign-row button.primary:not(:disabled)')`) ? true : undefined
+    ).catch(async error => { throw new Error(`${error.message}: ${await actor.browser.evaluate<string>('document.body.innerText')}`); });
+    await actor.browser.evaluate(`document.querySelector('.signing-panel .sign-row button.primary').click()`);
+    await poll(`${signerName} signed`, 15000, async () => {
+      const result = await mcp('relic_read_signing', { relic_id: privateId });
+      const requests = result.requests as Array<{ signers: Array<{ email:string; status:string }> }>;
+      return requests[0]?.signers.some(s => s.email === actor.email && s.status === 'signed') ? true : undefined;
+    });
+  }
+  const privateCert = join(scratch, 'private-signing.json');
+  await mcp('relic_read_signing', { relic_id: privateId, save_certificate_to: privateCert });
+  const privateResult = await mcp('relic_verify_certificate', { certificate_path: privateCert, file_path: privateFile, trusted_owner_identity_id: ownerKeys.identityId });
+  assert.equal(privateResult.valid, true, JSON.stringify(privateResult));
+  assert.equal(privateResult.content, 'match');
+  const parsedPrivateCert = JSON.parse(await readFile(privateCert, 'utf8'));
+  assert.equal(parsedPrivateCert.signatures.length, 2);
+  assert.ok(parsedPrivateCert.signatures.every((s: {identity_signature: string; receipts: {opened: unknown}}) => s.identity_signature && s.receipts.opened));
+  console.log('PRIVATE_COMPLETE signers=2 identity_signatures=2 opened_receipts=2 certificate=valid');
+  throw new Error('remaining lock and negative controls not yet exercised');
 } catch (error) {
   console.error(`SIGNING_PATH_BLOCKED ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
