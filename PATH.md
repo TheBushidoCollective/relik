@@ -384,3 +384,20 @@ The five negatives are: a version that differs only in core.xml shows no text ch
 Two inputs are simulated, and the run output says which one each frame used. Under Chrome for Testing in `--headless=new`, a wheel turn over a grid or over an out-of-process frame reaches the document rather than the element, so the stage sets that element's scroll position itself. The scroll event is the one a reader's wheel fires, and the sync listens for it. In-process frames take a real wheel turn.
 
 Not proven here: Safari and Firefox, touch and IME input, phone memory, a reader's wheel over an out-of-process frame in headed Chrome, and the live service. `version-compare-live-probe.ts`, described in `packages/relic-mcp/PATH.md`, checks the live service after a deploy and is run by hand, not in CI.
+
+# Live settings
+
+The loopback settings path is incomplete and exits nonzero. It currently checks
+MCP comment settings across two app instances and change-notice suppression
+against a captured mailer, including a positive notification control.
+
+```sh
+bun run --cwd packages/relic-viewer build
+bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=<owned-headless-shell> bun packages/relic-mcp/test/settings-path.ts
+```
+
+The private publish, access-request or grant mail, owner browser settings,
+private lifetime, paused passkey challenge and the required browser and pause
+negative controls are not yet exercised. The path does not print
+`SETTINGS_PATH_OK`.
