@@ -732,3 +732,30 @@ test('ambiguous CAS failure does not cancel a request that actually opened', asy
     )?.status
   ).toBe('open');
 });
+
+test('another instance sees signing disabled and expired reads remain available', async () => {
+  const store = new MemoryStore();
+  const { a, b, make } = await setup(store);
+  const settings = await a.fetch(
+    new Request(`https://relic.example/api/relics/${RELIC_ID}/settings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        publish_token: token,
+        settings: { signing: false },
+      }),
+    })
+  );
+  expect(settings.status).toBe(200);
+  const refused = await b.fetch(post(await make()));
+  expect((await refused.json()).code).toBe('signing_closed');
+  await store.updateRelic(RELIC_ID, (row) => ({ ...row, expiresAt: NOW - 1 }));
+  const read = await b.fetch(
+    new Request(`https://relic.example/api/relics/${RELIC_ID}/signing/read`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ publish_token: token }),
+    })
+  );
+  expect(read.status).toBe(200);
+});
