@@ -2,8 +2,15 @@ import type { SigningBox } from '@relic/format/signing';
 import { boxFromUnit, rectFromCorners, unitFromPointer } from '../anchoring.ts';
 
 /** Refuse the whole request if any box names a page the PDF does not contain. */
-export function signingPagesFit(boxes: readonly SigningBox[], pages: number): boolean {
-  return Number.isInteger(pages) && pages >= 1 && boxes.every((box) => box.page <= pages);
+export function signingPagesFit(
+  boxes: readonly SigningBox[],
+  pages: number
+): boolean {
+  return (
+    Number.isInteger(pages) &&
+    pages >= 1 &&
+    boxes.every((box) => box.page <= pages)
+  );
 }
 
 /** Paint boxes against the current PDF canvas, not against the scrolling stage. */
@@ -45,6 +52,7 @@ export function mountSigningBoxes(input: {
       if (!position) continue;
       const element = document.createElement('button');
       element.type = 'button';
+      element.dataset['boxIndex'] = String(index);
       element.className = `signing-box signer-${box.signer % 4}${index === selected ? ' is-selected' : ''}`;
       element.style.left = `${position.left}px`;
       element.style.top = `${position.top}px`;
@@ -62,9 +70,13 @@ export function mountSigningBoxes(input: {
         if (input.editable) {
           selected = index;
           paint();
+          overlay
+            ?.querySelector<HTMLElement>(`[data-box-index="${index}"]`)
+            ?.focus();
         } else if (box.signer === input.signer()) input.onSign?.();
       });
       element.addEventListener('keydown', (event) => {
+        selected = index;
         if (!input.editable) return;
         const boxes = [...input.boxes()];
         if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -99,6 +111,11 @@ export function mountSigningBoxes(input: {
         }
         input.onChange(boxes);
         paint();
+        if (selected !== -1) {
+          overlay
+            ?.querySelector<HTMLElement>(`[data-box-index="${index}"]`)
+            ?.focus();
+        }
       });
       overlay.appendChild(element);
     }

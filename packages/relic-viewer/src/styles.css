@@ -7625,11 +7625,6 @@ fieldset.delete-choice legend { margin-bottom: 0.4rem; padding: 0; font-weight: 
   background: var(--ground);
   color: var(--ink);
 }
-@media (min-width: 64rem) {
-  body:has(.signing-panel) canvas.relic-page {
-    height: auto !important;
-  }
-}
 .signing-strip {
   display: flex;
   flex: none;
@@ -7663,4 +7658,132 @@ fieldset.delete-choice legend { margin-bottom: 0.4rem; padding: 0; font-weight: 
     flex-direction: column;
     gap: 0.3rem;
   }
+}
+.certificate-view {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  overflow: auto;
+  background: var(--ground);
+  color: var(--ink);
+}
+.certificate-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  min-height: var(--bar-height);
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+.certificate-body {
+  max-width: 52rem;
+  margin: 1.5rem auto;
+  border: 1px solid var(--rule-strong);
+  border-top: 3px double var(--ink);
+  background: var(--surface);
+}
+.certificate-heading,
+.certificate-section {
+  padding: 1.3rem 1.75rem;
+  border-bottom: 1px solid var(--rule);
+}
+.certificate-heading h2 {
+  margin: 0.2rem 0;
+  font: 600 1.6rem var(--serif);
+}
+.certificate-heading small,
+.certificate-section h3,
+.certificate-facts small {
+  color: var(--ink-soft);
+  font: 0.68rem var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.certificate-result {
+  color: var(--patina-ink);
+  font-size: 0.85rem;
+}
+.certificate-facts,
+.certificate-explanation {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--rule);
+}
+.certificate-facts > div,
+.certificate-explanation > div {
+  display: grid;
+  gap: 0.4rem;
+  padding: 1rem;
+  border-right: 1px solid var(--rule);
+  overflow-wrap: anywhere;
+}
+.certificate-explanation {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.certificate-explanation h3,
+.certificate-explanation p {
+  margin: 0;
+}
+.certificate-body > .btn {
+  margin: 1rem 1.75rem;
+}
+@media (max-width: 40rem) {
+  .certificate-body { margin: 0; }
+  .certificate-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .certificate-explanation { grid-template-columns: 1fr; }
+}
+.signing-panel .receipt-list {
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--patina);
+  background: var(--ground);
+  padding: 0.75rem;
+}
+.signing-panel .receipt-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(3, minmax(3.3rem, auto));
+  gap: 0.4rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--rule);
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+}
+.signing-panel .receipt-list .receipt-head {
+  color: var(--ink-soft);
+  font: 0.62rem var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.signing-panel .signer-row:nth-child(even) .signer-tag {
+  background: var(--oxide);
+}
+.signing-panel .signer-row:nth-child(even)[data-selected="true"] {
+  border-color: var(--oxide);
+  background: color-mix(in srgb, var(--oxide) 10%, var(--surface));
+}
+body:has(.signing-panel) canvas.relic-page {
+  height: auto !important;
+}
+.certificate-section p {
+  margin: 0;
+  padding: 0.3rem 0;
+  border-bottom: 1px dotted var(--rule);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.signing-panel .panel-meta {
+  margin: 0;
+  padding: 0.65rem;
+  border: 1px dashed var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+.signing-panel [hidden] {
+  display: none !important;
 }

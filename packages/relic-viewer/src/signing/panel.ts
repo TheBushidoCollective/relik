@@ -1,3 +1,4 @@
+import type { CreationOptionsJSON, RequestOptionsJSON } from '@relic/format';
 import {
   attestationChallenge,
   decodeBase64url,
@@ -17,9 +18,17 @@ import {
 import {
   authenticationResponseToJSON,
   ceremonySignal,
+  creationOptionsFromJSON,
+  parseCreationOptions,
+  parseRequestOptions,
+  registrationResponseToJSON,
   requestOptionsFromJSON,
 } from '../passkey-common.ts';
-import type { UnlockedIdentity } from '../private/keys.ts';
+import {
+  postJson,
+  PrivateRequestError,
+  type UnlockedIdentity,
+} from '../private/keys.ts';
 import type { ViewerDeps } from '../viewer.ts';
 import { signingApi } from './api.ts';
 import { createMarkPad } from './mark-pad.ts';
@@ -128,16 +137,25 @@ export function openSignerPanel(input: {
   sign.type = 'button';
   sign.className = 'btn primary';
   sign.textContent = 'Sign';
+  const passkey = document.createElement('button');
+  passkey.type = 'button';
+  passkey.className = 'btn';
+  passkey.hidden = true;
+  passkey.textContent = 'Create passkey';
   sign.disabled = true;
   const status = document.createElement('span');
   status.className = 'passkey-note';
   status.setAttribute('role', 'status');
   status.textContent = 'Tick the box above to sign.';
-  row.append(sign, status);
+  row.append(sign, passkey, status);
   body.append(person, consentSection, row);
   panel.append(head, body);
   let mode: 'typed' | 'drawn' = 'typed';
   let prepared: Prepared | undefined;
+  let bootstrap:
+    | { mode: 'create'; options: CreationOptionsJSON }
+    | { mode: 'assert'; options: RequestOptionsJSON }
+    | undefined;
   let generation = 0;
   function updateMode(): void {
     typed.setAttribute('aria-pressed', String(mode === 'typed'));
@@ -165,6 +183,22 @@ export function openSignerPanel(input: {
       })
       .catch((error: unknown) => {
         if (current !== generation) return;
+        if (
+          error instanceof PrivateRequestError &&
+          error.code === 'passkey_required' &&
+          signer.identity_id === null
+        ) {
+          status.textContent = 'Create a passkey to sign.';
+          void postJson(input.deps, '/api/auth/passkeys/options', {})
+            .then(setBootstrap)
+            .catch((cause: unknown) => {
+              status.textContent =
+                cause instanceof Error
+                  ? cause.message
+                  : 'Could not prepare a passkey.';
+            });
+          return;
+        }
         status.textContent =
           error instanceof Error
             ? error.message
@@ -255,6 +289,80 @@ export function openSignerPanel(input: {
       mark,
     };
   }
+  function setBootstrap(value: unknown): void {
+    if (typeof value !== 'object' || value === null)
+      throw new Error('Invalid passkey options.');
+    const mode = Reflect.get(value, 'mode');
+    const wire = Reflect.get(value, 'public_key');
+    if (mode === 'create') {
+      const options = parseCreationOptions(wire);
+      if (
+        !options ||
+        options.rp.id !== new URL(input.deps.serviceOrigin).hostname
+      )
+        throw new Error('Invalid passkey options.');
+      bootstrap = { mode, options };
+      passkey.textContent = 'Create passkey';
+    } else if (mode === 'assert') {
+      const options = parseRequestOptions(wire);
+      if (
+        !options ||
+        options.rpId !== new URL(input.deps.serviceOrigin).hostname
+      )
+        throw new Error('Invalid passkey options.');
+      bootstrap = { mode, options };
+      passkey.textContent = 'Use an existing passkey';
+    } else throw new Error('Invalid passkey options.');
+    passkey.hidden = false;
+    passkey.disabled = false;
+  }
+  passkey.addEventListener('click', () => {
+    const current = bootstrap;
+    if (!current) return;
+    const credentials = input.deps.credentials ?? navigator.credentials;
+    let pending: Promise<Credential | null>;
+    try {
+      pending =
+        current.mode === 'create'
+          ? credentials.create({
+              publicKey: creationOptionsFromJSON(current.options),
+              signal: ceremonySignal(),
+            })
+          : credentials.get({
+              publicKey: requestOptionsFromJSON(current.options),
+              signal: ceremonySignal(),
+            });
+    } catch (error) {
+      pending = Promise.reject(error);
+    }
+    passkey.disabled = true;
+    void pending
+      .then(async (credential) => {
+        if (!credential) throw new Error('Passkey cancelled.');
+        if (current.mode === 'assert') {
+          const options = await postJson(
+            input.deps,
+            '/api/auth/passkeys/options',
+            { credential: authenticationResponseToJSON(credential) }
+          );
+          setBootstrap(options);
+        } else {
+          await postJson(input.deps, '/api/auth/passkeys', {
+            credential: registrationResponseToJSON(credential),
+          });
+          passkey.hidden = true;
+          bootstrap = undefined;
+          changed();
+        }
+      })
+      .catch((error: unknown) => {
+        status.textContent =
+          error instanceof Error
+            ? error.message
+            : 'Could not create a passkey.';
+        passkey.disabled = false;
+      });
+  });
   name.addEventListener('input', changed);
   consent.addEventListener('change', changed);
   typed.addEventListener('click', () => {

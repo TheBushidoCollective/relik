@@ -11,6 +11,7 @@ import {
   signingContent,
   verifyViewerSigningRequest,
 } from '../src/signing/api.ts';
+import { signingPagesFit } from '../src/signing/boxes.ts';
 import type { ViewerDeps } from '../src/viewer.ts';
 
 test('signing transport sends the exact public and private wire bodies', async () => {
@@ -121,4 +122,11 @@ test('a valid signed request opens its layout and rejects changed content', asyn
       content: contentFromBytes(new Uint8Array([1, 2, 3])),
     })
   ).rejects.toThrow('signing_content_mismatch');
+});
+
+test('PDF signing refuses a box beyond the last page or unknown page count', () => {
+  const box = { signer: 0, page: 7, rect: { x: 0.1, y: 0.1, w: 0.3, h: 0.1 } };
+  expect(signingPagesFit([box], 7)).toBe(true);
+  expect(signingPagesFit([box], 6)).toBe(false);
+  expect(signingPagesFit([box], 0)).toBe(false);
 });

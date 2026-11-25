@@ -10,6 +10,8 @@ export function openSigningStatus(input: {
   readonly request: SigningRequestJSON;
   readonly private: boolean;
   readonly owner: boolean;
+  readonly verifiedSignatures: ReadonlySet<number>;
+  readonly signerIndex?: number;
   readonly onSignIn?: () => void;
   readonly onSign?: () => void;
   readonly onRequest?: () => void;
@@ -38,8 +40,45 @@ export function openSigningStatus(input: {
   lead.className = 'panel-lead';
   lead.textContent = `${input.request.owner.identity.email} (claimed) asked ${input.request.signers.length} people to sign version ${input.request.version}.`;
   body.appendChild(lead);
+  const me = input.request.signers.find(
+    (signer) => signer.index === input.signerIndex
+  );
+  if (me?.status === 'waiting') {
+    const preceding = input.request.signers.find(
+      (signer) => signer.index < me.index && signer.status !== 'signed'
+    );
+    if (preceding) {
+      const waiting = document.createElement('p');
+      waiting.className = 'panel-notice';
+      waiting.textContent = `Waiting for ${preceding.email} to sign first.`;
+      body.appendChild(waiting);
+    }
+  } else if (
+    me?.status === 'signed' &&
+    input.verifiedSignatures.has(me.index)
+  ) {
+    const signed = document.createElement('p');
+    signed.className = 'panel-notice';
+    const count = input.verifiedSignatures.size;
+    const at = me.signature?.statement['at'];
+    const signedAt =
+      typeof at === 'number' ? new Date(at).toISOString() : 'the recorded time';
+    signed.textContent = `You signed at ${signedAt}. ${count} of ${input.request.signers.length} signed.`;
+    body.appendChild(signed);
+  }
   const list = document.createElement('ul');
   list.className = 'status-list';
+  if (input.private && input.owner) {
+    list.classList.add('receipt-list');
+    const header = document.createElement('li');
+    header.className = 'receipt-head';
+    for (const label of ['Signer', 'Delivered', 'Opened', 'Signed']) {
+      const cell = document.createElement('span');
+      cell.textContent = label;
+      header.appendChild(cell);
+    }
+    list.appendChild(header);
+  }
   for (const signer of input.request.signers) {
     const row = document.createElement('li');
     const who = document.createElement('strong');
@@ -47,17 +86,34 @@ export function openSigningStatus(input: {
     const status = document.createElement('span');
     status.textContent =
       signer.status === 'signed'
-        ? 'Signed'
+        ? input.verifiedSignatures.has(signer.index)
+          ? 'Signed'
+          : 'Signature unverified'
         : signer.status === 'waiting'
           ? 'Waiting'
           : signer.status === 'needs_access'
             ? 'Needs access'
             : 'Not yet';
-    row.append(who, status);
     if (input.private && input.owner) {
-      const receipts = document.createElement('small');
-      receipts.textContent = `Delivered: ${signer.served_at ?? 'Not yet'} · Opened: ${signer.opened_at ?? 'Not yet'} · Signed: ${signer.signature?.recorded_at ?? 'Not yet'}`;
-      row.appendChild(receipts);
+      row.className = 'receipt-row';
+      row.appendChild(who);
+      const signedAt = input.verifiedSignatures.has(signer.index)
+        ? signer.signature?.statement['at']
+        : undefined;
+      for (const value of [signer.served_at, signer.opened_at, signedAt]) {
+        const cell = document.createElement('span');
+        const date =
+          typeof value === 'string' || typeof value === 'number'
+            ? new Date(value)
+            : undefined;
+        cell.textContent =
+          date && !Number.isNaN(date.valueOf())
+            ? `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')} UTC`
+            : 'Not yet';
+        row.appendChild(cell);
+      }
+    } else {
+      row.append(who, status);
     }
     list.appendChild(row);
   }
@@ -68,6 +124,11 @@ export function openSigningStatus(input: {
     legend.textContent =
       "Delivered: Relik handed their passkey the key to this version (Relik's record), and only that passkey can open it. Opened: their browser opened and checked this version (signed by them). On a public relik there is no delivered record, only whether the page was opened by a signer.";
     body.appendChild(legend);
+    const scope = document.createElement('p');
+    scope.className = 'panel-meta';
+    scope.textContent =
+      'These receipt times are reported by the service. The opened receipt is independently checked when it accompanies a verified signature.';
+    body.appendChild(scope);
   }
   const notice = document.createElement('p');
   notice.className = 'panel-notice';

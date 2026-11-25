@@ -4,7 +4,11 @@ import {
   rosterAdmits,
   type GrantJSON,
 } from '@relic/format/private';
-import { deriveSigningKey, type SigningLayout } from '@relic/format/signing';
+import {
+  deriveSigningKey,
+  verifySignatureRecord,
+  type SigningLayout,
+} from '@relic/format/signing';
 import { readSession } from '../comments.ts';
 import { decisionShareProof } from '../decisions.ts';
 import { privateApi } from '../private/fingerprint-input.ts';
@@ -105,6 +109,28 @@ export function mountSigning(input: {
         failure = 'signing_page_invalid';
       }
     }
+    const verifiedSignatures = new Set<number>();
+    if (request && trusted) {
+      for (const entry of request.signers) {
+        const record = entry.signature;
+        if (!record) continue;
+        const checks = await verifySignatureRecord({
+          request: request.request,
+          record: {
+            statement: record.statement,
+            identity_signature: record.identity_signature ?? '',
+            mark_ciphertext: record.mark_ciphertext,
+            webauthn: record.webauthn,
+            signer_identity: entry.identity,
+            opened_receipt: record.opened_receipt,
+          },
+          origin: input.deps.serviceOrigin,
+          rpId: new URL(input.deps.serviceOrigin).hostname,
+        });
+        if (checks.every((check) => check.ok))
+          verifiedSignatures.add(entry.index);
+      }
+    }
     if (disposed) return;
     const signerIndex = state.me?.signer_index;
     const signer =
@@ -126,7 +152,10 @@ export function mountSigning(input: {
       const description = document.createElement('span');
       const ownerName = document.createElement('strong');
       ownerName.textContent = `${request.owner.identity.email} (claimed)`;
-      description.append(ownerName, ` asked you to sign version ${request.version}`);
+      description.append(
+        ownerName,
+        ` asked you to sign version ${request.version}`
+      );
       const fingerprintLabel = document.createElement('span');
       fingerprintLabel.className = 'signing-fingerprint';
       fingerprintLabel.textContent = `Owner ${fingerprint}`;
@@ -174,7 +203,7 @@ export function mountSigning(input: {
         block.appendChild(heading);
         for (const entry of request.signers) {
           const row = document.createElement('p');
-          row.textContent = `${entry.email}: ${entry.status === 'signed' ? 'Signed' : 'Waiting'}`;
+          row.textContent = `${entry.email}: ${entry.status === 'signed' ? (verifiedSignatures.has(entry.index) ? 'Signed' : 'Signature unverified') : 'Waiting'}`;
           if (entry.index === signerIndex && canSign) {
             const button = document.createElement('button');
             button.type = 'button';
@@ -273,9 +302,9 @@ export function mountSigning(input: {
         message.className = 'panel-notice is-oxide';
         message.textContent =
           failure === 'signing_content_mismatch'
-            ? `This file doesn't match the one you were asked to sign. Don't sign it. Ask ${request.owner.identity.email} to send the request again.`
+            ? `This file doesn't match the one you were asked to sign. Don't sign it. Ask ${request.owner.identity.email} (claimed) to send the request again.`
             : failure === 'signing_page_invalid'
-              ? `This request places a signature box beyond the last page. Don't sign it. Ask ${request.owner.identity.email} to send the request again.`
+              ? `This request places a signature box beyond the last page. Don't sign it. Ask ${request.owner.identity.email} (claimed) to send the request again.`
               : "This signing request isn't signed by this relik's owner.";
         const close = document.createElement('button');
         close.type = 'button';
@@ -293,7 +322,9 @@ export function mountSigning(input: {
         request,
         private: view.access === 'private',
         owner,
+        verifiedSignatures,
         ...(canSign ? { onSign: sign } : {}),
+        ...(signerIndex === undefined ? {} : { signerIndex }),
         ...(signerIndex === undefined && session.kind !== 'verified'
           ? { onSignIn: () => input.onSignIn(refresh) }
           : {}),

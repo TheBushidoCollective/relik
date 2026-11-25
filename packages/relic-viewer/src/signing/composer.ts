@@ -107,36 +107,34 @@ export function openSigningComposer(input: {
   placementTitle.textContent = 'Place with the keyboard';
   const pageSelect = document.createElement('select');
   pageSelect.setAttribute('aria-label', 'Page');
-  const currentCanvas =
-    input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
-  const pageCount = Number(currentCanvas?.dataset['pageCount'] ?? 0);
-  for (let page = 1; page <= pageCount; page++) {
-    const option = document.createElement('option');
-    option.value = String(page);
-    option.textContent = `Page ${page}`;
-    pageSelect.appendChild(option);
-  }
-  pageSelect.value = currentCanvas?.dataset['pageNumber'] ?? '1';
+  const syncPageSelect = (): void => {
+    const canvas =
+      input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
+    const pageCount = Number(canvas?.dataset['pageCount'] ?? 0);
+    if (pageSelect.options.length !== pageCount) {
+      pageSelect.replaceChildren();
+      for (let page = 1; page <= pageCount; page++) {
+        const option = document.createElement('option');
+        option.value = String(page);
+        option.textContent = `Page ${page}`;
+        pageSelect.appendChild(option);
+      }
+    }
+    if (canvas?.dataset['pageNumber'])
+      pageSelect.value = canvas.dataset['pageNumber'];
+  };
+  syncPageSelect();
   pageSelect.addEventListener('change', () => {
-    input.stage
-      .querySelector('.doc-pdf')
-      ?.dispatchEvent(
-        new CustomEvent('relic:turn-page', {
-          detail: { page: Number(pageSelect.value) },
-        })
-      );
+    input.stage.querySelector('.doc-pdf')?.dispatchEvent(
+      new CustomEvent('relic:turn-page', {
+        detail: { page: Number(pageSelect.value) },
+      })
+    );
   });
   const pageEvents = new AbortController();
-  input.stage.addEventListener(
-    'relic:page-changed',
-    () => {
-      const canvas =
-        input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
-      if (canvas?.dataset['pageNumber'])
-        pageSelect.value = canvas.dataset['pageNumber'];
-    },
-    { signal: pageEvents.signal }
-  );
+  input.stage.addEventListener('relic:page-changed', syncPageSelect, {
+    signal: pageEvents.signal,
+  });
   const placementControls = document.createElement('div');
   placementControls.className = 'signing-placement';
   const keyboard = document.createElement('button');
@@ -235,12 +233,21 @@ export function openSigningComposer(input: {
       input.stage.querySelector<HTMLCanvasElement>('canvas.relic-page');
     if (!canvas || boxes.filter((box) => box.signer === current).length >= 20)
       return;
+    const page = Number(canvas.dataset['pageNumber']);
+    const count = boxes.filter(
+      (box) => box.signer === current && box.page === page
+    ).length;
     boxes = [
       ...boxes,
       {
         signer: current,
-        page: Number(canvas.dataset['pageNumber']),
-        rect: { x: 0.1, y: 0.7, w: 0.3, h: 0.06 },
+        page,
+        rect: {
+          x: count % 2 === 0 ? 0.1 : 0.55,
+          y: Math.min(0.9, 0.65 + Math.floor(count / 2) * 0.08),
+          w: 0.3,
+          h: 0.06,
+        },
       },
     ];
     updateRows();
