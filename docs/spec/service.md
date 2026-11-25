@@ -473,6 +473,8 @@ Three consequences, stated so nobody "fixes" them by restoring a rule or by serv
 
 Signing requests and receipts are removed with the whole relik; the deletion response reports `signing_deleted`. A private version with an open signing request is refused with `signing_in_progress`, and a locked version with `version_locked`. The store marks versions deleted in the same compare-and-swap that checks those locks, before removing their wraps, seals and ciphertext. A signing request must likewise check `deletedVersions` in the compare-and-swap that sets `signingOpen`, so deletion and request creation cannot both win.
 
+The portable verifier is stricter on trailing authenticator data: it rejects extra bytes with ED clear, even when the server's existing assertion verifier accepts the signature. Every signing attestation must also pass the portable verifier. The server verifier additionally checks the stored user handle and optional signature counter, which the offline verifier does not have.
+
 Live objects are removed at once when the owner deletes. The deleted ciphertext, wrap records and metadata stay soft-deleted under the bucket's soft-delete retention (section 3.2 and `storage.md` section 7.1), so the operator can restore them during that window. The removal is not immediate permanent erasure.
 
 ### 4.1 The abuse form

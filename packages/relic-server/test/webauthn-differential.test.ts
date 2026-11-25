@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { verifyWebauthnAssertion } from '@relic/format/signing';
 import { verifyAssertion } from '../src/webauthn.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
@@ -120,3 +121,103 @@ for (const alg of [-7, -257] as const) {
     }
   });
 }
+
+test('portable verifier is stricter on signed trailing authenticator data when ED is clear', async () => {
+  const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const credentialId = Buffer.alloc(32, 7).toString('base64url');
+  const client = Buffer.from(
+    JSON.stringify({ type: 'webauthn.get', challenge, origin })
+  );
+  const authData = Buffer.concat([
+    createHash('sha256').update(rpId).digest(),
+    Buffer.from([0x05, 0, 0, 0, 1, 0xff]),
+  ]);
+  const signed = Buffer.concat([
+    authData,
+    createHash('sha256').update(client).digest(),
+  ]);
+  const credential = {
+    type: 'public-key',
+    id: credentialId,
+    rawId: credentialId,
+    response: {
+      clientDataJSON: client.toString('base64url'),
+      authenticatorData: authData.toString('base64url'),
+      signature: sign('sha256', signed, pair.privateKey).toString('base64url'),
+      userHandle: handle,
+    },
+  };
+  const expected = {
+    challenge,
+    origin,
+    rpId,
+    credentialId,
+    publicKeyJwk: pair.publicKey.export({ format: 'jwk' }) as JsonWebKey,
+    alg: -7 as const,
+  };
+  await expect(
+    verifyAssertion(credential, {
+      challenge,
+      origin,
+      rpId,
+      stored: expected,
+      userHandle: handle,
+    })
+  ).resolves.toMatchObject({ credentialId });
+  await expect(
+    verifyWebauthnAssertion(credential, expected)
+  ).rejects.toMatchObject({
+    kind: 'malformed',
+    check: 'auth_data',
+  });
+});
+
+test('server checks the stored user handle, which the offline verifier does not possess', async () => {
+  const auth = await fakeAuthenticator({ userHandle: handle });
+  const credential = await auth.assert({ challenge, rpId }, origin);
+  const expected = {
+    challenge,
+    origin,
+    rpId,
+    credentialId: auth.credentialId,
+    publicKeyJwk: auth.publicJwk,
+    alg: -7 as const,
+  };
+  await expect(
+    verifyWebauthnAssertion(credential, expected)
+  ).resolves.toBeUndefined();
+  await expect(
+    verifyAssertion(credential, {
+      challenge,
+      origin,
+      rpId,
+      stored: expected,
+      userHandle: 'b3RoZXI',
+    })
+  ).rejects.toMatchObject({ kind: 'verification', check: 'user_handle' });
+});
+
+test('server checks the stored signature counter, which the offline verifier does not possess', async () => {
+  const auth = await fakeAuthenticator({ userHandle: handle });
+  const credential = await auth.assert({ challenge, rpId }, origin);
+  const expected = {
+    challenge,
+    origin,
+    rpId,
+    credentialId: auth.credentialId,
+    publicKeyJwk: auth.publicJwk,
+    alg: -7 as const,
+  };
+  await expect(
+    verifyWebauthnAssertion(credential, expected)
+  ).resolves.toBeUndefined();
+  await expect(
+    verifyAssertion(credential, {
+      challenge,
+      origin,
+      rpId,
+      stored: { ...expected, signCount: 1 },
+      userHandle: handle,
+    })
+  ).rejects.toMatchObject({ kind: 'verification', check: 'counter' });
+});
