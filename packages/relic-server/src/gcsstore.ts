@@ -47,6 +47,7 @@ import {
   type PasskeyRecord,
   type RelicCover,
   type RelicRow,
+  type SettingsChangeRow,
   type RelicStore,
   type SealRow,
   type SessionRow,
@@ -121,10 +122,12 @@ const DAY_MS = 86_400_000;
  * whose objects never carry one.
  */
 function customTimeOf(
-  row: Pick<RelicRow, 'access' | 'expiresAt'>
+  row: Pick<RelicRow, 'access' | 'expiresAt' | 'privateErasureAt'>
 ): string | undefined {
   if (row.access !== 'private' || row.expiresAt === undefined) return undefined;
-  return new Date(row.expiresAt).toISOString();
+  return new Date(
+    Math.max(row.expiresAt, row.privateErasureAt ?? row.expiresAt)
+  ).toISOString();
 }
 
 /**
@@ -454,6 +457,83 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     await remove(key('grant-by-grantee', granteeIdentityId, `${relicId}.json`));
   }
   return {
+    async appendSettingsChange(
+      id: string,
+      row: SettingsChangeRow
+    ): Promise<void> {
+      const stamp = String(row.at).padStart(15, '0');
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 8);
+        if (
+          await put(
+            key('settings', id, `${stamp}-${suffix}.json`),
+            row,
+            '0',
+            await privateCustomTime(id)
+          )
+        )
+          return;
+      }
+      throw new Error('Could not append settings change');
+    },
+
+    async extendPrivateLifetime(id: string, expiresAt: number): Promise<void> {
+      const scoped = [
+        'comment',
+        'commenter',
+        'share',
+        'optout',
+        'decision',
+        'wrap',
+        'seal',
+        'grant',
+        'access-request',
+        'settings',
+      ];
+      const reverse = ['author_relic', 'grant-by-grantee', 'owner-relic'];
+      const names = new Set<string>();
+      for (const kind of scoped) {
+        for (const name of await listObjectNames(`${key(kind, id)}/`))
+          names.add(name);
+      }
+      for (const kind of reverse) {
+        for (const name of await listObjectNames(`${key(kind)}/`)) {
+          if (name.endsWith(`/${id}.json`)) names.add(name);
+        }
+      }
+      names.add(key('relic', `${id}.json`));
+      names.add(id);
+      for (const name of await listObjectNames(`${id}/`)) names.add(name);
+      const customTime = new Date(expiresAt).toISOString();
+      for (const name of names) {
+        const url = `${host}/storage/v1/b/${encodeURIComponent(options.bucket)}/o/${encodeURIComponent(name)}`;
+        const response = await authorized(url);
+        if (response.status === 404) continue;
+        if (!response.ok)
+          throw new Error(`gcs metadata ${name} returned ${response.status}`);
+        const metadata = (await response.json()) as {
+          customTime?: string;
+          metageneration?: string;
+        };
+        if (
+          metadata.customTime !== undefined &&
+          metadata.customTime >= customTime
+        )
+          continue;
+        const params = new URLSearchParams();
+        if (metadata.metageneration !== undefined)
+          params.set('ifMetagenerationMatch', metadata.metageneration);
+        const patch = await authorized(`${url}?${params}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ customTime }),
+        });
+        if (!patch.ok)
+          throw new Error(
+            `gcs metadata patch ${name} returned ${patch.status}`
+          );
+      }
+    },
     async getRelic(id: string): Promise<RelicRow | undefined> {
       return (await get<RelicRow>(key('relic', `${id}.json`)))?.value;
     },

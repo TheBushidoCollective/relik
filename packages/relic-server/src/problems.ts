@@ -43,6 +43,9 @@ export type ProblemCode =
   // encryption, so re-checking a plaintext length here is impossible by
   // construction rather than merely redundant.
   | 'invalid_comment'
+  | 'comments_closed'
+  | 'invalid_settings'
+  | 'settings_rate_limited'
   | 'comment_not_found'
   // A commenter may delete their own comment and no one else's. The operator
   // path is the abuse surface, not this one.
@@ -126,6 +129,9 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   invalid_relic_version: 400,
   invalid_publish_token: 403,
   invalid_comment: 400,
+  comments_closed: 409,
+  invalid_settings: 400,
+  settings_rate_limited: 429,
   comment_not_found: 404,
   comment_forbidden: 403,
   nothing_to_change: 400,
@@ -200,6 +206,9 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   invalid_relic_version: 'Invalid relik version',
   invalid_publish_token: 'Publish token is missing or wrong',
   invalid_comment: 'Invalid comment',
+  comments_closed: 'Comments are closed',
+  invalid_settings: 'Invalid settings',
+  settings_rate_limited: 'Too many settings requests',
   comment_not_found: 'No such comment',
   comment_forbidden: 'Not your comment',
   nothing_to_change: 'Nothing to change',
@@ -260,6 +269,12 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
 };
 
 export interface ProblemExtensions {
+  readonly settings_check?:
+    | 'shape'
+    | 'unknown_key'
+    | 'type'
+    | 'lifetime'
+    | 'private_lifetime';
   readonly relic_id?: string;
   readonly id_validation_failure?: 'alphabet' | 'length' | 'reserved';
   readonly retry_after_seconds?: number;

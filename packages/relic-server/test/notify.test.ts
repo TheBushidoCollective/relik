@@ -168,6 +168,68 @@ async function republish(
 }
 
 describe('change notices and relic_share', () => {
+  test('notification setting stops change mail and reopening it restores delivery', async () => {
+    const { id, key, grant } = await publish({ title: 'Design Document' });
+    const token = grant['publish_token'] as string;
+    const cookie = await createSession('reader@example.com');
+    expect(
+      (
+        await app.fetch(
+          req(`/api/relics/${id}/comments`, {
+            method: 'POST',
+            headers: { cookie },
+            body: JSON.stringify({ ciphertext: 'YWxpY2U' }),
+          })
+        )
+      ).status
+    ).toBe(201);
+    const set = (notifications: boolean) =>
+      app.fetch(
+        req(`/api/relics/${id}/settings`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            publish_token: token,
+            settings: { notifications },
+          }),
+        })
+      );
+    expect((await set(false)).status).toBe(200);
+    now += 15 * 60 * 1000;
+    sentMails = [];
+    expect((await republish(id, token)).status).toBe(200);
+    storage.put(
+      `${id}/v2`,
+      await encryptRelic({
+        content: new TextEncoder().encode('version 2'),
+        filename: 'notes.md',
+        mimetype: 'text/markdown',
+        key,
+      })
+    );
+    expect(
+      (await app.fetch(req(`/api/relics/${id}/complete`, { method: 'POST' })))
+        .status
+    ).toBe(200);
+    expect(sentMails).toHaveLength(0);
+    expect((await set(true)).status).toBe(200);
+    expect((await republish(id, token)).status).toBe(200);
+    storage.put(
+      `${id}/v3`,
+      await encryptRelic({
+        content: new TextEncoder().encode('version 3'),
+        filename: 'notes.md',
+        mimetype: 'text/markdown',
+        key,
+      })
+    );
+    expect(
+      (await app.fetch(req(`/api/relics/${id}/complete`, { method: 'POST' })))
+        .status
+    ).toBe(200);
+    expect(sentMails.map((item) => item.email)).toEqual(['reader@example.com']);
+  });
+
   test('1. A republish that lands mails each verified commenter and each shared address exactly once. It never mails publisher or the owner address.', async () => {
     const { id, key, grant } = await publish({
       title: 'Roadmap',

@@ -907,3 +907,30 @@ These are limits the build keeps by design or defers. Each is stated where it ap
 - **Loopback exception.** A page served from localhost may request the `localhost` relying-party id at top level. This applies to development only.
 - **Same-user threat model.** Secure Enclave keys have no access control beyond the process that holds them. Version keys sit in a 0600 `publish-state.json`. A process running as the same user can read them. The harness environment is not isolated from an operator's `RELIC_DEVICE_KEYS` setting (PS2-11).
 - **Revocation sweep ordering.** A revocation sweeps wraps before it sets the revoked mark. The ordering is inert in practice: a key fetch refuses a revoked standing, and the publish path refuses keys that are not current.
+
+## 11. Live relik settings
+
+The publisher may read or change a relik's settings with its publish token.
+The signed-in owner identity may change them with an attested passkey statement.
+An unowned public relik has no owner settings control.
+
+Suggestions are enforced by the viewer only. The server cannot distinguish an
+encrypted suggestion from a comment. An already-open page can still send one
+until it reloads, and existing suggestions remain visible. Closing comments
+prevents new reader comments and ciphertext edits, but the owner and publisher
+remain exempt. Decisions retain their existing open or closed behavior. The
+signing switch is stored and reported but is not enforced in this phase.
+Disabling notifications stops change notices and comment activity mail, not
+access-request or grant mail.
+
+Lifetime changes take effect on the next request. Private lifetimes remain
+finite. An extension sweeps private objects to a later GCS `customTime`, updates
+the row, then sweeps again to catch objects written during the first pass. If the
+first sweep fails, the row is unchanged. If the second fails, the response says
+the lifetime was updated and the same change can be retried to finish the sweep.
+A write that read the row before the update and lands after the second pass can
+still retain the earlier erasure time.
+
+Shortening ends access sooner but does not move erasure earlier. That restriction
+is inferred from GCS documentation. Production GCS `customTime` behavior has not
+been proven locally.

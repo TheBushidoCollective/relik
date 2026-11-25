@@ -62,6 +62,7 @@ import {
   replyNotificationMail,
 } from './mail.ts';
 import { newOccurrenceId, ProblemError, problemResponse } from './problems.ts';
+import { settingsView } from './settings.ts';
 import { RateLimiter, rateLimitKey } from './ratelimit.ts';
 import { MemoryStorage, type ObjectStorage } from './storage.ts';
 import {
@@ -77,6 +78,7 @@ import {
   type RelicRow,
   type RelicStore,
   type SessionRow,
+  type StoredAttestation,
   type Tombstone,
 } from './store.ts';
 import {
@@ -85,11 +87,16 @@ import {
   verifyRegistration,
   WebauthnError,
 } from './webauthn.ts';
-import { PURPOSE_KINDS, issueAttestNonce } from './private/attest.ts';
+import {
+  PURPOSE_KINDS,
+  issueAttestNonce,
+  verifyAttestation,
+} from './private/attest.ts';
 import {
   accessEventsFor,
   backfillWraps,
   bindCredential,
+  identitySigner,
   currentIdentity,
   designateRecovery,
   identityState,
@@ -136,7 +143,6 @@ import {
 import {
   identityPublicJson,
   liveRelic,
-  privateRow,
   type PrivateEnv,
 } from './private/context.ts';
 import type { AttestPurpose } from '@relic/format/private';
@@ -638,6 +644,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return new Response('Method not allowed', { status: 405 });
     }
 
+    if (
+      first === 'relics' &&
+      second !== undefined &&
+      third === 'settings' &&
+      fourth === undefined
+    ) {
+      if (request.method !== 'POST')
+        return new Response('Method not allowed', { status: 405 });
+      return guarded(() => changeSettings(second, request, ip, now));
+    }
+
     // Decisions:
     // - relics/{id}/decisions: POST record; POST .../options; POST .../list; any other method or path returns 405.
     if (first === 'relics' && second !== undefined && third === 'decisions') {
@@ -790,6 +807,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     'grant',
     'revoke',
     'delete',
+    'relic_settings',
   ]);
 
   /**
@@ -862,12 +880,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
                 statement_check: 'relic',
               });
             }
-            const owner = await ownerRecord(
-              env,
-              privateRow(await liveRelic(env, relicId))
-            );
-            if (owner.identityId !== identity.identityId)
+            const ownerRow = await liveRelic(env, relicId);
+            if (ownerRow.ownerIdentityId !== identity.identityId)
               return refuse('owner_required');
+            if (purpose === 'relic_settings') {
+              allowedCredentialIds = identity.credentials.map(
+                (binding) => binding.credentialId
+              );
+            }
           }
         }
         return Response.json(
@@ -1072,6 +1092,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
                 row.ownerEmail !== undefined &&
                 normalizeEmail(session.email) ===
                   normalizeEmail(row.ownerEmail),
+              manage:
+                session !== undefined &&
+                row.ownerIdentityId !== undefined &&
+                (await currentIdentity(env, normalizeEmail(session.email)))
+                  ?.identityId === row.ownerIdentityId,
+              settings: settingsView(row),
             });
           }
           if (session === undefined) return refuse('sign_in_required');
@@ -2566,6 +2592,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         mints_remaining: capRemaining,
         version,
         current_version: row.version,
+        settings: settingsView(row),
       },
       { headers: { 'referrer-policy': 'no-referrer' } }
     );
@@ -2597,6 +2624,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
   }): Promise<void> {
     const { relicId, row, now, event } = params;
     const initialRow = (await store.getRelic(relicId)) ?? row;
+    if (initialRow.settings?.notifications === false) return;
     if ((await store.getTombstone(relicId)) !== undefined) {
       return;
     }
@@ -3822,6 +3850,18 @@ export function createApp(options: AppOptions = {}): RelicApp {
     if (author === undefined) {
       return refuse('invalid_session', { relic_id: relicId });
     }
+    if (row.settings?.comments === false && author !== 'publisher') {
+      const session = await sessionOf(request, now);
+      const identity =
+        session === undefined
+          ? undefined
+          : await currentIdentity(
+              privateEnv(now),
+              normalizeEmail(session.email)
+            );
+      if (identity === undefined || identity.identityId !== row.ownerIdentityId)
+        return refuse('comments_closed', { relic_id: relicId });
+    }
 
     const explicitVersion = body['version'];
     let commentVersion: number;
@@ -4083,6 +4123,22 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const author = await resolveAuthor(body, request, row.publishTokenHash);
+    if (
+      rawCiphertext !== undefined &&
+      row.settings?.comments === false &&
+      author !== 'publisher'
+    ) {
+      const session = await sessionOf(request, now);
+      const identity =
+        session === undefined
+          ? undefined
+          : await currentIdentity(
+              privateEnv(now),
+              normalizeEmail(session.email)
+            );
+      if (identity === undefined || identity.identityId !== row.ownerIdentityId)
+        return refuse('comments_closed', { relic_id: relicId });
+    }
 
     // The sealed body belongs to its author alone: the verified address
     // that made it, or the publish token when the comment was made as the
@@ -4761,6 +4817,241 @@ export function createApp(options: AppOptions = {}): RelicApp {
       throw new ProblemError('invalid_passkey', { passkey_check: 'shape' });
     }
     return (parsed as Record<string, unknown>)['challenge'] as string;
+  }
+
+  async function changeSettings(
+    rawId: string,
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const verdict = limiter.check(
+      rateLimitKey('settings', ip),
+      config.settingsRateLimit,
+      now
+    );
+    if (!verdict.allowed)
+      throw new ProblemError('settings_rate_limited', {
+        retry_after_seconds: verdict.retryAfterSeconds,
+      });
+    let relicId: string;
+    try {
+      relicId = parseRelicId(rawId);
+    } catch {
+      throw new ProblemError('invalid_relic_id');
+    }
+    if ((await store.getTombstone(relicId)) !== undefined)
+      throw new ProblemError('relic_removed', { relic_id: relicId });
+    const row = await store.getRelic(relicId);
+    if (row === undefined)
+      throw new ProblemError('relic_not_found', { relic_id: relicId });
+    let parsed: unknown;
+    try {
+      parsed = await readBoundedJson(request, 'invalid_settings');
+    } catch (error) {
+      if (error instanceof ProblemError && error.code === 'invalid_settings')
+        throw new ProblemError('invalid_settings', { settings_check: 'shape' });
+      throw error;
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new ProblemError('invalid_settings', { settings_check: 'shape' });
+    const body = parsed as Record<string, unknown>;
+    let changes: Record<string, unknown>;
+    let by: 'publisher' | 'owner';
+    let attestation: StoredAttestation | undefined;
+    let actorIdentityId: string | undefined;
+    if ('publish_token' in body) {
+      if (!(await publishTokenOk(row, body['publish_token'])))
+        throw new ProblemError('invalid_publish_token');
+      by = 'publisher';
+      const input = body['settings'];
+      if (input === undefined) changes = {};
+      else if (
+        input === null ||
+        typeof input !== 'object' ||
+        Array.isArray(input)
+      )
+        throw new ProblemError('invalid_settings', { settings_check: 'shape' });
+      else changes = input as Record<string, unknown>;
+    } else {
+      const session = await sessionOf(request, now);
+      if (session === undefined) throw new ProblemError('sign_in_required');
+      const identity = await currentIdentity(
+        privateEnv(now),
+        normalizeEmail(session.email)
+      );
+      if (identity === undefined) throw new ProblemError('identity_required');
+      if (identity.identityId !== row.ownerIdentityId)
+        throw new ProblemError('owner_required');
+      const proof = await verifyAttestation(privateEnv(now), {
+        bundle: body['attestation'],
+        purpose: 'relic_settings',
+        email: identity.email,
+        passkeys: await store.getPasskeys(identity.email),
+        signerKey: identitySigner(identity),
+        relicId,
+      });
+      if (
+        !identity.credentials.some(
+          (credential) => credential.credentialId === proof.credentialId
+        )
+      )
+        throw new ProblemError('passkey_verification_failed', {
+          passkey_check: 'credential',
+        });
+      const statement = proof.statements[0]?.statement;
+      if (
+        statement === undefined ||
+        statement['owner_identity_id'] !== identity.identityId
+      )
+        throw new ProblemError('invalid_statement', {
+          statement_check: 'owner',
+        });
+      changes = {
+        suggestions: statement['suggestions'],
+        comments: statement['comments'],
+        decisions: statement['decisions'],
+        signing: statement['signing'],
+        notifications: statement['notifications'],
+      };
+      if (statement['lifetime'] !== 'keep')
+        changes['ttl_days'] =
+          statement['lifetime'] === 'never' ? null : statement['lifetime'];
+      by = 'owner';
+      attestation = proof.attestation;
+      actorIdentityId = identity.identityId;
+    }
+    const valid: Record<string, true> = {
+      suggestions: true,
+      comments: true,
+      decisions: true,
+      signing: true,
+      notifications: true,
+      ttl_days: true,
+    };
+    if (Object.keys(changes).some((key) => !Object.hasOwn(valid, key)))
+      throw new ProblemError('invalid_settings', {
+        settings_check: 'unknown_key',
+      });
+    for (const [key, value] of Object.entries(changes)) {
+      if (key !== 'ttl_days' && typeof value !== 'boolean')
+        throw new ProblemError('invalid_settings', { settings_check: 'type' });
+    }
+    if (Object.keys(changes).length === 0)
+      return Response.json({
+        relic_id: relicId,
+        settings: settingsView(row),
+        relic_expires_at: relicExpiryIso(row.expiresAt),
+      });
+    if (config.killSwitchEngaged)
+      throw new ProblemError('service_paused', { retry_after_seconds: 300 });
+    if (row.expiresAt !== undefined && row.expiresAt <= now)
+      throw new ProblemError('relic_expired', { relic_id: relicId });
+    let expiresAt = row.expiresAt;
+    if ('ttl_days' in changes) {
+      const days = changes['ttl_days'];
+      if (days === null && row.access === 'private')
+        throw new ProblemError('invalid_settings', {
+          settings_check: 'private_lifetime',
+        });
+      if (days === null) expiresAt = undefined;
+      else if (
+        typeof days !== 'number' ||
+        !Number.isSafeInteger(days) ||
+        days < 1 ||
+        days >
+          (row.access === 'private'
+            ? config.privateMaxTtlDays
+            : config.maxTtlDays) ||
+        days * 86400 < config.settingsMinLifetimeSeconds
+      )
+        throw new ProblemError('invalid_settings', {
+          settings_check: 'lifetime',
+        });
+      else expiresAt = now + days * 86400000;
+    }
+    if (
+      row.access === 'private' &&
+      expiresAt !== undefined &&
+      (row.expiresAt === undefined || expiresAt > row.expiresAt)
+    )
+      await store.extendPrivateLifetime(relicId, expiresAt);
+    const updated = await store.updateRelic(relicId, (cur) => {
+      const current = settingsView(cur);
+      const nextExpiry = 'ttl_days' in changes ? expiresAt : cur.expiresAt;
+      const privateErasureAt =
+        cur.access === 'private' && nextExpiry !== undefined
+          ? Math.max(
+              cur.privateErasureAt ?? cur.expiresAt ?? nextExpiry,
+              nextExpiry
+            )
+          : undefined;
+      return {
+        ...cur,
+        settings: {
+          suggestions:
+            (changes['suggestions'] as boolean | undefined) ??
+            current.suggestions,
+          comments:
+            (changes['comments'] as boolean | undefined) ?? current.comments,
+          signing:
+            (changes['signing'] as boolean | undefined) ?? current.signing,
+          notifications:
+            (changes['notifications'] as boolean | undefined) ??
+            current.notifications,
+        },
+        decisionsOpen:
+          (changes['decisions'] as boolean | undefined) ?? current.decisions,
+        expiresAt: nextExpiry,
+        ...(privateErasureAt === undefined ? {} : { privateErasureAt }),
+        settingsChangedAt: now,
+        settingsChangedBy: by,
+      };
+    });
+    if (updated === undefined)
+      throw new ProblemError('relic_not_found', { relic_id: relicId });
+    if (
+      updated.access === 'private' &&
+      'ttl_days' in changes &&
+      updated.expiresAt !== undefined
+    ) {
+      try {
+        await store.extendPrivateLifetime(relicId, updated.expiresAt);
+      } catch {
+        throw new ProblemError('service_paused', {
+          detail:
+            'The lifetime was updated, but its storage sweep failed. Retry the same change to finish the sweep.',
+          retry_after_seconds: 300,
+        });
+      }
+    }
+    const effective = settingsView(updated);
+    await store.appendSettingsChange(relicId, {
+      at: now,
+      by,
+      settings: {
+        suggestions: effective.suggestions,
+        comments: effective.comments,
+        decisions: effective.decisions,
+        signing: effective.signing,
+        notifications: effective.notifications,
+      },
+      expiresAt: updated.expiresAt,
+      ...(attestation === undefined ? {} : { attestation }),
+    });
+    if (row.access === 'private' && row.ownerIdentityId !== undefined)
+      await logAccess(
+        privateEnv(now),
+        row.ownerIdentityId,
+        relicId,
+        'settings',
+        actorIdentityId === undefined ? {} : { actorIdentityId }
+      );
+    return Response.json({
+      relic_id: relicId,
+      settings: settingsView(updated),
+      relic_expires_at: relicExpiryIso(updated.expiresAt),
+    });
   }
 
   interface DecisionPrefixResult {
@@ -7328,6 +7619,18 @@ key never reaches a server" unqualified would be wrong.
 A link whose key does not open a relik stops downloading after the first block,
 so our storage provider and anyone watching the connection can tell the open
 stopped early but never see the key.
+
+## Relik settings
+
+The publisher can change settings with the publish token. A signed-in owner can
+change them with a passkey. An unowned public relik has no owner settings control.
+Closing comments stops new reader comments and edits, but the publisher and owner
+can still comment. Suggestions are enforced by the viewer only: an already-open
+page can still send one, and existing suggestions remain visible. Disabling
+notifications stops change and comment activity mail, not access or grant mail.
+Decisions can be opened or closed. The signing setting is stored but does not yet
+enforce signing. Changing the lifetime changes when access ends. Shortening a
+private lifetime does not move its storage erasure earlier.
 
 ## What your own browser keeps
 
