@@ -177,7 +177,7 @@ All routes are POST with JSON bodies, read through `readBoundedJson` (65,536 byt
 Every route below runs the same prefix of checks first:
 
 1. Kill switch: `503 service_paused` (writes only).
-2. Rate limit: `429 signing_rate_limited`. Reads use the read budget.
+2. Rate limit: `429 settings_rate_limited` on the settings routes and `429 signing_rate_limited` on every signing route. Reads use the read budget and never draw from the write pool.
 3. `400 invalid_relic_id`.
 4. Tombstone: `410 relic_removed`.
 5. Missing row: `404 relic_not_found`.
@@ -226,6 +226,7 @@ Every route below runs the same prefix of checks first:
 | `invalid_settings` | 400 |
 | `comments_closed` | 409 |
 | `signing_closed` | 409 |
+| `settings_rate_limited` | 429 |
 | `signing_rate_limited` | 429 |
 | `invalid_signing_request` | 400 |
 | `signing_request_not_found` | 404 |
