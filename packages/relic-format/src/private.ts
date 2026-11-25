@@ -57,7 +57,8 @@ export type StatementKind =
   | 'device_request'
   | 'owner_bind'
   | 'private_publish'
-  | 'owner_publish';
+  | 'owner_publish'
+  | 'relic_settings';
 
 export interface IdentityRegisterStatement {
   readonly at: number;
@@ -197,6 +198,25 @@ export interface OwnerPublishStatement {
   readonly body_sha256: string;
 }
 
+/**
+ * An owner identity's choice of a relik's live settings: what readers can do
+ * and for how long the relik lives. Every field is stated, so a stored change
+ * reads back as the full snapshot the owner approved. `lifetime` is `keep`
+ * (leave the expiry alone), `never` (no expiry, public reliks only) or a
+ * number of days from `at`.
+ */
+export interface RelicSettingsStatement {
+  readonly at: number;
+  readonly comments: boolean;
+  readonly decisions: boolean;
+  readonly lifetime: 'keep' | 'never' | number;
+  readonly notifications: boolean;
+  readonly owner_identity_id: string;
+  readonly relic_id: string;
+  readonly signing: boolean;
+  readonly suggestions: boolean;
+}
+
 /** The statement for each kind. Every field is listed; nullable fields are typed `| null`. */
 export interface StatementMap {
   readonly identity_register: IdentityRegisterStatement;
@@ -216,6 +236,7 @@ export interface StatementMap {
   readonly owner_bind: OwnerBindStatement;
   readonly private_publish: PrivatePublishStatement;
   readonly owner_publish: OwnerPublishStatement;
+  readonly relic_settings: RelicSettingsStatement;
 }
 
 /** The reason a statement was refused. The service reports it as `statement_check`. */
@@ -920,6 +941,8 @@ const FINGERPRINT_TYPED: Rule = (value) => {
 };
 
 const AT: Rule = integer(0);
+/** A JSON boolean. */
+const BOOL: Rule = (value) => (typeof value === 'boolean' ? undefined : 'type');
 
 const EMAIL: Rule = (value) => {
   if (typeof value !== 'string') return 'type';
@@ -1154,6 +1177,17 @@ const SPECS: { readonly [K in StatementKind]: Readonly<Record<string, Rule>> } =
       challenge_nonce: SERVICE_TOKEN,
       owner_identity_id: HEX_ID,
       relic_id: RELIC_ID,
+    },
+    relic_settings: {
+      at: AT,
+      comments: BOOL,
+      decisions: BOOL,
+      lifetime: either(literal('keep'), literal('never'), integer(1)),
+      notifications: BOOL,
+      owner_identity_id: HEX_ID,
+      relic_id: RELIC_ID,
+      signing: BOOL,
+      suggestions: BOOL,
     },
   };
 
