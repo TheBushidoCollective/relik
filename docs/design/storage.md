@@ -283,9 +283,15 @@ A private relic adds the objects below. Each is a JSON document at the path show
 | `m/grant-by-grantee/{granteeIdentityId}/{relicId}.json` | `{relicId, at}` |
 | `m/access-request/{relicId}/{requesterIdentityId}.json` | `AccessRequestRow` |
 | `m/owner-relic/{ownerIdentityId}/{relicId}.json` | `OwnedRelicRow` |
+| `m/invite/{relicId}/{inviteId}.json` | `InviteRow`, including temporary wraps only while open |
+| `m/invite-claim/{relicId}/{identityId}.json` | `InviteClaimRow`, including the claimant's signed claim |
 | `m/access/{ownerIdentityId}/{at}-{8 hex}.json` | `AccessEvent`, with `at` as 16 zero-padded digits, written with `uploadType=multipart` metadata that sets `customTime` (section 7.5) |
 
 Within the contract, a `customTime` is set on access-log objects (section 7.5) and, for a private relic, on every object written for that relic, so the bucket erases it one day after the relic's expiry (section 7.2). Plan decision 7 is accepted and its rules are in `deploy/terraform/modules/relic/resource.google_storage_bucket.relics.tf`. The application writes the `customTime` values, and that write path belongs to the server slice and is not verified on this document's base.
+
+The direct-share contract (`docs/plans/direct-share/plan.md`, section 4.3) adds two object families for invitations. An invitation row's `customTime` is `min(invitation expiry, relic expiry)`, set when the row is written. Cloud Storage cannot decrease a Custom-Time (section 7.5, fact 3), so every rewrite sends the value first written. A claim row and its claim wraps use the relic expiry, like other private objects. Section 7.7 gives the lifetime and deletion rules for each family.
+
+Shortening a relic's lifetime ends access at the new expiry at once. It does not move the erasure time of objects already written. The sweeps for invitations and claims are in section 7.7.
 
 ## 6. The GCP project topology
 
@@ -319,7 +325,9 @@ The default is the setting you get by not deciding: "Soft delete is enabled by d
 
 Public relics carry no `customTime`, and no bucket lifecycle rule matches a public object. A public relic's objects stay until they are deleted. The 72-hour TTL ceiling and the age-3 rule that an earlier draft of this section described are not implemented. The frame reversed the mandatory TTL for public relics (`docs/frame.md`, non-goals), and the bucket rules express neither one.
 
-Private relics (plan decision 7, accepted 2026-11-11) are removed from live storage one day after their expiry. The application sets `customTime` to the relic's expiry on every object it writes for that relic, and the rule `days_since_custom_time = 1` deletes each one. The covered prefixes are the ciphertext prefix `r/` and the metadata prefixes `m/relic/`, `m/wrap/`, `m/seal/`, `m/grant/`, `m/grant-by-grantee/`, `m/access-request/`, `m/owner-relic/`, `m/comment/`, `m/author_relic/`, `m/commenter/`, `m/decision/`, `m/share/` and `m/optout/`. Removal applies to live objects only. Deleted copies are held under the soft-delete retention in section 7.1, so the operator can restore them during that window.
+Private relics (plan decision 7, accepted 2026-11-11) are removed from live storage one day after their expiry. The application sets `customTime`, and the rule `days_since_custom_time = 1` deletes each covered object. The covered prefixes are the ciphertext prefix `r/` and the metadata prefixes `m/relic/`, `m/wrap/`, `m/seal/`, `m/grant/`, `m/grant-by-grantee/`, `m/access-request/`, `m/owner-relic/`, `m/comment/`, `m/author_relic/`, `m/commenter/`, `m/decision/`, `m/share/`, `m/settings/`, `m/signing/`, `m/receipt/` and `m/optout/`. The Terraform rule carries these today, under the store prefix `m` and the ciphertext prefix `r` (`locals.tf`).
+
+The direct-share change adds `m/invite/` and `m/invite-claim/` to the rule. Until that change lands, the rule on this base does not cover them, so invitation rows and claims are not erased by lifecycle. This is a known gap until the storage slice ships. Removal applies to live objects only. Deleted copies are held under the soft-delete retention in section 7.1.
 
 Transient records under `m/challenge/` and `m/dedup/` have an age-1 rule, and the application refuses them on age before that rule runs.
 
@@ -346,6 +354,20 @@ The bucket has no other lifecycle rule for private relics. Relic ciphertext, cov
 ### 7.6 Browser access (CORS)
 
 The bucket allows browser requests from the service origin, and plan correction 25 records that it allowed only `GET` and `HEAD`. A private relic is rekeyed in the browser after a revocation: the browser decrypts the current content, encrypts it under a fresh key, and uploads it directly to a signed URL, which is a `PUT`. The plan adds `PUT` to the allowed CORS methods and no other method (`service.md` sections 10.3 and 10.4).
+
+### 7.7 Invitation and claim lifecycle
+
+This table is the contract for the direct-share change. It is not yet in the Terraform on this base. Each family is added to, or deliberately left out of, each of its sweeps.
+
+| Family | `customTime` | Bucket rule prefix | `extendPrivateLifetime` | Owner deletes the whole relic, or operator delete | Version delete | Cancel or remove | Claim | Expiry |
+|---|---|---|---|---|---|---|---|---|
+| `m/invite/{relicId}/{inviteId}` (new) | `min(invite expiry, relic expiry)`, set at creation and never decreased | add `invite/` | excluded | add `deleteInvitesForRelic` to both | versions and their wraps stripped; an open invitation left with no versions becomes revoked | wraps emptied, status set | wraps emptied | refused by time at expiry; erased one day after `customTime` |
+| `m/invite-claim/{relicId}/{identityId}` (new) | relic expiry | add `invite-claim/` | included | add `deleteInviteClaimsForRelic` to both | versions stripped | `revokedAt` set; claim wraps deleted for the claimant's key unless another current role keeps it | created or merged | with the relic |
+| `m/wrap/` (claim wraps, source `claim`) | relic expiry | existing `m/wrap/` | included | existing | existing | deleted for the claimant's key unless another current role keeps it | created | with the relic |
+| `m/access/` (`invite`, `claim`, `share` events) | retention | existing | n/a | survive | n/a | n/a | n/a | retention |
+| Sign-in codes and sessions | existing transient | existing | n/a | n/a | n/a | n/a | n/a | existing |
+
+Two families keep no rows: invitation notices (email only) and limiter counters (memory). Soft-delete retention applies to every erasure, as it does today, so an erased invitation or claim stays restorable for that retention.
 
 ## 8. Drift routed, not fixed
 

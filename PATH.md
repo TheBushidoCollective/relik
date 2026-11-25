@@ -419,3 +419,57 @@ built viewer and virtual passkeys in isolated headless browsers. It exercises
 public and private signatures, receipts, certificate verification, cancellation,
 the signing pause, and version locks. It does not prove real passkeys, production
 storage lifecycle behavior or mail delivery.
+
+# Direct share and invitations
+
+Status: not run. The command and the receipts below are to be filled by the path slice (S4), which adds `packages/relic-mcp/test/direct-share-path.ts`. That file does not exist on this base, so the receipts are targets from `docs/plans/direct-share/plan.md` section 10, not claims that the path has run or passed. All test writes must target loopback.
+
+Direct-share receipts, in order:
+
+1. `DIRECT_STEP_1_LOOKUP_GATE signed_out=401 other_reader=403 public_relik=400 owner=200 fingerprint_field=absent unregistered=null standing_self=owner`
+2. `DIRECT_STEP_2_BUDGET per_address=true shared_with_recovery=true ip_budget=429 non_owner_charged=false`
+3. `DIRECT_STEP_3_PANEL fingerprints=local_match self=that_is_you reader=already prefill=fragment fragment_after_open=absent`
+4. `DIRECT_STEP_4_ONE_TAP owner_sign_count_delta=1 grants=2 statements_verify=owner_key stored_grant=reverifies wraps=exact v1_wraps=0 log=share,share`
+5. `DIRECT_STEP_5_NOTICE per_recipient=1 names_owner=true fingerprint=own title=absent file=absent fragment=absent other_recipient=absent`
+6. `DIRECT_STEP_6_RECIPIENT_OPENS states=signin,unlock,ready request_state=never v2=opened v1_key=403 shared_with_you=listed`
+7. `DIRECT_STEP_7_LATER_VERSION mcp_republish=sealed mcp_roster=accepts_batch_grants recipient_v3=opened`
+8. `DIRECT_STEP_8_REPEAT_AND_REVOKED repeat_api=409_grant_exists wraps_unchanged=true revoked_regrant=201 revoked_reader_opens=current`
+9. `DIRECT_STEP_9_REFUSALS self=400_grantee wrong_fingerprint=409 substituted_lookup=ui_shows_substitute substituted_api=400_grantee substitute_wraps=0 retired_identity=400_grantee`
+10. `DIRECT_STEP_10_REQUEST_PATH lookup_standing=requested grant_log=grant grant_mail=unchanged`
+11. `DIRECT_STEP_11_SIGNING_ONE_TAP owner_sign_count_delta=1 new_signer_versions=[n] owner_as_signer=accepted request=open signer_mails=1:invite signed=ok certificate=valid`
+12. `DIRECT_STEP_12_SIGNING_REFUSALS unregistered_signer=send_disabled grants_on_device_path=400 grantee_not_signer=400 versions_not_request=400`
+13. `DIRECT_STEP_13_MCP share_grant_url=fragment_addresses service_calls=0 key_in_output=false request_signatures=recipient_forged_grant grant_url_in_refusal=true`
+
+Invitation receipts, in order:
+
+1. `INVITE_STEP_1_CREATE batch=grant:1,invite:2 owner_sign_count_delta=1 invite_rows=2 wraps_open_under_invite_key=true d_in_any_request=false notice_mails=2 notice_names_owner=true notice_link=absent notice_key=absent links_shown=2`
+2. `INVITE_STEP_2_ADDRESS_BOUND signed_out=401 other_address=404 bogus_id=404 same_body=true key_other=403 mint_other=403`
+3. `INVITE_STEP_3_OPEN_WITH_CODE sign_in=code state=invite-ready listed=opened unlisted_key=403 comments=absent signing=absent fragment_after_open=absent log=wrap_fetch:address receipts=0`
+4. `INVITE_STEP_4_CLAIM passkey_created=1 identity=registered extra_claim_taps=0 claim_wraps=listed invite_wraps=0 role=invited reads_after_invite_expiry=ok log=claim owner_mail=1`
+5. `INVITE_STEP_5_SINGLE_USE second_tab=409_invite_claimed winner_wraps_intact=true reopen_same_identity=reader`
+6. `INVITE_STEP_6_INVISIBLE recipients_equal_without_invites=true mcp_republish=sealed new_version_wrapped_to_claimant=false`
+7. `INVITE_STEP_7_CONFIRM owner_sign_count_delta=1 grant=live claim_row=superseded mcp_republish_after=wraps_claimant claimant_opens_new_version=ok`
+8. `INVITE_STEP_8_EXPIRY open_status=expired key=403 mint=403 claim=410_invite_expired`
+9. `INVITE_STEP_9_REVOKE cancel_open=wraps_0 link_state=invite-withdrawn remove_claimed=claim_wraps_0 role=revoked`
+10. `INVITE_STEP_10_REKEY revoke_other=new_version open_invite_listed=ok open_invite_new_version=403`
+11. `INVITE_STEP_11_REGISTERED invite_for_registered=409_identity_exists lookup_charged=true existing_identity=unlock_then_claim already_reader=consumed_no_writes`
+12. `INVITE_STEP_12_DELETE version_delete=versions_stripped whole_relik=invites_0,claims_0`
+13. `INVITE_STEP_13_MCP grant_url_unregistered=invite_offered mcp_invite_tool=absent`
+
+Success ends with `DIRECT_SHARE_PATH_OK` and exit 0; a defect prints `DEFECT <id>: ...` and `DIRECT_SHARE_PATH_BLOCKED` with exit 1. The path slice must record the results of these mutation controls, each expected to fail its named step:
+
+| Mutation | Expected failure |
+|---|---|
+| Remove lookup owner check | Direct 1 |
+| Charge budget per call | Direct 2 |
+| Serve `statements[0]` for every grant | Direct 7 |
+| Skip fingerprint check | Direct 9 |
+| Drop version filter | Direct 6 |
+| Skip signer membership | Direct 12 |
+| Remove invitation open address check | Invite 2 |
+| Skip invitation compare-and-swap | Invite 5 |
+| Stop emptying invitation wraps on claim | Invite 4 |
+| Skip invitation lookup charge | Invite 11 |
+| Extend invitation rows in `extendPrivateLifetime` | Server fake-GCS test |
+
+The post-deploy operator targets are `DIRECT_LIVE share=201 notice=received open=ok deleted=ok` and `INVITE_LIVE create=201 code_open=ok claim=201 confirm=201 deleted=ok`. Neither is claimed here as run. Loopback does not prove real passkeys, real mail delivery, production GCS lifecycle timing or cross-instance budget enforcement. Live test writes to a shared system of record are not permitted; use an appropriate test mode or leave that leg unproven.
