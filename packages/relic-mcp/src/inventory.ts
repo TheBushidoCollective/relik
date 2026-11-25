@@ -29,6 +29,8 @@
  * processes have no lock between them. A read tool that wrote to it could
  * lose an entry, and a lost entry is a relic that can never be updated again.
  */
+import type { RelicSettingsJSON } from '@relic/format/private';
+import { parseSettings } from './settings.ts';
 
 import {
   decodeAnyEnvelope,
@@ -169,6 +171,7 @@ export interface ShowInput {
 }
 
 export interface ShowResult extends RelicRow {
+  readonly settings?: RelicSettingsJSON;
   /** Versions the service holds, or null when it could not be asked. */
   readonly versions: number | null;
   /** Plaintext length from the envelope, when one was read. */
@@ -468,6 +471,7 @@ export async function showRelic(
     status: 'reachable' as const,
     status_basis: 'mint' as const,
     status_detail: `the service served version ${minted.currentVersion}.`,
+    ...(minted.settings === undefined ? {} : { settings: minted.settings }),
     versions: minted.currentVersion,
   };
 
@@ -664,6 +668,7 @@ interface MintOk {
   readonly currentVersion: number;
   readonly objectLength: number;
   readonly relicExpiresAt: string | null;
+  readonly settings?: RelicSettingsJSON;
 }
 
 interface MintFailed {
@@ -745,11 +750,13 @@ export async function mintRelic(
   }
 
   const expiry = body?.['relic_expires_at'];
+  const settings = parseSettings(body?.['settings']);
   return {
     kind: 'ok',
     url,
     currentVersion,
     objectLength,
+    ...(settings === undefined ? {} : { settings }),
     relicExpiresAt: typeof expiry === 'string' ? expiry : null,
   };
 }

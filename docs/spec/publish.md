@@ -16,7 +16,7 @@ The pin isn't housekeeping. Tool-result semantics are revision-dependent, so a d
 
 ### 1.1 The tool names
 
-**The tools are named `relic_publish`, `relic_list`, `relic_show`, `relic_lookup_source`, `relic_republish`, `relic_share`, `relic_read_comments`, `relic_comment`, `relic_edit_comment`, `relic_resolve_comment`, `relic_read_decisions`, `relic_describe_client`, `relic_enroll_device`, `relic_confirm_device`, `relic_bind_owner`, and `relic_apply_suggestions`.** There are sixteen. Each name is stable across releases, and renaming one is a breaking change because saved agent instructions and project prompts reference it by string.
+**The tools are named `relic_publish`, `relic_list`, `relic_show`, `relic_lookup_source`, `relic_republish`, `relic_share`, `relic_read_comments`, `relic_comment`, `relic_edit_comment`, `relic_resolve_comment`, `relic_read_decisions`, `relic_settings`, `relic_describe_client`, `relic_enroll_device`, `relic_confirm_device`, `relic_bind_owner`, and `relic_apply_suggestions`.** There are seventeen. Each name is stable across releases, and renaming one is a breaking change because saved agent instructions and project prompts reference it by string.
 
 **`relic_publish` gains one input, `private?: boolean`.** It defaults to `false`, so a call that omits it publishes a public relik exactly as before. `private: true` publishes a private relik, described in the private block at the end of 1.2.
 
@@ -39,7 +39,7 @@ A bare `publish` collides with incumbent publishing MCP servers, and the consequ
 | `ttl_days` | integer | no | Publisher-requested lifetime in days, 1 to 3650. Absent means the relik never expires |
 | `force_new` | boolean | no | Deliberately creates a separate relik from a source already recorded locally. Defaults to `false` |
 | `private` | boolean | no | Publishes a private relik: no key in the link, always expires, no title or cover. Defaults to `false`. The rules are in the private block at the end of this section. |
-| `decisions` | boolean | no | Opens approval and rejection decisions on this relik for readers, each confirmed with a passkey. Defaults to `false`, so the viewer shows no Decisions control until a republish turns it on with `decisions: true`. |
+| `decisions` | boolean | no | Opens approval and rejection decisions on this relik for readers, each confirmed with a passkey. Defaults to `false`. Change it later with `relic_settings` without republishing. |
 
 **`ttl_days` is the publisher's lifetime and passes through to the grant request.** For a public relik, an integer from 1 to 3650, or absent, and absent is the default: the relik never expires. The tool does not invent a value and does not clamp one. A value outside the range is the server's to refuse, with `invalid_publish_metadata` (`service.md` 1.1 case 12), because the range is publish policy rather than client validation, and the grant response's `relic_expires_at` (1.3) is what actually happened. A private relik always expires, and its lifetime rules are in the private block at the end of this section.
 
@@ -156,9 +156,9 @@ One property is load-bearing and easy to get backwards: **progress defeats the i
 
 **When no progress token is supplied, the server can't keep the call warm and doesn't try.** The orphan risk returns in full, and the mitigation is section 4.7: the client generated the ID and the key before anything left the machine, so the URL exists in the tool's own hands regardless of what happens to the response.
 
-### 1.6 Sixteen tools, and why there's still no delete tool
+### 1.6 Seventeen tools, and why there's still no delete tool
 
-**The surface is fifteen workflow tools plus one inspection tool, sixteen tools in all.** `relic_publish` creates a new encrypted URL. `relic_list` enumerates reliks published by this machine. `relic_show` inspects and decrypts one relik. `relic_lookup_source` recovers the id for an existing source from local state. `relic_republish` updates that id. `relic_share` prepares a share email. `relic_read_comments` reads feedback; `relic_comment`, `relic_edit_comment`, and `relic_resolve_comment` write, edit, and settle comments. `relic_apply_suggestions` previews or applies selected suggestions to a local file without publishing. `relic_read_decisions` reads recorded decisions. `relic_enroll_device`, `relic_confirm_device`, and `relic_bind_owner` manage device enrollment and owner binding. `relic_describe_client` explains the client without reading a source or calling the service. Lookup remains separate so the agent can find the id before choosing a write. The comment read and write remain separate because the write spends the publish token.
+**The surface is sixteen workflow tools plus one inspection tool, seventeen tools in all.** `relic_publish` creates a new encrypted URL. `relic_list` enumerates reliks published by this machine. `relic_show` inspects and decrypts one relik. `relic_lookup_source` recovers the id for an existing source from local state. `relic_republish` updates that id. `relic_settings` reads or changes live settings without a new version. `relic_share` prepares a share email. `relic_read_comments` reads feedback; `relic_comment`, `relic_edit_comment`, and `relic_resolve_comment` write, edit, and settle comments. `relic_apply_suggestions` previews or applies selected suggestions to a local file without publishing. `relic_read_decisions` reads recorded decisions. `relic_enroll_device`, `relic_confirm_device`, and `relic_bind_owner` manage device enrollment and owner binding. `relic_describe_client` explains the client without reading a source or calling the service. Lookup remains separate so the agent can find the id before choosing a write. The comment read and write remain separate because the write spends the publish token.
 
 The `structuredContent` member count in 1.3 is a separate figure from the tool count.
 

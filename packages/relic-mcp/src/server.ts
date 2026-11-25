@@ -86,6 +86,7 @@ import { confirmDevice, enrollDevice } from './device.ts';
 import { loadPrivatePublishState } from './state.ts';
 import { readDecisions } from './decisions.ts';
 import { shareRelic } from './share.ts';
+import { type SettingsInput, updateSettings } from './settings.ts';
 import { type ProgramReport, programText } from './program/report.ts';
 import {
   cellResolutionLine,
@@ -222,6 +223,7 @@ export const EDIT_COMMENT_TOOL_NAME = 'relic_edit_comment';
 export const RESOLVE_COMMENT_TOOL_NAME = 'relic_resolve_comment';
 
 export const READ_DECISIONS_TOOL_NAME = 'relic_read_decisions';
+export const SETTINGS_TOOL_NAME = 'relic_settings';
 
 export const ENROLL_TOOL_NAME = 'relic_enroll_device';
 
@@ -1049,6 +1051,75 @@ export const LIST_TOOL_DEFINITION = {
   },
 } as const;
 
+export const SETTINGS_TOOL_DEFINITION = {
+  name: SETTINGS_TOOL_NAME,
+  title: "Read or change a relik's live settings",
+  description:
+    'Read or change settings without a new version, using the publish token on this machine. ' +
+    'With no settings supplied, only reads. Suggestions are enforced by the viewer only: ' +
+    'the service cannot distinguish a suggestion from an encrypted comment. ' +
+    'Closing comments is enforced by the service for readers and stops their suggestions; ' +
+    'the publisher and owner can still comment. Decisions opens or closes the existing ' +
+    'decisions switch without republishing. Signing is stored but is not yet enforced. ' +
+    'Turning notifications off stops change notices and comment or activity mail, ' +
+    'but not access-request or grant mail. Lifetime changes take effect at the new time; ' +
+    'shortening a private lifetime does not move stored-copy erasure earlier.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      relic_id: {
+        type: 'string',
+        description: 'The relik id, never its share URL.',
+      },
+      suggestions: { type: 'boolean' },
+      comments: { type: 'boolean' },
+      decisions: { type: 'boolean' },
+      signing: { type: 'boolean' },
+      notifications: { type: 'boolean' },
+      ttl_days: {
+        type: ['integer', 'null'],
+        minimum: 1,
+        description:
+          'Days from now, or null for no expiry on public reliks. Private reliks allow at most 365 days.',
+      },
+    },
+    required: ['relic_id'],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      relic_id: { type: 'string' },
+      settings: {
+        type: 'object',
+        properties: {
+          suggestions: { type: 'boolean' },
+          comments: { type: 'boolean' },
+          decisions: { type: 'boolean' },
+          signing: { type: 'boolean' },
+          notifications: { type: 'boolean' },
+          changed_at: { type: ['string', 'null'] },
+          changed_by: { enum: ['publisher', 'owner', null] },
+          expires_at: { type: ['string', 'null'] },
+        },
+        required: [
+          'suggestions',
+          'comments',
+          'decisions',
+          'signing',
+          'notifications',
+          'changed_at',
+          'changed_by',
+          'expires_at',
+        ],
+        additionalProperties: false,
+      },
+      relic_expires_at: { type: ['string', 'null'] },
+    },
+    required: ['relic_id', 'settings', 'relic_expires_at'],
+    additionalProperties: false,
+  },
+} as const;
 export const SHOW_TOOL_DEFINITION = {
   name: SHOW_TOOL_NAME,
   title: 'Show one relik, including what it holds now',
@@ -1145,6 +1216,7 @@ export const SHOW_TOOL_DEFINITION = {
       status: { type: 'string' },
       status_basis: { type: 'string', enum: ['mint', 'record', 'local'] },
       status_detail: { type: 'string' },
+      settings: SETTINGS_TOOL_DEFINITION.outputSchema.properties.settings,
       republish_call: {
         type: ['object', 'null'],
         description:
@@ -2296,6 +2368,7 @@ export async function handleMessage(
             RESOLVE_COMMENT_TOOL_DEFINITION,
             DESCRIBE_TOOL_DEFINITION,
             READ_DECISIONS_TOOL_DEFINITION,
+            SETTINGS_TOOL_DEFINITION,
             ENROLL_TOOL_DEFINITION,
             CONFIRM_TOOL_DEFINITION,
             BIND_TOOL_DEFINITION,
@@ -2433,6 +2506,10 @@ async function callTool(
 
   if (params['name'] === READ_DECISIONS_TOOL_NAME) {
     return callReadDecisions(id, params, deps);
+  }
+
+  if (params['name'] === SETTINGS_TOOL_NAME) {
+    return callSettings(id, params, deps);
   }
 
   if (params['name'] === ENROLL_TOOL_NAME) {
@@ -3800,6 +3877,88 @@ async function callResolveComment(
     return { jsonrpc: '2.0', id, result: toolError(error) };
   }
 }
+async function callSettings(
+  id: string | number | null,
+  params: Record<string, unknown>,
+  deps: PublishDeps
+): Promise<JsonRpcResponse> {
+  const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+  const relicId = args['relic_id'];
+  if (typeof relicId !== 'string' || relicId.length === 0) {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`relic_id` is required and must be a string'
+    );
+  }
+  const settings: SettingsInput = {};
+  for (const key of [
+    'suggestions',
+    'comments',
+    'decisions',
+    'signing',
+    'notifications',
+  ] as const) {
+    const value = args[key];
+    if (value !== undefined && typeof value !== 'boolean') {
+      return errorResponse(
+        id,
+        ERROR_CODES.invalidParams,
+        `\`${key}\` must be a boolean`
+      );
+    }
+    if (value !== undefined) settings[key] = value;
+  }
+  const ttl = args['ttl_days'];
+  if (ttl !== undefined) {
+    if (
+      ttl !== null &&
+      (typeof ttl !== 'number' || !Number.isSafeInteger(ttl) || ttl < 1)
+    ) {
+      return errorResponse(
+        id,
+        ERROR_CODES.invalidParams,
+        '`ttl_days` must be a positive integer or null'
+      );
+    }
+    settings.ttl_days = ttl;
+  }
+  if (
+    Object.keys(args).some(
+      (key) =>
+        ![
+          'relic_id',
+          'suggestions',
+          'comments',
+          'decisions',
+          'signing',
+          'notifications',
+          'ttl_days',
+        ].includes(key)
+    )
+  ) {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      'unknown settings argument'
+    );
+  }
+  try {
+    const result = await updateSettings(relicId, settings, deps);
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        content: [{ type: 'text', text: `Settings for relik ${relicId}.` }],
+        structuredContent: result,
+        isError: false,
+      },
+    };
+  } catch (error) {
+    return { jsonrpc: '2.0', id, result: toolError(error) };
+  }
+}
+
 async function callReadDecisions(
   id: string | number | null,
   params: Record<string, unknown>,
@@ -4134,14 +4293,19 @@ const REFUSAL_GUIDANCE: Readonly<Record<string, string>> = {
   share_rate_limited:
     'The refusal carries retry_after_seconds; wait it out rather than retrying in a loop.',
   decision_unavailable:
-    'Decisions are not open on this relik. Open them by republishing with ' +
-    'relic_republish and decisions: true; the link does not change.',
+    'Decisions are not open on this relik. Open them with relic_settings and decisions: true; the link does not change.',
   invalid_share_proof:
     'The share proof was rejected by the service. The encryption key on ' +
     'this machine may not match the published relik.',
   decision_rate_limited:
     'The service is rate limiting decisions on that relik. The refusal ' +
     'carries retry_after_seconds; wait it out rather than retrying in a loop.',
+  invalid_settings:
+    'Check settings_check and correct the settings or lifetime for this relik.',
+  comments_closed:
+    'Comments are closed to readers; the publisher and owner can still comment.',
+  settings_rate_limited:
+    'The service is rate limiting settings changes. Wait for retry_after_seconds before retrying.',
 };
 
 /**
@@ -4225,6 +4389,8 @@ only on the machine that published. The token's SHA-256 is the only copy the
 service ever holds, and neither secret is ever printed or logged. Deleting the
 file changes nothing for existing links; it only ends this machine's ability
 to update those reliks.
+Use relic_settings to read or change live settings without republishing.
+
 
 What happens with comments: a comment body is encrypted here too, under a key
 derived from that relik's key with a distinct HKDF label, so the service
