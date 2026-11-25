@@ -47,7 +47,11 @@ export interface OutboundMail {
   readonly text: string;
   readonly html: string;
   readonly headers?: Readonly<Record<string, string>> | undefined;
-  readonly attachments?: readonly { filename: string; contentType: 'application/json'; content: Uint8Array }[];
+  readonly attachments?: readonly {
+    filename: string;
+    contentType: 'application/json';
+    content: Uint8Array;
+  }[];
 }
 
 export function signingNoticeMail(input: {
@@ -59,23 +63,45 @@ export function signingNoticeMail(input: {
   details?: string;
   certificate?: { filename: string; content: Uint8Array };
 }): OutboundMail {
-  const named = !input.private && input.title ? ` "${input.title}"` : ' a relik';
-  const subject = input.kind === 'complete' ? `Everyone signed${named}` :
-    input.kind === 'cancelled' ? `Signing request cancelled for${named}` :
-    input.kind === 'signed' ? `A signature was added to${named}` :
-    `It's your turn to sign${named}`;
-  const detail = input.kind === 'complete'
-    ? 'Open it to download the signing certificate. A passkey approval does not establish who held it or whether a signature is legally binding.'
-    : input.kind === 'cancelled' ? 'The signing request was cancelled.'
-    : input.kind === 'signed' ? 'A signer completed their part of the request.'
-    : input.private ? 'Open the relik to review and sign it.'
-    : "Open the link the owner sent. Relik never holds the key, so this email can't include it.";
-  const details = input.private ? '' : input.details ?? '';
+  const named =
+    !input.private && input.title ? ` "${input.title}"` : ' a relik';
+  const subject =
+    input.kind === 'complete'
+      ? `Everyone signed${named}`
+      : input.kind === 'cancelled'
+        ? `Signing request cancelled for${named}`
+        : input.kind === 'signed'
+          ? `A signature was added to${named}`
+          : `It's your turn to sign${named}`;
+  const detail =
+    input.kind === 'complete'
+      ? 'Open it to download the signing certificate. A passkey approval does not establish who held it or whether a signature is legally binding.'
+      : input.kind === 'cancelled'
+        ? 'The signing request was cancelled.'
+        : input.kind === 'signed'
+          ? 'A signer completed their part of the request.'
+          : input.private
+            ? 'Open the relik to review and sign it.'
+            : "Open the link the owner sent. Relik never holds the key, so this email can't include it.";
+  const details = input.private ? '' : (input.details ?? '');
   const text = `${detail}${details ? `\n\n${details}` : ''}\n\n${input.relicUrl}\n\nStop notifications: ${input.stopUrl}`;
   const html = `<p>${escapeHtml(detail)}</p>${details ? `<p>${escapeHtml(details)}</p>` : ''}<p><a href="${escapeHtml(input.relicUrl)}">Open relik</a></p><p><a href="${escapeHtml(input.stopUrl)}">Stop notifications</a></p>`;
-  return { subject, text, html, ...(input.certificate === undefined ? {} : {
-    attachments: [{ filename: input.certificate.filename, contentType: 'application/json' as const, content: input.certificate.content }],
-  }) };
+  return {
+    subject,
+    text,
+    html,
+    ...(input.certificate === undefined
+      ? {}
+      : {
+          attachments: [
+            {
+              filename: input.certificate.filename,
+              contentType: 'application/json' as const,
+              content: input.certificate.content,
+            },
+          ],
+        }),
+  };
 }
 
 /**
@@ -658,13 +684,15 @@ export function resendMailer(options: ResendMailerOptions): Mailer {
         text: mail.text,
         html: mail.html,
         ...(mail.headers !== undefined ? { headers: mail.headers } : {}),
-        ...(mail.attachments === undefined ? {} : {
-          attachments: mail.attachments.map((item) => ({
-            filename: item.filename,
-            content_type: item.contentType,
-            content: Buffer.from(item.content).toString('base64'),
-          })),
-        }),
+        ...(mail.attachments === undefined
+          ? {}
+          : {
+              attachments: mail.attachments.map((item) => ({
+                filename: item.filename,
+                content_type: item.contentType,
+                content: Buffer.from(item.content).toString('base64'),
+              })),
+            }),
       }),
     });
 
