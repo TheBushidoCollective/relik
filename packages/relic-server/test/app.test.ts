@@ -1778,6 +1778,28 @@ describe('the publish completion call', () => {
 });
 
 describe('republish and versions', () => {
+  test('public republish reports open and completed signing locks', async () => {
+    const { id, grant } = await publish();
+    await app.store.updateRelic(id, (row) => ({
+      ...row,
+      signingOpen: { requestId: 'request', version: 1 },
+    }));
+    const open = await republish(id, grant['publish_token'] as string);
+    expect(open.status).toBe(409);
+    expect(((await open.json()) as { code: string }).code).toBe(
+      'signing_in_progress'
+    );
+    await app.store.updateRelic(id, (row) => {
+      const { signingOpen: _, ...rest } = row;
+      return { ...rest, lockedVersions: [1] };
+    });
+    const locked = await republish(id, grant['publish_token'] as string);
+    expect(locked.status).toBe(409);
+    expect(((await locked.json()) as { code: string }).code).toBe(
+      'version_locked'
+    );
+  });
+
   test('a first grant returns the publish token exactly once, at version 1', async () => {
     const { id, grant } = await publish();
     const token = grant['publish_token'];

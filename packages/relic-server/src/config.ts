@@ -113,6 +113,13 @@ export interface RelicConfig {
   readonly settingsRateLimit: RateLimitConfig;
   readonly settingsReadRateLimit: RateLimitConfig;
   readonly settingsMinLifetimeSeconds: number;
+  readonly signingMaxSigners: number;
+  readonly signingMaxBoxesPerSigner: number;
+  readonly signingLayoutMaxChars: number;
+  readonly signingMarkMaxChars: number;
+  readonly signingRateLimit: RateLimitConfig;
+  readonly signingReadRateLimit: RateLimitConfig;
+  readonly signingMailRateLimit: RateLimitConfig;
   /** Decision read queries per IP. */
   readonly decisionReadRateLimit: RateLimitConfig;
   /** Passkey operations per IP. */
@@ -253,6 +260,13 @@ export const DEFAULT_CONFIG: RelicConfig = {
   settingsRateLimit: { limit: 60, windowSeconds: 3600 },
   settingsReadRateLimit: { limit: 600, windowSeconds: 3600 },
   settingsMinLifetimeSeconds: 3600,
+  signingMaxSigners: 20,
+  signingMaxBoxesPerSigner: 20,
+  signingLayoutMaxChars: Math.ceil(((16 * 1024 + 28) * 4) / 3),
+  signingMarkMaxChars: Math.ceil(((32 * 1024 + 28) * 4) / 3),
+  signingRateLimit: { limit: 60, windowSeconds: 3600 },
+  signingReadRateLimit: { limit: 600, windowSeconds: 3600 },
+  signingMailRateLimit: { limit: 10, windowSeconds: 3600 },
   decisionReadRateLimit: { limit: 600, windowSeconds: 3600 },
   passkeyRateLimit: { limit: 20, windowSeconds: 3600 },
   passkeySignInOptionsRateLimit: { limit: 240, windowSeconds: 3600 },

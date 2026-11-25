@@ -38,6 +38,9 @@ export const PURPOSE_KINDS: Readonly<
   identity_bind: ['identity_bind'],
   identity_settings: ['identity_settings'],
   relic_settings: ['relic_settings'],
+  signing_request: ['signing_request'],
+  signing_cancel: ['signing_cancel'],
+  sign: ['signature'],
   access_request: ['access_request'],
   grant: ['grant'],
   revoke: ['revocation', 'republish'],
@@ -240,8 +243,19 @@ export async function verifyAttestation(
     readonly passkeys: PasskeyRecord | undefined;
     readonly signerKey: SignerKey;
     readonly relicId?: string;
+    readonly identityFree?: boolean;
   }
 ): Promise<VerifiedAttestation> {
+  if (input.identityFree && input.purpose !== 'sign')
+    refuseStatement('purpose');
+  if (input.identityFree) {
+    const row =
+      input.relicId === undefined
+        ? undefined
+        : await env.store.getRelic(input.relicId);
+    if (row === undefined || row.access === 'private')
+      refuseStatement('purpose');
+  }
   const bundle = bundleShape(input.bundle);
   if ('clientExtensionResults' in bundle.credential) {
     // PRF output never reaches the service (plan 2.19). Refusing the field
@@ -329,14 +343,18 @@ export async function verifyAttestation(
   for (let i = 0; i < parsed.length; i++) {
     const { kind, statement } = parsed[i] as (typeof parsed)[number];
     const signature = bundle.statements[i]?.identity_signature ?? '';
-    const key = input.signerKey(kind, statement);
-    if (key === undefined) refuseStatement('signer');
-    const valid = await verifyStatement(
-      key,
-      byteList[i] as Uint8Array,
-      signature
-    );
-    if (!valid) refuseStatement('signature');
+    if (input.identityFree) {
+      if (signature !== '') refuseStatement('signature');
+    } else {
+      const key = input.signerKey(kind, statement);
+      if (key === undefined) refuseStatement('signer');
+      const valid = await verifyStatement(
+        key,
+        byteList[i] as Uint8Array,
+        signature
+      );
+      if (!valid) refuseStatement('signature');
+    }
     verified.push({ kind, statement, identitySignature: signature });
   }
 
@@ -377,8 +395,16 @@ export async function verifyAttestation(
  */
 export async function verifyStoredAttestation(
   attestation: StoredAttestation,
-  signerKey: SignerKey
+  signerKey: SignerKey,
+  identityFree = false
 ): Promise<boolean> {
+  if (
+    identityFree &&
+    (attestation.statements.length !== 1 ||
+      attestation.statements[0]?.kind !== 'signature' ||
+      attestation.statements[0].statement['signer_identity_id'] !== null)
+  )
+    return false;
   const byteList = attestation.statements.map((s) =>
     statementBytes(s.kind, s.statement as never)
   );
@@ -412,6 +438,10 @@ export async function verifyStoredAttestation(
     const s = attestation.statements[
       i
     ] as (typeof attestation.statements)[number];
+    if (identityFree) {
+      if (s.identitySignature !== '') return false;
+      continue;
+    }
     const key = signerKey(s.kind, s.statement);
     if (key === undefined) return false;
     const ok = await verifyStatement(

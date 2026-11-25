@@ -808,6 +808,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
     'revoke',
     'delete',
     'relic_settings',
+    'signing_request',
+    'signing_cancel',
   ]);
 
   /**
@@ -852,6 +854,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
             statement_check: 'purpose',
           });
         }
+        if (purpose === 'sign') {
+          throw new ProblemError('invalid_statement', {
+            statement_check: 'purpose',
+          });
+        }
         env.limit('attest', session.email, config.privateRateLimit);
         const email = normalizeEmail(session.email);
         const relicId =
@@ -883,7 +890,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
             const ownerRow = await liveRelic(env, relicId);
             if (ownerRow.ownerIdentityId !== identity.identityId)
               return refuse('owner_required');
-            if (purpose === 'relic_settings') {
+            if (
+              purpose === 'relic_settings' ||
+              purpose === 'signing_request' ||
+              purpose === 'signing_cancel'
+            ) {
               allowedCredentialIds = identity.credentials.map(
                 (binding) => binding.credentialId
               );
@@ -2009,16 +2020,23 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_publish_metadata', { relic_id: relicId });
     }
 
-    const next = await store.beginVersion(
-      relicId,
-      rendererClass as RendererClass,
-      declared,
-      titleUpdate,
-      ownerUpdate,
-      notify,
-      shareVerifierUpdate,
-      decisionsUpdate
-    );
+    let next: RelicRow | undefined;
+    try {
+      next = await store.beginVersion(
+        relicId,
+        rendererClass as RendererClass,
+        declared,
+        titleUpdate,
+        ownerUpdate,
+        notify,
+        shareVerifierUpdate,
+        decisionsUpdate
+      );
+    } catch (error) {
+      if (error instanceof ProblemError)
+        return refuse(error.code, error.options);
+      throw error;
+    }
     if (next === undefined) {
       return refuse('relic_not_found', { relic_id: relicId });
     }
@@ -3568,6 +3586,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const optOutsDeleted = await store.deleteOptOutsForRelic(relicId);
     const decisionsDeleted = await store.deleteDecisionsForRelic(relicId);
     await store.deleteSettingsChanges(relicId);
+    const signingDeleted = await store.deleteSigningForRelic(relicId);
     if (row?.access === 'private') {
       await store.deleteWraps(relicId, {});
       await store.deleteSeals(relicId);
@@ -3593,6 +3612,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         shares_deleted: sharesDeleted,
         opt_outs_deleted: optOutsDeleted,
         decisions_deleted: decisionsDeleted,
+        signing_deleted: signingDeleted,
       });
     }
 
@@ -3606,6 +3626,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       shares_deleted: sharesDeleted,
       opt_outs_deleted: optOutsDeleted,
       decisions_deleted: decisionsDeleted,
+      signing_deleted: signingDeleted,
     });
   }
 

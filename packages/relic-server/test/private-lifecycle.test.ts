@@ -48,6 +48,33 @@ beforeEach(() => {
   app = createApp({ store, storage, now: () => now });
 });
 
+test('signing owner nonces on public reliks require the bound identity and sign is not public', async () => {
+  const owner = await person('owner@example.com');
+  const stranger = await person('stranger@example.com');
+  await registerIdentity(owner);
+  await registerIdentity(stranger);
+  await store.putRelic(relic({ ownerIdentityId: owner.identityId as string }));
+  for (const purpose of ['signing_request', 'signing_cancel']) {
+    const allowed = await send(
+      '/api/attest/nonce',
+      post({ purpose, relic_id: RELIC_ID }, owner.cookie)
+    );
+    expect(allowed.status).toBe(200);
+    const denied = await send(
+      '/api/attest/nonce',
+      post({ purpose, relic_id: RELIC_ID }, stranger.cookie)
+    );
+    expect(denied.status).toBe(403);
+    expect(denied.body['code']).toBe('owner_required');
+  }
+  const sign = await send(
+    '/api/attest/nonce',
+    post({ purpose: 'sign', relic_id: RELIC_ID }, owner.cookie)
+  );
+  expect(sign.status).toBe(400);
+  expect(sign.body['statement_check']).toBe('purpose');
+});
+
 /** A signed-in person: a passkey, a session, and a fresh identity when wanted. */
 interface Person {
   readonly email: string;
