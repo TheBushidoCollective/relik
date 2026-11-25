@@ -415,11 +415,13 @@ export async function createSigningRequest(
           signer_email: signer.email,
         });
       seen.add(identity.identityId);
-      const grant = await env.store.getGrant(row.id, identity.identityId);
-      if (grant === undefined || grant.revokedAt !== undefined) {
-        throw new ProblemError('signer_without_access', {
-          signer_email: signer.email,
-        });
+      if (identity.identityId !== owner.identityId) {
+        const grant = await env.store.getGrant(row.id, identity.identityId);
+        if (grant === undefined || grant.revokedAt !== undefined) {
+          throw new ProblemError('signer_without_access', {
+            signer_email: signer.email,
+          });
+        }
       }
       try {
         await requireRead(env, row, owner, identity, statement.version);

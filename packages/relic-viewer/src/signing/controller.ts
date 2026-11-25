@@ -22,6 +22,30 @@ import { openSigningCertificate } from './certificate.ts';
 import { openSigningComposer } from './composer.ts';
 import { openSignerPanel } from './panel.ts';
 import { openSigningStatus } from './status.ts';
+export function showPausedSigning(
+  signingEnabled: boolean,
+  status: string | undefined,
+  listedSigner: boolean,
+  trusted: boolean
+): boolean {
+  return !signingEnabled && status === 'open' && listedSigner && trusted;
+}
+
+export function signingRefusalMessage(
+  failure: string,
+  ownerEmail: string
+): string {
+  if (
+    failure === 'signing_content_mismatch' ||
+    failure === 'signing_digest_mismatch'
+  )
+    return `This file doesn't match the one you were asked to sign. Don't sign it. Ask ${ownerEmail} (claimed) to send the request again.`;
+  if (failure === 'signing_page_invalid')
+    return `This request places a signature box beyond the last page. Don't sign it. Ask ${ownerEmail} (claimed) to send the request again.`;
+  if (failure === 'signing_owner_mismatch')
+    return "This signing request isn't signed by this relik's owner.";
+  return "This signing request could not be verified. Don't sign it.";
+}
 
 /** Report withheld receipt evidence separately from a failed signature. */
 export function signatureEvidenceStatus(
@@ -61,7 +85,6 @@ export function mountSigning(input: {
     input.onAvailable(undefined);
     replacement = mountSigning(input);
   };
-  if (view.settings?.signing === false) return () => {};
   void (async () => {
     const key = await keyForView(view)(view.version);
     const signingKey = await deriveSigningKey(key);
@@ -159,8 +182,17 @@ export function mountSigning(input: {
       signerIndex === undefined
         ? undefined
         : request?.signers.find((entry) => entry.index === signerIndex);
+    const paused = view.settings?.signing === false;
+    if (
+      paused &&
+      !showPausedSigning(false, request?.status, signer !== undefined, trusted)
+    )
+      return;
     const canSign =
-      trusted && request?.status === 'open' && signer?.status === 'ready';
+      !paused &&
+      trusted &&
+      request?.status === 'open' &&
+      signer?.status === 'ready';
     if (request && trusted && signerIndex !== undefined) {
       const banner = document.createElement('div');
       banner.className = 'signing-strip';
@@ -182,6 +214,16 @@ export function mountSigning(input: {
       fingerprintLabel.className = 'signing-fingerprint';
       fingerprintLabel.textContent = `Owner ${fingerprint}`;
       banner.append(description, fingerprintLabel);
+      if (paused) {
+        const notice = document.createElement('span');
+        notice.textContent = 'Signing is paused by the owner.';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn primary';
+        button.textContent = 'Sign here';
+        button.disabled = true;
+        banner.append(notice, button);
+      }
       const row = input.stage.closest('.relic-row');
       if (row) row.before(banner);
       else input.stage.prepend(banner);
@@ -324,12 +366,10 @@ export function mountSigning(input: {
         body.className = 'panel-body';
         const message = document.createElement('p');
         message.className = 'panel-notice is-oxide';
-        message.textContent =
-          failure === 'signing_content_mismatch'
-            ? `This file doesn't match the one you were asked to sign. Don't sign it. Ask ${request.owner.identity.email} (claimed) to send the request again.`
-            : failure === 'signing_page_invalid'
-              ? `This request places a signature box beyond the last page. Don't sign it. Ask ${request.owner.identity.email} (claimed) to send the request again.`
-              : "This signing request isn't signed by this relik's owner.";
+        message.textContent = signingRefusalMessage(
+          failure,
+          request.owner.identity.email
+        );
         const close = document.createElement('button');
         close.type = 'button';
         close.className = 'btn';

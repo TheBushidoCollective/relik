@@ -12,6 +12,10 @@ import {
   verifyViewerSigningRequest,
 } from '../src/signing/api.ts';
 import { signingPagesFit } from '../src/signing/boxes.ts';
+import {
+  showPausedSigning,
+  signingRefusalMessage,
+} from '../src/signing/controller.ts';
 import type { ViewerDeps } from '../src/viewer.ts';
 
 test('signing transport sends the exact public and private wire bodies', async () => {
@@ -67,6 +71,30 @@ test('signing transport sends the exact public and private wire bodies', async (
   ]);
 });
 
+test('a paused signing notice is limited to listed signers of trusted open requests', () => {
+  expect(showPausedSigning(false, 'open', true, true)).toBe(true);
+  expect(showPausedSigning(true, 'open', true, true)).toBe(false);
+  expect(showPausedSigning(false, undefined, true, true)).toBe(false);
+  expect(showPausedSigning(false, 'complete', true, true)).toBe(false);
+  expect(showPausedSigning(false, 'open', false, true)).toBe(false);
+  expect(showPausedSigning(false, 'open', true, false)).toBe(false);
+});
+
+test('changed documents and owner mismatches have distinct refusal messages', () => {
+  expect(
+    signingRefusalMessage('signing_digest_mismatch', 'owner@example.test')
+  ).toContain("This file doesn't match");
+  expect(
+    signingRefusalMessage('signing_content_mismatch', 'owner@example.test')
+  ).toContain("This file doesn't match");
+  expect(
+    signingRefusalMessage('signing_owner_mismatch', 'owner@example.test')
+  ).toBe("This signing request isn't signed by this relik's owner.");
+  expect(
+    signingRefusalMessage('signing_request_invalid', 'owner@example.test')
+  ).toBe("This signing request could not be verified. Don't sign it.");
+});
+
 test('a private request cannot substitute another owner', async () => {
   const request = {
     owner: { identity: { identity_id: 'attacker' } },
@@ -116,6 +144,9 @@ test('a valid signed request opens its layout and rejects changed content', asyn
     pdf: true,
   };
   expect((await verifyViewerSigningRequest(input)).boxes).toHaveLength(1);
+  await expect(
+    verifyViewerSigningRequest({ ...input, digest: '0'.repeat(64) })
+  ).rejects.toThrow('signing_digest_mismatch');
   await expect(
     verifyViewerSigningRequest({
       ...input,

@@ -233,7 +233,9 @@ async function fixture(store: RelicStore = new MemoryStore()) {
     isPrivate = false,
     requireOpened = false,
     version = 1,
-    signers: readonly (typeof first)[] = [first, second]
+    signers: readonly (typeof first)[] = [first, second],
+    signerOverride?: SigningRequestStatement['signers'],
+    expectedStatus = 201
   ) {
     const nonce = await post(
       a,
@@ -255,10 +257,12 @@ async function fixture(store: RelicStore = new MemoryStore()) {
       request_id: b64(randomBytes(16)),
       require_opened: requireOpened,
       signer_id: owner.identityId,
-      signers: signers.map((signer) => ({
-        email: signer.email,
-        identity_id: isPrivate ? signer.identityId : null,
-      })),
+      signers:
+        signerOverride ??
+        signers.map((signer) => ({
+          email: signer.email,
+          identity_id: isPrivate ? signer.identityId : null,
+        })),
       version,
     };
     const result = await post(
@@ -276,7 +280,9 @@ async function fixture(store: RelicStore = new MemoryStore()) {
       },
       owner.cookie
     );
-    expect(result.status).toBe(201);
+    expect(result.status).toBe(expectedStatus);
+    if (expectedStatus === 409)
+      expect(result.body.code).toBe('signer_without_access');
     return statement;
   }
   async function prepare(
@@ -401,6 +407,29 @@ async function fixture(store: RelicStore = new MemoryStore()) {
     mails,
   };
 }
+
+test('private owner signer needs a current version wrap and other signers need a grant', async () => {
+  const f = await fixture();
+  await f.enablePrivate();
+  const ownerSigner = [
+    { email: f.owner.email, identity_id: f.owner.identityId },
+  ];
+  await f.open('parallel', true, false, 1, undefined, ownerSigner, 409);
+  const owner = await f.store.getIdentity(f.owner.identityId);
+  expect(owner).toBeDefined();
+  await f.store.putWrap(wrap(owner!.kemKeyId, 1));
+  await f.store.deleteGrant(RELIC_ID, f.first.identityId);
+  await f.open(
+    'parallel',
+    true,
+    false,
+    1,
+    undefined,
+    [...ownerSigner, { email: f.first.email, identity_id: f.first.identityId }],
+    409
+  );
+  await f.open('parallel', true, false, 1, undefined, ownerSigner);
+});
 
 test('two public signatures complete across instances and the certificate verifies', async () => {
   const f = await fixture();
