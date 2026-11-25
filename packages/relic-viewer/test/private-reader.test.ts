@@ -33,8 +33,10 @@ import {
   type IdentityKeys,
   kemKeyIdOf,
   keyCommitment,
+  parseStatement,
   signStatement,
   statementBytes,
+  verifyStatement,
   wrapVersionKey,
 } from '@relic/format/private';
 import { comparisonAvailability } from '../src/diff.ts';
@@ -2077,6 +2079,55 @@ describe('the reader drives every state of plan 4.15', () => {
     );
     expect(Array.from((await view.keyFor?.(1)) ?? [])).toEqual(
       Array.from(world.key)
+    );
+  });
+
+  test('opened receipts follow verified opens and carry the reader signature', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const route = `POST /api/relics/${relicId}/receipts/opened`;
+    world.routes[route] = () => json({ relic_id: relicId, version: 1 }, 201);
+    const { deps, seen } = readerDeps(world);
+    const { root, views } = await mountReader(deps, relicId);
+    press(root, '[data-action="private-unlock"]');
+    await until(() => views.length === 1, 'the ready view');
+    await until(() => seen.some((entry) => entry.route === route), 'receipt');
+    const receipt = JSON.parse(
+      seen.find((entry) => entry.route === route)!.text
+    );
+    expect(receipt.statement).toEqual({
+      at: NOW,
+      ciphertext_sha256: world.digest,
+      key_commitment: await keyCommitment({
+        relicId,
+        version: 1,
+        key: world.key,
+      }),
+      reader_identity_id: world.readerId,
+      relic_id: relicId,
+      version: 1,
+    });
+    expect(
+      await verifyStatement(
+        world.reader.sigPublicKey,
+        statementBytes(
+          'open_receipt',
+          parseStatement('open_receipt', receipt.statement)
+        ),
+        receipt.identity_signature
+      )
+    ).toBe(true);
+  });
+
+  test('a failed seal never produces an opened receipt', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { tamperSeal: true });
+    const { deps, seen } = readerDeps(world);
+    const { root } = await mountReader(deps, relicId);
+    press(root, '[data-action="private-unlock"]');
+    await until(() => stateOf(root) === 'seal-mismatch', 'seal-mismatch');
+    expect(seen.some((entry) => entry.route.endsWith('/receipts/opened'))).toBe(
+      false
     );
   });
 

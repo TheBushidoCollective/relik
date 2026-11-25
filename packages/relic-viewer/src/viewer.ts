@@ -126,6 +126,7 @@ export type ViewerState =
     };
 
 import type { RelicSettingsJSON } from '@relic/format/private';
+import type { UnlockedIdentity } from './private/keys.ts';
 
 export interface ReadyView {
   readonly filename: string;
@@ -172,6 +173,8 @@ export interface ReadyView {
   readonly access?: 'private';
   readonly settings?: RelicSettingsJSON | null | undefined;
   readonly manage?: boolean;
+  /** Available only while a private reader's identity is unlocked in this page. */
+  readonly signingIdentity?: UnlockedIdentity;
   /** Resolves the key for one retained version of a private relic. */
   keyFor?(version: number): Promise<Uint8Array>;
   /**

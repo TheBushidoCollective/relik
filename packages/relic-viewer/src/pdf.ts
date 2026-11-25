@@ -239,6 +239,7 @@ export async function mountPdf(
       cancelled.promise,
     ]);
     const numPages = pdfDoc.numPages;
+    canvas.dataset['pageCount'] = String(numPages);
     let currentPage = 1;
     let renderGeneration = 0;
 

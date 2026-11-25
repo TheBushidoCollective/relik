@@ -660,6 +660,8 @@ describe('rekey after revocation', () => {
       envelope: old.envelope,
       folderContent: contentFromBytes(old.content),
       digest: sha256Hex(input),
+      keyCommitment: '',
+      signingKey: new Uint8Array(32),
     };
     try {
       const service = fakeService({

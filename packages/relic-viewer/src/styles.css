@@ -7445,3 +7445,353 @@ fieldset.delete-choice legend { margin-bottom: 0.4rem; padding: 0; font-weight: 
   white-space: nowrap;
 }
 /* suggestions: presence end */
+
+/* signing */
+.signing-box-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+.signing-box-overlay.is-editable {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+}
+.signing-box {
+  position: absolute;
+  overflow: hidden;
+  border: 2px solid var(--patina);
+  background: color-mix(in srgb, var(--patina) 16%, transparent);
+  color: var(--ink);
+  font: 600 0.75rem var(--sans);
+  pointer-events: auto;
+}
+.signing-box.signer-1,
+.signing-box.signer-3 {
+  border-color: var(--oxide);
+  background: color-mix(in srgb, var(--oxide) 14%, transparent);
+}
+.signing-box.is-selected {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.signing-panel .input {
+  width: 100%;
+  min-width: 0;
+}
+.signing-panel .seg,
+.signing-panel .sign-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.signing-panel .consent {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+.signing-panel .consent-detail,
+.signing-panel .passkey-note {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+.signing-panel .typed-mark,
+.signing-panel .mark-pad {
+  min-height: 6rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--ground);
+}
+.signing-panel .typed-mark {
+  padding: 1rem;
+  font: italic 1.8rem var(--serif);
+}
+.signing-panel .mark-pad canvas {
+  display: block;
+  width: 100%;
+  height: 6rem;
+  touch-action: none;
+}
+.signing-panel .status-list {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0;
+  list-style: none;
+}
+.signing-panel .status-list li {
+  display: grid;
+  gap: 0.2rem;
+}
+.sig-block,
+.signing-lock {
+  margin: 1.5rem auto;
+  padding: 1rem;
+  max-width: 48rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+}
+.sig-block button {
+  margin-left: 1rem;
+}
+@media (max-width: 40rem) {
+  .signing-panel {
+    top: auto;
+    bottom: 0;
+    width: 100%;
+    max-height: 60dvh;
+  }
+}
+.signing-panel .input {
+  box-sizing: border-box;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+}
+.signing-panel .signer-row {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr) 2rem;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--oxide);
+  background: var(--ground);
+}
+.signing-panel .signer-row[data-selected="true"] {
+  border-color: var(--patina);
+  background: color-mix(in srgb, var(--patina) 10%, var(--surface));
+}
+.signing-panel .signer-tag {
+  padding: 0.2rem;
+  background: var(--patina);
+  color: var(--surface);
+  text-align: center;
+}
+.signing-panel .row-meta {
+  grid-column: 2 / 4;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+.signing-panel .field-hint {
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+.signing-panel .btn.primary {
+  justify-self: end;
+  border-color: var(--patina);
+  background: var(--patina);
+  color: var(--surface);
+}
+.signing-panel .btn.primary:disabled {
+  border-color: var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink-soft);
+}
+.signing-panel .seg {
+  border: 1px solid var(--rule-strong);
+}
+.signing-panel .seg button {
+  padding: 0.4rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.signing-panel .seg button[aria-pressed="true"] {
+  background: var(--patina);
+  color: var(--surface);
+}
+.signing-panel .panel-notice:empty {
+  display: none;
+}
+@media (min-width: 64rem) {
+  body:has(.signing-panel) .relic-row {
+    padding-right: 28rem;
+  }
+  body:has(.signing-panel) .pdf-page-container {
+    max-width: 60%;
+  }
+}
+.signing-placement {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.signing-placement select {
+  padding: 0.35rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink);
+}
+.signing-strip {
+  display: flex;
+  flex: none;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  min-height: 3rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  border-left: 3px solid var(--patina);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+.signing-strip strong {
+  color: var(--ink);
+}
+.signing-fingerprint {
+  font: 0.72rem var(--mono);
+  overflow-wrap: anywhere;
+}
+@media (min-width: 64rem) {
+  body:has(.signing-strip) .signing-panel {
+    top: calc(var(--bar-height) + 3rem);
+    max-height: calc(100dvh - var(--bar-height) - 3rem);
+  }
+}
+@media (max-width: 40rem) {
+  .signing-strip {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+}
+.certificate-view {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  overflow: auto;
+  background: var(--ground);
+  color: var(--ink);
+}
+.certificate-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  min-height: var(--bar-height);
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+.certificate-body {
+  max-width: 52rem;
+  margin: 1.5rem auto;
+  border: 1px solid var(--rule-strong);
+  border-top: 3px double var(--ink);
+  background: var(--surface);
+}
+.certificate-heading,
+.certificate-section {
+  padding: 1.3rem 1.75rem;
+  border-bottom: 1px solid var(--rule);
+}
+.certificate-heading h2 {
+  margin: 0.2rem 0;
+  font: 600 1.6rem var(--serif);
+}
+.certificate-heading small,
+.certificate-section h3,
+.certificate-facts small {
+  color: var(--ink-soft);
+  font: 0.68rem var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.certificate-result {
+  color: var(--patina-ink);
+  font-size: 0.85rem;
+}
+.certificate-facts,
+.certificate-explanation {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--rule);
+}
+.certificate-facts > div,
+.certificate-explanation > div {
+  display: grid;
+  gap: 0.4rem;
+  padding: 1rem;
+  border-right: 1px solid var(--rule);
+  overflow-wrap: anywhere;
+}
+.certificate-explanation {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.certificate-explanation h3,
+.certificate-explanation p {
+  margin: 0;
+}
+.certificate-body > .btn {
+  margin: 1rem 1.75rem;
+}
+@media (max-width: 40rem) {
+  .certificate-body { margin: 0; }
+  .certificate-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .certificate-explanation { grid-template-columns: 1fr; }
+}
+.signing-panel .receipt-list {
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--patina);
+  background: var(--ground);
+  padding: 0.75rem;
+}
+.signing-panel .receipt-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(3, minmax(3.3rem, auto));
+  gap: 0.4rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--rule);
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+}
+.signing-panel .receipt-list .receipt-head {
+  color: var(--ink-soft);
+  font: 0.62rem var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.signing-panel .signer-row:nth-child(even) .signer-tag {
+  background: var(--oxide);
+}
+.signing-panel .signer-row:nth-child(even)[data-selected="true"] {
+  border-color: var(--oxide);
+  background: color-mix(in srgb, var(--oxide) 10%, var(--surface));
+}
+body:has(.signing-panel) canvas.relic-page {
+  height: auto !important;
+}
+.certificate-section p {
+  margin: 0;
+  padding: 0.3rem 0;
+  border-bottom: 1px dotted var(--rule);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.signing-panel .panel-meta {
+  margin: 0;
+  padding: 0.65rem;
+  border: 1px dashed var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+.signing-panel [hidden] {
+  display: none !important;
+}
+.signing-summary {
+  margin: 0;
+  color: var(--ink-soft);
+  font: 0.72rem var(--mono);
+}
+.signing-panel .panel-section > .btn.is-small {
+  justify-self: start;
+}
