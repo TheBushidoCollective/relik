@@ -156,7 +156,6 @@ import {
   type FrameMarkClickMessage,
   type FrameMarkHoverMessage,
   type FrameMarkRectMessage,
-  type FrameOpenLinkMessage,
   type FramePointMessage,
   type FrameRect,
   type FrameRegionMessage,
