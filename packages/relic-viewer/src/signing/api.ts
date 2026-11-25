@@ -82,7 +82,7 @@ export async function verifyViewerSigningRequest(input: {
   if (input.access === 'private' && request.owner.identity.identity_id !== input.pinnedOwnerIdentityId) {
     throw new Error('signing_owner_mismatch');
   }
-  const mac = await contentMac(input.signingKey, signingContent(input.content));
+  const statement = parseStatement('signing_request', request.request.statement);
   const checks = await verifySigningRequest({
     request: request.request,
     owner: request.owner,
@@ -91,13 +91,14 @@ export async function verifyViewerSigningRequest(input: {
       relicId: input.relicId,
       version: input.version,
       ciphertextSha256: input.digest,
-      contentMac: mac,
+      contentMac: statement.content_mac,
       origin: input.origin,
       rpId: new URL(input.origin).hostname,
     },
   });
   if (checks.some((check) => !check.ok)) throw new Error('signing_request_invalid');
-  const statement = parseStatement('signing_request', request.request.statement);
+  const mac = await contentMac(input.signingKey, signingContent(input.content));
+  if (mac !== statement.content_mac) throw new Error('signing_content_mismatch');
   if (request.request_id !== statement.request_id || request.version !== statement.version) {
     throw new Error('signing_request_invalid');
   }
