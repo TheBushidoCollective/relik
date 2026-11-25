@@ -1,0 +1,1063 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio lease, Unit 4B · Relik · direct share and invitations mock</title>
+<!--
+  A clickable mock of direct share and address-bound invitations
+  (docs/plans/direct-share/plan.md, sections 3.6, 3.8, 5 and 6). The tokens,
+  the accession band, the card, the access panel, the rows and the
+  fingerprint plate are copied from packages/relic-viewer/src/styles.css, so
+  what is judged here is the interaction and its words, not a palette.
+
+  Nothing here talks to a service and nothing here is a key. Every address,
+  fingerprint, id and link is a literal in this file.
+
+  States register with S(key, group, title, cfg). The state comes from the
+  hash (#DS1). body[data-ready] is set two animation frames after a render.
+  ?shot hides the mock rail for screenshots.
+
+  Mock deviation: the access panel is positioned absolutely inside the app
+  instead of fixed, so a full-page screenshot shows all of it.
+-->
+<style>
+:root {
+  color-scheme: light dark;
+  --ground: #f1f2f0;
+  --surface: #fbfbfa;
+  --ink: #16191a;
+  --ink-soft: #5a6163;
+  --rule: #d2d5d2;
+  --rule-strong: #b3b8b4;
+  --patina: #1f6b64;
+  --patina-ink: #0f3b37;
+  --oxide: #8c4a2f;
+  --diff-added: #dfeeea;
+  --diff-removed: #f3e5df;
+  --paper: #ffffff;
+  --paper-ink: #1d2122;
+  --paper-soft: #545b5d;
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino, "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bar-height: 3.25rem;
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #101314;
+  --surface: #171b1c;
+  --ink: #e6e9e7;
+  --ink-soft: #969e9d;
+  --rule: #2a3032;
+  --rule-strong: #3b4345;
+  --patina: #4fb3a6;
+  --patina-ink: #a7ded6;
+  --oxide: #c98058;
+  --diff-added: #15332f;
+  --diff-removed: #34231d;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; padding: 0; min-height: 100%; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+}
+:root[data-width="390"] body { background: #2a2e2f; }
+#app {
+  position: relative;
+  min-height: 100vh;
+  background: var(--ground);
+  container-type: inline-size;
+  container-name: app;
+}
+:root[data-width="390"] #app { width: 390px; margin: 0 auto; }
+
+a { color: var(--patina); }
+a:hover { color: var(--patina-ink); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--patina); outline-offset: 2px;
+}
+h1[tabindex="-1"]:focus { outline: none; }
+
+.icon {
+  width: 14px; height: 14px; flex: none; fill: none;
+  stroke: currentColor; stroke-width: 1.6; stroke-linecap: square;
+}
+
+/* ---------- the accession band ---------- */
+.bar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: stretch;
+  min-height: var(--bar-height);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.mark {
+  display: flex; align-items: center; padding: 0 1rem;
+  font-family: var(--mono); font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em;
+  color: var(--ink); border-right: 1px solid var(--rule); white-space: nowrap;
+}
+.identity { display: flex; flex-direction: column; justify-content: center; gap: 0.1rem; padding: 0.4rem 1rem; min-width: 0; flex: 1; }
+.filename { font-size: 0.9rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.filename.is-generic { color: var(--ink-soft); font-weight: 400; }
+.identity-meta { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.accession {
+  min-width: 0; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em;
+  color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.version-label {
+  display: inline-flex; align-items: center; flex: none; padding: 0.05rem 0.35rem;
+  border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink-soft);
+  font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.06em; white-space: nowrap;
+}
+.private-tag {
+  display: inline-flex; align-items: center; gap: 0.3rem; flex: none;
+  padding: 0.05rem 0.4rem 0.05rem 0.3rem; border: 1px solid var(--patina); color: var(--patina);
+  font-family: var(--mono); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; white-space: nowrap;
+}
+.private-tag .icon { width: 10px; height: 10px; }
+.actions { display: flex; align-items: stretch; border-left: 1px solid var(--rule); }
+.action {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem; padding: 0 0.9rem;
+  border: 0; border-right: 1px solid var(--rule); background: transparent; color: var(--ink);
+  font: inherit; font-size: 0.82rem; text-decoration: none; cursor: pointer; white-space: nowrap;
+}
+.actions .action:last-child { border-right: 0; }
+.action:hover { background: var(--ground); color: var(--patina-ink); }
+.action[aria-pressed="true"] { background: var(--ground); box-shadow: inset 0 -2px 0 var(--patina); }
+.action.primary { background: var(--patina); color: var(--surface); border: 0; padding: 0.55rem 1rem; }
+.action.primary:hover { background: var(--patina-ink); color: var(--surface); }
+.action.primary:disabled { background: var(--ground); color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--rule-strong); cursor: default; }
+.count {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 1.15rem; height: 1.15rem;
+  padding: 0 0.3rem; background: var(--patina); color: var(--surface);
+  font-family: var(--mono); font-size: 0.66rem; font-weight: 600;
+}
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.45rem 0.8rem;
+  border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink);
+  font: inherit; font-size: 0.82rem; cursor: pointer; text-decoration: none; white-space: nowrap;
+}
+.btn:hover { border-color: var(--patina); color: var(--patina-ink); }
+.btn.is-oxide { color: var(--oxide); }
+.btn.is-oxide:hover { border-color: var(--oxide); color: var(--oxide); }
+.btn.is-small { padding: 0.25rem 0.55rem; font-size: 0.76rem; }
+
+/* ---------- the reading surface ---------- */
+.ready-stage { padding: 2rem 1.25rem 4rem; }
+:root[data-panel-open] .ready-stage { padding-right: calc(28rem + 1.25rem); }
+.doc {
+  max-width: 42rem; margin: 0 auto; padding: 2.25rem 2.5rem;
+  background: var(--paper); color: var(--paper-ink);
+  border: 1px solid var(--rule); box-shadow: 0 1px 0 var(--rule-strong);
+  font-family: var(--serif); font-size: 1rem; line-height: 1.65;
+}
+.doc h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 0.25rem; }
+.doc .lede { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--paper-soft); margin: 0 0 1.5rem; }
+.doc h2 { font-size: 1.05rem; margin: 1.4rem 0 0.4rem; }
+.doc p { margin: 0 0 0.8rem; }
+
+.private-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem;
+  padding: 0.6rem 1.25rem; background: var(--surface); border-bottom: 1px solid var(--rule);
+  font-size: 0.82rem; color: var(--ink-soft);
+}
+.private-strip strong { color: var(--ink); font-weight: 500; }
+.invite-banner {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem 1.25rem;
+  padding: 0.75rem 1.25rem; background: var(--surface);
+  border-bottom: 1px solid var(--rule); border-left: 3px solid var(--patina);
+  font-size: 0.9rem;
+}
+.invite-banner p { margin: 0; min-width: 0; }
+.invite-banner .note { flex-basis: 100%; margin: 0; font-size: 0.8rem; color: var(--ink-soft); }
+
+/* ---------- cards ---------- */
+.stage { padding: 0 1.25rem; }
+.card {
+  max-width: 34rem; margin: 3rem auto; padding: 1.75rem;
+  background: var(--surface); border: 1px solid var(--rule); border-top: 3px solid var(--rule-strong);
+  container-type: inline-size;
+}
+.card.is-refusal { border-top-color: var(--oxide); }
+.card.is-quiet { border-top-color: var(--rule); }
+.card-title { font-size: 1.15rem; font-weight: 600; margin: 0 0 0.35rem; word-break: break-word; }
+.card-meta { font-family: var(--mono); font-size: 0.76rem; color: var(--ink-soft); margin: 0 0 1.25rem; word-break: break-word; }
+.card-body { display: grid; gap: 0.75rem; font-size: 0.95rem; }
+.card-body p, .card p { margin: 0; }
+.card > p + p { margin-top: 0.75rem; }
+.load-bearing { font-size: 0.95rem; }
+.card-note { margin: 1.25rem 0 0 !important; font-size: 0.86rem; color: var(--ink-soft); }
+.card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 1.25rem; }
+.field { display: grid; gap: 0.3rem; margin-top: 1rem; }
+.field label { font-size: 0.82rem; color: var(--ink-soft); }
+.input {
+  width: 100%; padding: 0.55rem 0.65rem; background: var(--ground); color: var(--ink);
+  border: 1px solid var(--rule-strong); border-left-width: 3px; font: inherit; font-size: 0.92rem;
+}
+.input.is-code { font-family: var(--mono); letter-spacing: 0.3em; font-size: 1.05rem; }
+.input[aria-invalid="true"] { border-left-color: var(--oxide); }
+.err { display: flex; gap: 0.35rem; align-items: flex-start; margin: 0; font-size: 0.8rem; color: var(--oxide); min-height: 1.2em; }
+.err:empty { display: none; }
+.err .icon { margin-top: 0.2rem; }
+
+.fingerprint {
+  display: grid; grid-template-columns: repeat(4, max-content); gap: 0.25rem 0.85em; margin: 0;
+  padding: 0.85rem 1rem; background: var(--ground); border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--patina); font-family: var(--mono); font-size: 1.12rem; font-weight: 600;
+  letter-spacing: 0.08em; color: var(--ink); font-variant-numeric: tabular-nums; width: max-content; max-width: 100%;
+}
+.fingerprint.is-small { font-size: 0.8rem; padding: 0.4rem 0.6rem; gap: 0.1rem 0.7em; }
+@container (min-width: 36rem) { .fingerprint:not(.is-small) { grid-template-columns: repeat(8, max-content); } }
+.fp-caption { margin: 0 0 0.35rem; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.fp-instruction { margin: 0.85rem 0 0; padding: 0.75rem 0.9rem; border: 1px solid var(--rule); border-left: 3px solid var(--oxide); font-size: 0.92rem; }
+
+/* ---------- the access panel ---------- */
+.access-panel {
+  position: absolute; top: var(--bar-height); right: 0; z-index: 8;
+  width: min(28rem, 100%);
+  background: var(--surface); border: 1px solid var(--rule-strong); border-top: 3px double var(--ink);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+  container-type: inline-size;
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-height: 2.75rem;
+  padding: 0 0.4rem 0 1.25rem; background: var(--surface); border-bottom: 1px solid var(--rule);
+}
+.panel-title { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; margin: 0; font-size: 1rem; font-weight: 600; }
+.panel-title .accession { font-weight: 400; }
+.panel-close { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; padding: 0; border: 0; background: none; color: var(--ink-soft); cursor: pointer; }
+.panel-close:hover { color: var(--patina-ink); background: var(--ground); }
+.panel-tabs { display: flex; border-bottom: 1px solid var(--rule); }
+.panel-tabs button {
+  flex: 1; padding: 0.55rem 0.4rem; border: 0; border-right: 1px solid var(--rule); background: var(--surface);
+  color: var(--ink-soft); font: inherit; font-size: 0.8rem; cursor: pointer;
+}
+.panel-tabs button:last-child { border-right: 0; }
+.panel-tabs button[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--patina); font-weight: 600; }
+.panel-body { display: grid; gap: 1.5rem; padding: 1.1rem 1.25rem 1.5rem; }
+.panel-lead { margin: 0; font-size: 0.86rem; color: var(--ink-soft); }
+.panel-section { display: grid; gap: 0.6rem; }
+.panel-section > h3 {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem;
+  margin: 0; padding-bottom: 0.35rem; border-bottom: 1px solid var(--rule);
+  font-size: 0.78rem; font-family: var(--mono); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft);
+}
+.panel-empty { margin: 0; font-size: 0.86rem; color: var(--ink-soft); }
+.panel-notice { margin: 0; padding: 0.6rem 0.75rem; font-size: 0.86rem; background: var(--ground); border-left: 3px solid var(--patina); }
+.panel-notice.is-oxide { border-left-color: var(--oxide); }
+.panel-notice p { margin: 0; }
+.panel-notice p + p { margin-top: 0.4rem; }
+.panel-foot { margin: 0; padding-top: 0.85rem; border-top: 1px solid var(--rule); font-size: 0.82rem; color: var(--ink-soft); }
+
+fieldset.versions { margin: 0; padding: 0; border: 0; min-width: 0; }
+fieldset.versions legend { padding: 0; margin: 0 0 0.45rem; font-size: 0.86rem; }
+.version-picks { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.pick {
+  display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.6rem;
+  border: 1px solid var(--rule-strong); background: var(--surface); font-family: var(--mono); font-size: 0.76rem; cursor: pointer;
+}
+.pick:has(input:checked) { border-color: var(--patina); color: var(--patina-ink); }
+.pick input { margin: 0; accent-color: var(--patina); width: 0.9rem; height: 0.9rem; }
+.pick .lock-note { font-family: var(--sans); font-size: 0.7rem; color: var(--ink-soft); }
+
+.add-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; }
+.add-row .input { padding: 0.45rem 0.6rem; font-size: 0.88rem; }
+
+.row-list { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.row-list > li {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 0.35rem 0.7rem;
+  padding: 0.75rem 0.25rem; border-bottom: 1px solid var(--rule);
+}
+.row-list > li > .row-main { grid-column: 2; }
+.row-list > li > .row-end { grid-column: 3; display: flex; gap: 0.4rem; align-items: center; }
+.row-list > li > .row-extra { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+.row-check { margin: 0.2rem 0 0; accent-color: var(--patina); width: 1rem; height: 1rem; }
+.row-dot { width: 1rem; height: 1rem; margin-top: 0.2rem; color: var(--ink-soft); display: inline-flex; }
+.row-main { display: grid; gap: 0.15rem; min-width: 0; }
+.row-main strong { font-weight: 500; font-size: 0.92rem; word-break: break-word; }
+.row-meta { font-size: 0.8rem; color: var(--ink-soft); word-break: break-word; }
+.row-meta.is-oxide { color: var(--oxide); }
+.row-kind {
+  font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-soft); border: 1px solid var(--rule-strong); padding: 0 0.3rem; white-space: nowrap; align-self: start; margin-top: 0.15rem;
+}
+.row-kind.is-patina { color: var(--patina); border-color: var(--patina); }
+.row-kind.is-oxide { color: var(--oxide); border-color: var(--oxide); }
+.days { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--ink-soft); }
+.days select {
+  padding: 0.2rem 0.35rem; background: var(--ground); color: var(--ink); border: 1px solid var(--rule-strong);
+  font-family: var(--mono); font-size: 0.78rem;
+}
+.lifetime { display: grid; gap: 0.35rem; padding: 0.65rem 0.75rem; background: var(--ground); border: 1px solid var(--rule); }
+.lifetime-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.86rem; }
+.lifetime-row .input { width: 4.5rem; padding: 0.3rem 0.45rem; font-family: var(--mono); font-size: 0.88rem; }
+.lifetime .hint { margin: 0; font-size: 0.78rem; color: var(--ink-soft); }
+.share-foot { display: grid; gap: 0.5rem; }
+.share-sum { margin: 0; font-size: 0.82rem; color: var(--ink-soft); }
+.passkey-note { display: flex; align-items: center; gap: 0.4rem; margin: 0; font-size: 0.78rem; color: var(--ink-soft); }
+.passkey-note .icon { color: var(--patina); }
+
+.link-card {
+  display: grid; gap: 0.5rem; padding: 0.75rem 0.85rem; background: var(--ground);
+  border: 1px solid var(--rule); border-left: 3px solid var(--oxide);
+}
+.link-card strong { font-weight: 600; font-size: 0.9rem; word-break: break-word; }
+.link-text {
+  margin: 0; padding: 0.45rem 0.55rem; background: var(--surface); border: 1px dashed var(--rule-strong);
+  font-family: var(--mono); font-size: 0.72rem; line-height: 1.45; word-break: break-all; color: var(--ink);
+}
+.link-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.feedback { font-family: var(--mono); font-size: 0.72rem; color: var(--patina); min-height: 1em; }
+.link-gone { margin: 0; font-size: 0.82rem; color: var(--ink-soft); font-style: italic; }
+
+/* ---------- scrim and passkey prompt ---------- */
+.scrim { position: absolute; inset: 0; z-index: 20; background: rgb(10 14 15 / 46%); padding: 6rem 1.25rem 2rem; }
+.scrim .card { margin: 0 auto; width: min(30rem, 100%); box-shadow: 0 12px 34px rgb(0 0 0 / 24%); }
+.pk-head { display: flex; gap: 0.9rem; align-items: center; margin-bottom: 1rem; }
+.passkey-art { display: grid; place-items: center; width: 3.2rem; height: 3.2rem; flex: none; border: 1px solid var(--rule-strong); background: var(--ground); color: var(--patina); }
+.passkey-art .icon { width: 26px; height: 26px; stroke-width: 1.3; }
+.pk-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.5rem; border-top: 1px solid var(--rule); }
+.pk-list li { display: grid; gap: 0.3rem; padding: 0.55rem 0 0; font-size: 0.88rem; }
+.pk-list .pk-what { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); }
+.pk-text .fingerprint { margin-top: 0.45rem; }
+.spinner { width: 1rem; height: 1rem; border: 2px solid var(--rule-strong); border-top-color: var(--patina); border-radius: 50%; animation: spin 0.9s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.waiting { display: flex; align-items: center; gap: 0.6rem; margin-top: 1rem; font-size: 0.86rem; color: var(--ink-soft); }
+
+/* ---------- dashboard and log ---------- */
+.dash { max-width: 52rem; margin: 2.5rem auto; padding: 0 1.25rem; display: grid; gap: 1.5rem; }
+.dashboard-section { background: var(--surface); border: 1px solid var(--rule); border-top: 3px solid var(--rule-strong); padding: 1.25rem 1.4rem; }
+.dashboard-section h2 { margin: 0 0 0.75rem; font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.log { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.log th { text-align: left; font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); font-weight: 600; padding: 0.35rem 0.4rem; border-bottom: 1px solid var(--rule-strong); }
+.log td { padding: 0.55rem 0.4rem; border-bottom: 1px solid var(--rule); vertical-align: top; word-break: break-word; }
+.log td.when { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-soft); white-space: nowrap; }
+.log td.kind { font-weight: 600; white-space: nowrap; }
+.log .is-mono { font-family: var(--mono); font-size: 0.76rem; }
+@container app (max-width: 40rem) {
+  .log thead { display: none; }
+  .log tr { display: grid; grid-template-columns: 1fr auto; padding: 0.55rem 0; border-bottom: 1px solid var(--rule); }
+  .log td { border: 0; padding: 0.1rem 0; }
+  .log td.when { grid-column: 2; grid-row: 1; text-align: right; }
+  .log td.kind { grid-column: 1; grid-row: 1; }
+  .log td.who, .log td.subj { grid-column: 1 / -1; }
+}
+
+/* ---------- mail ---------- */
+.mail-stage { padding: 2rem 1.25rem 4rem; }
+.mail-label { width: min(44rem, 100%); margin: 0 auto 0.5rem; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.mail { width: min(44rem, 100%); margin: 0 auto; background: var(--surface); border: 1px solid var(--rule-strong); }
+.mail-head { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.25rem 0.9rem; padding: 1rem 1.25rem; border-bottom: 1px solid var(--rule); font-size: 0.84rem; margin: 0; }
+.mail-head dt { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); padding-top: 0.15rem; }
+.mail-head dd { margin: 0; word-break: break-word; }
+.mail-head dd.subject { font-weight: 600; font-size: 0.95rem; }
+.mail-body { padding: 1.25rem 1.25rem 1.5rem; display: grid; gap: 0.85rem; font-size: 0.92rem; line-height: 1.6; }
+.mail-body p { margin: 0; }
+.mail-body .linkline { font-family: var(--mono); font-size: 0.76rem; word-break: break-all; padding: 0.55rem 0.7rem; background: var(--ground); border-left: 3px solid var(--patina); }
+.mail-body .small { font-size: 0.78rem; color: var(--ink-soft); }
+.draft-tag { justify-self: start; display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.5rem; border: 1px solid var(--oxide); color: var(--oxide); font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; }
+.mail-absent { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: var(--ink-soft); border-top: 1px dashed var(--rule-strong); padding-top: 0.75rem; }
+
+/* ---------- composer ---------- */
+.signer-list { display: grid; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+.signer-row { display: grid; gap: 0.45rem; padding: 0.6rem 0.7rem; border: 1px solid var(--rule); border-left: 3px solid var(--patina); background: var(--ground); }
+.signer-row.is-blocked { border-left-color: var(--oxide); }
+.signer-row strong { font-size: 0.9rem; font-weight: 600; word-break: break-word; }
+.signer-note { display: flex; gap: 0.45rem; align-items: flex-start; margin: 0; font-size: 0.8rem; color: var(--ink-soft); }
+.signer-note .icon { margin-top: 0.2rem; color: var(--patina); }
+.signer-row.is-blocked .signer-note .icon { color: var(--oxide); }
+
+/* ---------- narrow: the panel becomes the screen ---------- */
+@container app (max-width: 40rem) {
+  .mark { display: none; }
+  .identity { padding: 0.4rem 0.75rem; }
+  .action { padding: 0 0.65rem; }
+  .action .label { display: none; }
+  :root[data-panel-open] .ready-stage { padding-right: 1.25rem; }
+  .access-panel { border-left: 0; border-right: 0; box-shadow: none; }
+  .doc { padding: 1.5rem 1.25rem; }
+  .ready-stage { padding: 1rem 0.75rem 3rem; }
+  .card { padding: 1.25rem; margin: 1.5rem auto; }
+  .stage { padding: 0 0.75rem; }
+  .mail-stage { padding: 1rem 0.75rem 3rem; }
+  .dash { padding: 0 0.75rem; margin: 1.5rem auto; }
+  .dashboard-section { padding: 1rem; }
+  .scrim { padding: 3rem 0.75rem 2rem; }
+}
+:root[data-width="390"][data-panel-open] .access-panel { min-height: calc(100% - var(--bar-height)); }
+
+/* ---------- mock rail (not product) ---------- */
+.rail {
+  position: fixed; left: 0.75rem; bottom: 0.75rem; z-index: 100; width: 19rem; max-height: calc(100vh - 1.5rem);
+  overflow: auto; background: #16191a; color: #e6e9e7; border: 1px solid #3b4345;
+  font-family: var(--mono); font-size: 0.68rem; box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+}
+:root[data-shot] .rail { display: none; }
+.rail-head { display: flex; justify-content: space-between; align-items: center; padding: 0.45rem 0.6rem; border-bottom: 1px solid #3b4345; gap: 0.5rem; }
+.rail-head b { font-weight: 600; letter-spacing: 0.08em; }
+.rail button { font: inherit; color: inherit; background: #222829; border: 1px solid #3b4345; padding: 0.15rem 0.4rem; cursor: pointer; }
+.rail button[aria-pressed="true"] { background: #4fb3a6; color: #101314; border-color: #4fb3a6; }
+.rail-view { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.45rem 0.6rem; border-bottom: 1px solid #3b4345; }
+.rail-title { padding: 0.45rem 0.6rem; border-bottom: 1px solid #3b4345; color: #a7ded6; line-height: 1.4; }
+.rail-group { padding: 0.4rem 0.6rem; border-bottom: 1px solid #2a3032; }
+.rail-group b { display: block; margin-bottom: 0.3rem; color: #969e9d; font-weight: 600; }
+.rail-group div { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.rail.is-collapsed .rail-view, .rail.is-collapsed .rail-groups, .rail.is-collapsed .rail-title { display: none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<aside class="rail" id="rail" aria-label="Mock states (not product)">
+  <div class="rail-head"><b>DIRECT SHARE MOCK</b><button type="button" id="rail-collapse" aria-expanded="true">Hide</button></div>
+  <div class="rail-title"><span id="rail-key"></span> <span id="rail-text"></span></div>
+  <div class="rail-view" id="rail-view"></div>
+  <div class="rail-groups" id="rail-groups"></div>
+</aside>
+
+<script>
+(() => {
+  'use strict';
+  const root = document.documentElement;
+  const app = document.getElementById('app');
+  const $ = (s, el = document) => el.querySelector(s);
+  const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  if (new URLSearchParams(location.search).has('shot')) root.dataset.shot = '';
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('theme')) root.dataset.theme = qs.get('theme');
+  if (qs.get('width') === '390') root.dataset.width = '390';
+
+  // ---------------- icons ----------------
+  const ICONS = {
+    lock: '<rect x="3" y="7" width="10" height="7"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/>',
+    key: '<circle cx="5" cy="8" r="2.6"/><path d="M7.6 8H14M12 8v2.4M14 8v1.6"/>',
+    mail: '<rect x="2" y="3.5" width="12" height="9"/><path d="M2 4l6 5 6-5"/>',
+    copy: '<rect x="5" y="5" width="8.5" height="8.5"/><path d="M3 10.5V2.5h8"/>',
+    check: '<path d="M3 8.5l3 3 7-7"/>',
+    x: '<path d="M4 4l8 8M12 4l-8 8"/>',
+    link: '<path d="M6.5 9.5l3-3M7 4.5l1.2-1.2a2.6 2.6 0 0 1 3.7 3.7L10.7 8.2M9 11.5l-1.2 1.2a2.6 2.6 0 0 1-3.7-3.7l1.2-1.2"/>',
+    clock: '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.6V8l2.4 1.6"/>',
+    warn: '<path d="M8 2.2l6.2 11H1.8z"/><path d="M8 6.4v3.4M8 11.2v.6"/>',
+    user: '<circle cx="8" cy="5.4" r="2.6"/><path d="M2.8 14c.6-2.8 2.6-4.2 5.2-4.2s4.6 1.4 5.2 4.2"/>',
+    plus: '<path d="M8 3v10M3 8h10"/>',
+    passkey: '<circle cx="6" cy="5" r="2.6"/><path d="M1.8 13.5c.4-2.6 2-3.9 4.2-3.9 1 0 1.8.2 2.5.7"/><circle cx="12" cy="9.5" r="1.6"/><path d="M12 11.1v3.4M12 13.2h1.4"/>',
+    comment: '<path d="M2.5 3h11v7.5H7l-3 2.5v-2.5H2.5z"/>',
+    pen: '<path d="M3 13l1-3.5 7-7 2.5 2.5-7 7z"/>',
+    history: '<path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.8"/><path d="M2.5 2.5v2.2h2.2M8 5v3l2 1.4"/>',
+    download: '<path d="M8 2.5v8M4.8 7.4L8 10.6l3.2-3.2M2.5 13.5h11"/>',
+    users: '<circle cx="6" cy="5.6" r="2.3"/><path d="M1.8 13.5c.5-2.5 2.1-3.7 4.2-3.7s3.7 1.2 4.2 3.7"/><path d="M10.6 3.6a2.2 2.2 0 0 1 0 4.2M12.2 9.9c1 .5 1.7 1.7 2 3.6"/>',
+    arrow: '<path d="M3 8h10M9.5 4.5L13 8l-3.5 3.5"/>',
+  };
+  const ic = (n) => `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true">${ICONS[n]}</svg>`;
+
+  // ---------------- fixtures ----------------
+  const F = {
+    title: 'Studio lease, Unit 4B',
+    id: 'h7q2m9xa',
+    acc: 'RLK · H7Q2 M9XA',
+    owner: 'jason@waldrip.net',
+    origin: 'https://relik.link',
+    today: '25 Nov 2026',
+    until: '2 Dec 2026',
+    current: 3,
+    fps: {
+      'ana@harbor.studio': 'K4TR 9PXM 2WQD 7HNB 3CJF 8VLA 6YSE 5GUZ',
+      'ben@harbor.studio': 'M2PA 7DXQ 4LRE 9KWC 6TBH 3NFV 8JUS 5GYZ',
+      'cora@harbor.studio': 'Q8WN 3HTA 6KPD 2XRM 9CVE 4JLB 7SFU 5GYM',
+      'studio@harbor.studio': 'B6JD 4QWR 8NXT 2HPE 7KMC 3VLA 9FSU 5GYR',
+    },
+    links: {
+      ben: 'https://relik.link/h7q2m9xa?invite=4f9c2a71e0b3d6a8c5e1#k=Zp3qT9vXbN2mR7cK4wHs8LdA6fJy1GtEuQ0oVi5nWxB',
+      dev: 'https://relik.link/h7q2m9xa?invite=9b1e7d3a5c08f2e64a1d#k=Lm8vQ2rT6yK0pN4cW9xZb3HsD7fJa1GtEuRo5Vi2nXq',
+    },
+  };
+  const fpPlate = (fp, small) => `<p class="fingerprint${small ? ' is-small' : ''}" data-fingerprint>${fp.split(' ').map((g) => `<span>${g}</span>`).join('')}</p>`;
+  const KNOWN = {
+    'studio@harbor.studio': 'reader',
+    'ana@harbor.studio': 'key',
+    'ben@harbor.studio': 'unregistered',
+    'jason@waldrip.net': 'self',
+  };
+  const addDays = (n) => {
+    const d = new Date(Date.UTC(2026, 10, 25) + n * 864e5);
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  };
+
+  // ---------------- states ----------------
+  const STATES = [];
+  const BYKEY = {};
+  function S(key, group, title, cfg) { const s = { key, group, title, ...cfg }; STATES.push(s); BYKEY[key] = s; }
+  const GROUPS = {
+    DS: 'Share section', RC: 'Direct-share recipient', IV: 'Invitations section',
+    IN: 'Invitee', SG: 'Signing composer', EM: 'Email', LG: 'Access log', GU: 'grant_url landing',
+  };
+
+  // live, per render
+  let M = {};
+
+  // ---------------- chrome ----------------
+  function band(o = {}) {
+    const role = o.role || 'owner';
+    let acts;
+    if (role === 'owner') {
+      acts = [
+        ['comment', 'Comments', 3],
+        ['pen', 'Signing', null, o.active === 'signing'],
+        ['users', 'Access', o.accessCount ?? 1, o.active === 'access'],
+        ['history', 'Versions'],
+      ];
+    } else if (role === 'invitee') {
+      acts = [['download', 'Download']];
+    } else if (role === 'reader') {
+      acts = [['comment', 'Comments', 3], ['history', 'Versions'], ['download', 'Download']];
+    } else {
+      acts = [];
+    }
+    const btns = acts.map(([i, label, count, on]) =>
+      `<button type="button" class="action" ${label === 'Access' ? 'data-act="access"' : ''}${label === 'Signing' ? 'data-act="signing"' : ''} aria-pressed="${on ? 'true' : 'false'}">${ic(i)}<span class="label">${label}</span>${count ? `<span class="count">${count}</span>` : ''}</button>`).join('');
+    const name = o.generic ? '<span class="filename is-generic">Private relik</span>' : `<span class="filename">${esc(F.title)}</span>`;
+    return `<header class="bar"><span class="mark">relik</span><div class="identity">${name}<div class="identity-meta"><span class="accession">${F.acc}</span><span class="version-label">v${o.version || F.current}</span><span class="private-tag">${ic('lock')}Private</span></div></div>${btns ? `<nav class="actions">${btns}</nav>` : ''}</header>`;
+  }
+
+  const DOC = `<article class="doc"><h1>Studio lease, Unit 4B</h1><p class="lede">Side letter on the darkroom · Harbor Studio LLC</p>
+<p>This letter sits alongside the studio lease for Unit 4B and records what the Landlord and Harbor Studio LLC agreed about the darkroom before the term starts on 1 December 2026.</p>
+<h2>Drains and chemicals</h2><p>The Tenant may use the darkroom sink for rinse water only. Developer, fixer and any other chemical waste is collected in the sealed containers the Landlord supplies and taken away by the licensed contractor on the first Monday of each month.</p>
+<h2>Ventilation</h2><p>The Landlord services the extractor fan before the start date and every six months after that. The Tenant does not run the enlarger room with the fan off.</p>
+<h2>Keys</h2><p>Two keys to the darkroom are handed over with the studio keys. A lost key is replaced at the Tenant's cost, and the lock is changed if both are lost.</p></article>`;
+
+  function panel(title, tabs, body) {
+    const t = tabs ? `<div class="panel-tabs" role="tablist">${tabs.map(([k, label, on]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${on ? 'true' : 'false'}">${label}</button>`).join('')}</div>` : '';
+    return `<aside class="access-panel" aria-label="${esc(title)}"><div class="panel-head"><h2 class="panel-title">${esc(title)} <span class="accession">${F.acc}</span></h2><button type="button" class="panel-close" aria-label="Close">${ic('x')}</button></div>${t}<div class="panel-body">${body}</div></aside>`;
+  }
+  const accessTabs = (on) => [['share', 'Share', on === 'share'], ['invites', 'Invitations', on === 'invites'], ['readers', 'Readers', on === 'readers'], ['log', 'Log', on === 'log']];
+
+  // ---------------- Share section ----------------
+  function versionsField(versions) {
+    return `<fieldset class="versions"><legend>Versions they can open</legend><div class="version-picks">${[1, 2, 3].map((v) => `<label class="pick"><input type="checkbox" data-share-version="${v}" ${versions.includes(v) ? 'checked' : ''} ${v === F.current ? 'disabled' : ''}>v${v}${v === F.current ? ' <span class="lock-note">current</span>' : ''}</label>`).join('')}</div></fieldset>`;
+  }
+  function daysSelect(row) {
+    return `<label class="days">Open for <select data-invite-days aria-label="Days the invitation stays open for ${esc(row.email)}">${Array.from({ length: 30 }, (_, i) => i + 1).map((d) => `<option value="${d}" ${d === row.days ? 'selected' : ''}>${d} ${d === 1 ? 'day' : 'days'}</option>`).join('')}</select></label>`;
+  }
+  function shareRow(r, i) {
+    const del = `<button type="button" class="btn is-small" data-remove-row="${i}" aria-label="Remove ${esc(r.email)}">${ic('x')}</button>`;
+    if (r.kind === 'reader') {
+      return `<li data-share-row data-share-state="reader"><span class="row-dot">${ic('check')}</span><div class="row-main"><strong>${esc(r.email)}</strong><span class="row-meta">Already a reader. Nothing to do.</span></div><div class="row-end"><span class="row-kind">Reader</span>${del}</div></li>`;
+    }
+    if (r.kind === 'invited') {
+      return `<li data-share-row data-share-state="invited"><input type="checkbox" class="row-check" data-share-grant ${r.on ? 'checked' : ''} aria-label="Share with ${esc(r.email)}"><div class="row-main"><strong>${esc(r.email)}</strong><span class="row-meta">Accepted your invitation. Sharing lets them open later versions.</span></div><div class="row-end"><span class="row-kind is-patina">Accepted</span>${del}</div><div class="row-extra">${fpPlate(F.fps[r.email], true)}</div></li>`;
+    }
+    if (r.kind === 'key') {
+      return `<li data-share-row data-share-state="registered"><input type="checkbox" class="row-check" data-share-grant ${r.on ? 'checked' : ''} aria-label="Share with ${esc(r.email)}"><div class="row-main"><strong>${esc(r.email)}</strong><span class="row-meta">Has a private-share key. Check this fingerprint with them if you can.</span></div><div class="row-end"><span class="row-kind is-patina">Key</span>${del}</div><div class="row-extra">${fpPlate(F.fps[r.email] || 'T3VN 8QKD 2MWA 6XPR 9HCE 4JLB 7SFU 5GYD', true)}</div></li>`;
+    }
+    if (r.kind === 'self') {
+      return `<li data-share-row data-share-state="self"><span class="row-dot">${ic('user')}</span><div class="row-main"><strong>${esc(r.email)}</strong><span class="row-meta">That's you</span></div><div class="row-end">${del}</div></li>`;
+    }
+    if (r.kind === 'exists') {
+      return `<li data-share-row data-share-state="refused"><span class="row-dot">${ic('warn')}</span><div class="row-main"><strong>${esc(r.email)}</strong><span class="row-meta is-oxide">This person can already read this relik</span></div><div class="row-end">${del}</div></li>`;
+    }
+    if (r.kind === 'reload') {
+      return `<li data-share-row data-share-state="unverified"><span class="row-dot">${ic('warn')}</span><div class="row-main"><strong>${esc(r.email)}</strong><span class="row-meta is-oxide">Reload and try again.</span></div><div class="row-end">${del}</div></li>`;
+    }
+    // unregistered
+    const open = r.openInvite;
+    const copy = open
+      ? `Invited ${F.today}, open until ${F.until}.`
+      : `${esc(r.email)} hasn't set up a private-share key. Invite them: they confirm this address, then set up a passkey to keep access.`;
+    return `<li data-share-row data-share-state="unregistered"><input type="checkbox" class="row-check" data-share-invite ${r.on ? 'checked' : ''} aria-label="Invite ${esc(r.email)}"><div class="row-main"><strong>${esc(r.email)}</strong><span class="row-meta">${copy}</span></div><div class="row-end"><span class="row-kind is-oxide">Invite</span>${del}</div><div class="row-extra">${daysSelect(r)}</div></li>`;
+  }
+  function counts() {
+    const grants = M.rows.filter((r) => (r.kind === 'key' || r.kind === 'invited') && r.on).length;
+    const invites = M.rows.filter((r) => r.kind === 'unregistered' && r.on).length;
+    return { grants, invites };
+  }
+  function shareSummary() {
+    const { grants, invites } = counts();
+    if (!grants && !invites) return 'Add an address, or check a row, to share.';
+    const p = [];
+    if (grants) p.push(`shares with ${grants} ${grants === 1 ? 'person' : 'people'}`);
+    if (invites) p.push(`invites ${invites}`);
+    const s = p.join(' and ');
+    return 'One passkey tap ' + s + '.';
+  }
+  function shareSection(o = {}) {
+    const notice = o.notice ? `<div class="panel-notice${o.noticeOxide ? ' is-oxide' : ''}">${o.notice}</div>` : '';
+    const anyInvite = M.rows.some((r) => r.kind === 'unregistered');
+    const lt = anyInvite ? `<div class="lifetime" data-lifetime><div class="lifetime-row"><label for="lt-days">New invitations stay open for</label><input class="input" id="lt-days" data-lifetime-days inputmode="numeric" value="${esc(M.lifetime)}" aria-describedby="lt-err" ${M.ltErr ? 'aria-invalid="true"' : ''}><span>days</span></div><p class="err" id="lt-err" role="alert">${M.ltErr ? ic('warn') + '<span>' + M.ltErr + '</span>' : ''}</p><p class="hint">7 days unless you change it, from 1 to 30. Never past the relik's own expiry.</p></div>` : '';
+    const { grants, invites } = counts();
+    const disabled = (!grants && !invites) || M.ltErr ? 'disabled' : '';
+    return `<section class="panel-section" data-share-section><h3>Share <span>v${F.current} sealed</span></h3>
+${notice}
+<p class="panel-lead">Type each person's email. People with a key are shared with at once. People without one are invited.</p>
+${versionsField(M.versions)}
+<div class="add-row"><input class="input" data-share-input type="text" inputmode="email" autocomplete="email" spellcheck="false" placeholder="name@example.com" aria-label="Email address to share with" value="${esc(M.draft || '')}"><button type="button" class="btn" data-add-address>${ic('plus')}Add</button></div>
+<p class="err" data-share-err role="alert">${M.addErr ? ic('warn') + '<span>' + M.addErr + '</span>' : ''}</p>
+${M.rows.length ? `<ul class="row-list" data-share-rows>${M.rows.map(shareRow).join('')}</ul>` : '<p class="panel-empty">No addresses yet.</p>'}
+${lt}
+<div class="share-foot"><p class="share-sum" data-share-summary>${shareSummary()}</p><div><button type="button" class="action primary" data-action="share-passkey" ${disabled}>${ic('passkey')}Share with passkey</button></div><p class="passkey-note">${ic('lock')}Your passkey signs each grant and invitation. Relik never sees a key.</p></div>
+</section>`;
+  }
+
+  function linksSection() {
+    const inv = M.sent.filter((x) => x.kind === 'invite');
+    const grants = M.sent.filter((x) => x.kind === 'grant');
+    const shared = grants.length ? `<div class="panel-notice"><p>${ic('check')} Shared directly with ${grants.map((g) => `<strong>${esc(g.email)}</strong>`).join(', ')}. Relik emails them now.</p></div>` : '';
+    const cards = inv.map((x) => `<div class="link-card" data-invite-link="${x.id}"><strong>${esc(x.email)}</strong><span class="row-meta">Open until ${x.until}. Versions ${x.versions}.</span>${M.linksGone ? '<p class="link-gone">This link is no longer shown.</p>' : `<p class="link-text" data-link-text>${esc(x.link)}</p><div class="link-actions"><button type="button" class="btn" data-action="invite-copy">${ic('copy')}Copy link</button><a class="btn" data-action="invite-draft" href="${esc(mailto(x))}">${ic('mail')}Draft email</a><span class="feedback" aria-live="polite"></span></div>`}</div>`).join('');
+    return `<section class="panel-section" data-invite-links><h3>Send these yourself</h3>
+${shared}
+${inv.length ? `<div class="panel-notice is-oxide"><p>Send each invitation yourself. Each link holds a key, so Relik can't send it. Relik emails each person that you invited them, without the link. Each link is shown once.</p><p>Anyone with a link and that person's mailbox can open it until it expires or is used.</p></div>${cards}
+<p class="panel-foot">${M.linksGone ? 'Lost a link? Cancel that invitation under Invitations and invite again.' : 'Relik doesn\u2019t keep these links. If you lose one, cancel that invitation and invite again.'}</p>` : ''}
+<div><button type="button" class="btn" data-action="links-done">${M.linksGone ? 'Back to Share' : 'Done, I\u2019ve sent them'}</button></div>
+</section>`;
+  }
+
+  function composeInvite(x) {
+    return {
+      subject: 'Invitation to a private file on Relik',
+      body: `I've invited you to a private file on Relik. Open this link and confirm your address with the code Relik emails you, then set up a passkey there to keep access.\n\n${x.link}\n\nThe link holds the key to the file, so don't forward it. It works until ${x.until}.`,
+    };
+  }
+  function mailto(x) {
+    const c = composeInvite(x);
+    return `mailto:${x.email}?subject=${encodeURIComponent(c.subject)}&body=${encodeURIComponent(c.body)}`;
+  }
+
+  // ---------------- Invitations section ----------------
+  function inviteRow(r) {
+    let meta, end = '', extra = '', kind;
+    if (r.state === 'open') {
+      kind = '<span class="row-kind is-oxide">Open</span>';
+      meta = `Invited ${r.sent}, open until ${r.until}. Versions ${r.versions}.`;
+      end = `<button type="button" class="btn is-small is-oxide" data-action="invite-cancel">Cancel</button>`;
+    } else if (r.state === 'claimed') {
+      kind = '<span class="row-kind is-patina">Accepted</span>';
+      meta = `Accepted your invitation. Sharing lets them open later versions.`;
+      end = `<button type="button" class="btn is-small is-oxide" data-action="invite-remove">Remove</button>`;
+      extra = `<div class="row-extra"><span class="fp-caption" style="margin:0">Their fingerprint</span>${fpPlate(F.fps[r.email], true).replace('data-fingerprint', 'data-fingerprint="claimant"')}</div>`;
+    } else if (r.state === 'confirmed') {
+      kind = '<span class="row-kind is-patina">Reader</span>';
+      meta = `Confirmed ${r.when || F.today}. They can open every version, now and later.`;
+    } else if (r.state === 'expired') {
+      kind = '<span class="row-kind">Expired</span>';
+      meta = `Expired ${r.until}, unused.`;
+      end = `<button type="button" class="btn is-small" data-action="invite-again">Invite again</button>`;
+    } else {
+      kind = '<span class="row-kind">Cancelled</span>';
+      meta = `Cancelled ${r.when || F.today}. The link no longer opens.`;
+    }
+    const check = r.state === 'claimed'
+      ? `<input type="checkbox" class="row-check" data-confirm-pick ${r.pick !== false ? 'checked' : ''} aria-label="Confirm ${esc(r.email)}">`
+      : `<span class="row-dot">${ic(r.state === 'confirmed' ? 'check' : r.state === 'open' ? 'clock' : 'x')}</span>`;
+    return `<li data-invite="${r.id}" data-invite-state="${r.state}">${check}<div class="row-main"><strong>${esc(r.email)}</strong><span class="row-meta">${meta}</span></div><div class="row-end">${kind}${end}</div>${extra}<span class="feedback" aria-live="polite" style="grid-column:2/-1"></span></li>`;
+  }
+  function invitesSection(o = {}) {
+    const claimed = M.invites.filter((r) => r.state === 'claimed');
+    const picked = claimed.filter((r) => r.pick !== false).length;
+    const confirm = claimed.length ? `<div class="share-foot"><p class="share-sum">Confirming shares every sealed version with the people you checked, and later versions as you seal them.</p><div><button type="button" class="action primary" data-action="invite-confirm" ${picked ? '' : 'disabled'}>${ic('passkey')}Confirm with passkey</button></div></div>` : '';
+    const notice = o.notice ? `<div class="panel-notice">${o.notice}</div>` : '';
+    return `<section class="panel-section" data-invites-section><h3>Invitations <span>${M.invites.filter((r) => r.state === 'open').length} open</span></h3>${notice}
+${M.invites.length ? `<ul class="row-list">${M.invites.map(inviteRow).join('')}</ul>` : '<p class="panel-empty">No invitations yet.</p>'}
+${confirm}</section>`;
+  }
+
+  // ---------------- scrims ----------------
+  function passkeyScrim(title, items, wait) {
+    return `<div class="scrim" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="card"><div class="pk-head"><span class="passkey-art">${ic('passkey')}</span><div><h1 class="card-title" style="margin:0">${esc(title)}</h1><p class="card-meta" style="margin:0">Signed in as ${F.owner}</p></div></div>
+<ul class="pk-list">${items.map(([what, text]) => `<li><span class="pk-what">${what}</span><div class="pk-text">${text}</div></li>`).join('')}</ul>
+<div class="waiting"><span class="spinner"></span><span>${wait}</span></div>
+<div class="card-actions"><button type="button" class="btn" data-action="passkey-cancel">Cancel</button></div></div></div>`;
+  }
+
+  // ---------------- invitee cards ----------------
+  const card = (cls, title, meta, inner) => `<main class="stage"><div class="card ${cls}"><h1 class="card-title" tabindex="-1">${title}</h1>${meta ? `<p class="card-meta">${meta}</p>` : ''}${inner}</div></main>`;
+
+  // ---------------- mail ----------------
+  function mail(o) {
+    return `<main class="mail-stage"><p class="mail-label">${esc(o.label)}</p><article class="mail"><dl class="mail-head"><dt>From</dt><dd>${o.from}</dd><dt>To</dt><dd>${o.to}</dd><dt>Subject</dt><dd class="subject">${o.subject}</dd></dl><div class="mail-body">${o.draft ? `<span class="draft-tag">${ic('mail')}Draft · not sent</span>` : ''}${o.body}${o.absent ? `<p class="mail-absent">${ic('lock')}<span>${o.absent}</span></p>` : ''}</div></article></main>`;
+  }
+
+  // ---------------- defaults ----------------
+  const MIXED = () => [
+    { email: 'studio@harbor.studio', kind: 'reader' },
+    { email: 'ana@harbor.studio', kind: 'key', on: true },
+    { email: 'ben@harbor.studio', kind: 'unregistered', on: true, days: 7 },
+  ];
+  const INVITES = () => [
+    { id: '4f9c2a71', email: 'ben@harbor.studio', state: 'open', sent: F.today, until: F.until, versions: '2 and 3' },
+    { id: '7d20e6b4', email: 'cora@harbor.studio', state: 'claimed', until: F.until, versions: '2 and 3' },
+    { id: '9b1e7d3a', email: 'dev@harbor.studio', state: 'expired', until: '20 Nov 2026', versions: '2' },
+    { id: '2c8f0a19', email: 'eli@harbor.studio', state: 'revoked', when: '18 Nov 2026', versions: '1 and 2' },
+    { id: '5e3b9d62', email: 'fyn@harbor.studio', state: 'confirmed', when: '16 Nov 2026', versions: '1 to 3' },
+  ];
+  const SENT = () => [
+    { kind: 'grant', email: 'ana@harbor.studio' },
+    { kind: 'invite', id: '4f9c2a71', email: 'ben@harbor.studio', until: F.until, versions: '2 and 3', link: F.links.ben },
+  ];
+  const ownerView = (paneFn, o = {}) => () => ({
+    band: band({ active: 'access', accessCount: o.count ?? 1 }),
+    stage: `<main class="ready-stage">${DOC}</main>`,
+    panel: panel('Access', accessTabs(o.tab || 'share'), paneFn()),
+    overlay: o.overlay ? o.overlay() : '',
+  });
+
+  // ---- DS: Share section ----
+  S('DS1', 'DS', 'Share section, empty', { init: { rows: [], versions: [2, 3], lifetime: '7' }, view: ownerView(() => shareSection()) });
+  S('DS2', 'DS', 'Mixed rows: reader, key with fingerprint, no key (invite), lifetime picker', { init: { rows: MIXED(), versions: [2, 3], lifetime: '7' }, view: ownerView(() => shareSection()) });
+  S('DS3', 'DS', 'Row with an open invitation (unchecked) and an accepted invitee', {
+    init: { rows: [{ email: 'ben@harbor.studio', kind: 'unregistered', on: false, days: 7, openInvite: true }, { email: 'cora@harbor.studio', kind: 'invited', on: true }], versions: [2, 3], lifetime: '7' },
+    view: ownerView(() => shareSection()),
+  });
+  S('DS4', 'DS', 'Lifetime picker refuses 31 days', { init: { rows: MIXED(), versions: [2, 3], lifetime: '31', ltErr: 'Enter a whole number of days from 1 to 30.' }, view: ownerView(() => shareSection()) });
+  S('DS5', 'DS', 'Share with passkey: passkey in progress', {
+    init: { rows: MIXED(), versions: [2, 3], lifetime: '7' },
+    view: ownerView(() => shareSection(), { overlay: () => passkeyScrim('Share with passkey', [
+      ['Share', `Versions 2 and 3 with <strong>ana@harbor.studio</strong>, whose fingerprint you checked.`],
+      ['Invite', `<strong>ben@harbor.studio</strong> to versions 2 and 3, open for 7 days, until ${F.until}.`],
+    ], 'Waiting for your passkey\u2026') }),
+  });
+  S('DS6', 'DS', 'After the tap: links panel, Copy and Draft email per link', {
+    init: { rows: [], versions: [2, 3], lifetime: '7', sent: SENT() },
+    view: ownerView(() => linksSection(), { count: 1 }),
+  });
+  S('DS7', 'DS', 'Links panel after Done: the link is not shown again', {
+    init: { rows: [], versions: [2, 3], lifetime: '7', sent: SENT(), linksGone: true },
+    view: ownerView(() => linksSection()),
+  });
+  S('DS8', 'DS', 'Refusals per row: owner\u2019s own address, already a reader, unverified lookup', {
+    init: { rows: [{ email: 'jason@waldrip.net', kind: 'self' }, { email: 'studio@harbor.studio', kind: 'exists' }, { email: 'kai@harbor.studio', kind: 'reload' }], versions: [2, 3], lifetime: '7' },
+    view: ownerView(() => shareSection({ notice: '<p>Relik refused the whole batch, so nothing was shared. Remove the rows marked in oxide and try again.</p>', noticeOxide: true })),
+  });
+  S('DS9', 'DS', 'Budget and limit refusals: too many lookups, too many open invitations', {
+    init: { rows: MIXED(), versions: [2, 3], lifetime: '7' },
+    view: ownerView(() => shareSection({ notice: '<p><strong>This relik has too many open invitations.</strong> Cancel one under Invitations, or wait for one to be used or expire.</p><p>Looking up addresses is limited to 30 an hour. Try the rest later.</p>', noticeOxide: true })),
+  });
+
+  // ---- RC: direct-share recipient ----
+  S('RC1', 'RC', 'Recipient opens the relik: "You have access", no request state', {
+    view: () => ({ band: band({ role: 'none', generic: true }), stage: card('', 'You have access', `Signed in as ana@harbor.studio · shared by ${F.owner}`, `<p>Your passkey unlocks your key in this browser. The relik is decrypted here; the key never leaves.</p><div class="card-actions"><button type="button" class="action primary" data-go="RC2">Unlock with passkey</button></div>`) }),
+  });
+  S('RC2', 'RC', 'Recipient reading as a reader', {
+    view: () => ({ band: band({ role: 'reader' }), stage: `<div class="private-strip"><span>Shared with you by <strong>${F.owner}</strong></span><span>Versions 2 and 3, and later versions as they are sealed</span></div><main class="ready-stage">${DOC}</main>` }),
+  });
+  S('RC3', 'RC', 'Recipient dashboard: "Shared with you"', {
+    view: () => ({ band: band({ role: 'none', generic: true }), stage: `<div class="dash"><section class="dashboard-section"><h2>Shared with you</h2><ul class="row-list"><li><span class="row-dot">${ic('lock')}</span><div class="row-main"><strong>${esc(F.title)}</strong><span class="row-meta">From ${F.owner} · shared directly ${F.today} · v3</span></div><div class="row-end"><button type="button" class="btn is-small" data-go="RC2">Open</button></div></li><li><span class="row-dot">${ic('lock')}</span><div class="row-main"><strong>Harbor Studio insurance schedule</strong><span class="row-meta">From ${F.owner} · granted 3 Nov 2026 · v1</span></div><div class="row-end"><button type="button" class="btn is-small">Open</button></div></li></ul></section></div>` }),
+  });
+
+  // ---- IV: invitations section ----
+  S('IV1', 'IV', 'Invitations in every state: open, accepted (Confirm), confirmed, expired, cancelled', { init: { invites: INVITES() }, view: ownerView(() => invitesSection(), { tab: 'invites', count: 1 }) });
+  S('IV2', 'IV', 'Confirm with passkey: passkey in progress', {
+    init: { invites: INVITES() },
+    view: ownerView(() => invitesSection(), { tab: 'invites', overlay: () => passkeyScrim('Confirm with passkey', [
+      ['Share', '<strong>cora@harbor.studio</strong> becomes a reader of versions 1 to 3, and of later versions as you seal them.'],
+    ], 'Waiting for your passkey\u2026') }),
+  });
+  S('IV3', 'IV', 'After Confirm: the claimant is a reader', {
+    init: { invites: INVITES().map((r) => (r.state === 'claimed' ? { ...r, state: 'confirmed', when: F.today } : r)) },
+    view: ownerView(() => invitesSection({ notice: '<p>Shared directly with <strong>cora@harbor.studio</strong>. Relik emails them now.</p>' }), { tab: 'invites', count: 0 }),
+  });
+  S('IV4', 'IV', 'After Cancel: the open invitation is withdrawn', {
+    init: { invites: INVITES().map((r) => (r.state === 'open' ? { ...r, state: 'revoked', when: F.today } : r)) },
+    view: ownerView(() => invitesSection({ notice: '<p>Invitation to <strong>ben@harbor.studio</strong> cancelled. Its link no longer opens.</p>' }), { tab: 'invites' }),
+  });
+  S('IV5', 'IV', 'No invitations', { init: { invites: [] }, view: ownerView(() => invitesSection(), { tab: 'invites', count: 0 }) });
+
+  // ---- IN: invitee ----
+  const inviteeBand = () => band({ role: 'none', generic: true });
+  S('IN1', 'IN', 'invite-signin: sign in with the invited address', {
+    view: () => ({ band: inviteeBand(), stage: card('', 'You\u2019re invited to a private relik', '', `<div class="card-body"><p>This invitation opens only for the address it was sent to. Sign in with that address. Relik emails it a code.</p></div><div class="field"><label for="in-email">Email address</label><input class="input" id="in-email" data-invite-email type="email" value="${esc(M.inEmail || '')}" placeholder="name@example.com"></div><p class="err" data-in-err role="alert"></p><div class="card-actions"><button type="button" class="action primary" data-action="invite-send-code">${ic('mail')}Email me a code</button></div><p class="card-note">Use the code. If you use the link in that email instead, open this invitation again afterwards.</p>`) }),
+  });
+  S('IN2', 'IN', 'Sign-in code step', {
+    view: () => ({ band: inviteeBand(), stage: card('', 'Enter your code', `Code sent to ${esc(M.inEmail || 'ben@harbor.studio')}`, `<div class="card-body"><p>Relik emailed a 6-digit code to this address. It works for 15 minutes.</p></div><div class="field"><label for="in-code">Code</label><input class="input is-code" id="in-code" data-invite-code inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code"></div><p class="err" data-code-err role="alert"></p><div class="card-actions"><button type="button" class="action primary" data-action="invite-code">Continue</button><button type="button" class="btn" data-go="IN1">Use another address</button></div>`) }),
+  });
+  S('IN3', 'IN', 'invite-key-missing: the fragment is gone', {
+    view: () => ({ band: inviteeBand(), stage: card('is-refusal', 'This invitation link is incomplete', '', `<p class="load-bearing">This invitation link is incomplete. Open the link from the email again.</p>`) }),
+  });
+  S('IN4', 'IN', 'invite-wrong-address: refusal that does not reveal whether an invitation exists', {
+    view: () => ({ band: inviteeBand(), stage: card('is-refusal', 'This invitation doesn\u2019t open here', 'Signed in as cora@harbor.studio', `<p class="load-bearing">This invitation doesn't open for cora@harbor.studio. Sign in with the address it was sent to.</p><div class="card-actions"><button type="button" class="btn" data-go="IN1">Sign in with another address</button></div>`) }),
+  });
+  const readyView = (note) => () => ({
+    band: band({ role: 'invitee' }),
+    stage: `<div class="invite-banner" data-invite-banner><p>${F.owner} invited you. You can open versions 2 and 3 until ${F.until}.</p><button type="button" class="action primary" data-action="invite-keep">${ic('passkey')}Keep access</button>${note ? `<p class="note">${note}</p>` : ''}</div><main class="ready-stage">${DOC}</main>`,
+  });
+  S('IN5', 'IN', 'invite-ready: temporary reader, view and download only', { view: readyView('') });
+  S('IN6', 'IN', 'invite-ready with a newer version than the invitation', { view: readyView('Version 4 is newer than this invitation. Keep access, and once ' + F.owner + ' confirms you, you\u2019ll get it too.') });
+  S('IN7', 'IN', 'Keep access: "Set up your passkey to keep access"', {
+    view: () => ({ band: inviteeBand(), stage: card('', 'Set up your passkey to keep access', 'Signed in as ben@harbor.studio', `<div class="card-body"><p>Private reliks are encrypted to each reader's own key. Yours is made in this browser and stored encrypted under a secret only your passkey can produce, so Relik never sees it.</p><p>The same tap moves this invitation to your key, so it is used up and nobody else can open it.</p></div><div class="card-actions"><button type="button" class="action primary" data-action="invite-setup">${ic('passkey')}Set up with passkey</button><button type="button" class="btn" data-go="IN5">Not now</button></div>`) }),
+  });
+  S('IN8', 'IN', 'Keep access: passkey in progress', {
+    view: () => ({ band: inviteeBand(), stage: card('', 'Set up your passkey to keep access', 'Signed in as ben@harbor.studio', `<div class="card-body"><p>Follow your browser's passkey prompt.</p></div><div class="waiting"><span class="spinner"></span><span>Making your key and accepting the invitation\u2026</span></div>`) }),
+  });
+  S('IN9', 'IN', 'Keep access after 15 minutes: a new code is asked for', {
+    view: () => ({ band: inviteeBand(), stage: card('is-quiet', 'Confirm your address again', 'ben@harbor.studio', `<p class="load-bearing">It's been more than 15 minutes since you signed in. Relik needs a fresh code before it makes your key.</p><div class="card-actions"><button type="button" class="action primary" data-go="IN2">${ic('mail')}Email me a code</button></div>`) }),
+  });
+  S('IN10', 'IN', 'setup state replace-offer', {
+    view: () => ({ band: inviteeBand(), stage: card('is-quiet', 'Make a replacement passkey', 'Signed in as ben@harbor.studio', `<p class="load-bearing">This passkey was made before private shares existed and can't hold your key. Make a replacement passkey on this device?</p><div class="card-actions"><button type="button" class="action primary" data-go="IN8">Make a replacement passkey</button><button type="button" class="btn" data-go="IN5">Not now</button></div><p class="card-note">Your passkey provider asks before it saves the new one. Nothing is registered with Relik until it can hold your key.</p>`) }),
+  });
+  S('IN11', 'IN', 'setup state setup-refused', {
+    view: () => ({ band: inviteeBand(), stage: card('is-refusal', 'This passkey can\u2019t hold a key', 'Signed in as ben@harbor.studio', `<p class="load-bearing">Your passkey provider can't hold a private-share key. Private reliks need a provider or security key that supports the WebAuthn PRF extension.</p><p class="card-note">Nothing was registered. Public reliks still open as before.</p>`) }),
+  });
+  S('IN12', 'IN', 'invite-claimed: claim complete', {
+    view: () => ({ band: inviteeBand(), stage: card('', 'You kept access', 'Signed in as ben@harbor.studio', `<p class="fp-caption">Your fingerprint</p>${fpPlate(F.fps['ben@harbor.studio'])}<p class="fp-instruction">You'll keep access to versions 2 and 3. When ${F.owner} confirms, you'll also get later versions.</p><div class="card-actions"><button type="button" class="action primary" data-go="IN13">Open the relik</button></div>`) }),
+  });
+  S('IN13', 'IN', 'After the claim: normal reader under role invited', {
+    view: () => ({ band: band({ role: 'reader' }), stage: `<div class="private-strip"><span>Invited by <strong>${F.owner}</strong></span><span>Versions 2 and 3. Later versions once they confirm you.</span></div><main class="ready-stage">${DOC}</main>` }),
+  });
+  S('IN14', 'IN', 'invite-expired', {
+    view: () => ({ band: inviteeBand(), stage: card('is-refusal', 'This invitation expired', 'Signed in as ben@harbor.studio', `<p class="load-bearing">This invitation expired on ${F.until}. Ask ${F.owner} to send a new one.</p><div class="card-actions"><button type="button" class="action primary" data-action="private-request">Request access</button></div><p class="card-note">Shown because this address already has a private-share key.</p>`) }),
+  });
+  S('IN15', 'IN', 'invite-withdrawn', {
+    view: () => ({ band: inviteeBand(), stage: card('is-refusal', 'This invitation was withdrawn', '', `<p class="load-bearing">${F.owner} withdrew this invitation.</p>`) }),
+  });
+  S('IN16', 'IN', 'invite-used', {
+    view: () => ({ band: inviteeBand(), stage: card('is-refusal', 'This invitation was already used', '', `<p class="load-bearing">This invitation was already used.</p>`) }),
+  });
+  S('IN17', 'IN', 'invite-damaged', {
+    view: () => ({ band: inviteeBand(), stage: card('is-refusal', 'This invitation link doesn\u2019t open', '', `<p class="load-bearing">This invitation link doesn't open. Ask ${F.owner} to send it again.</p>`) }),
+  });
+
+  // ---- SG: signing composer ----
+  const composer = () => `<section class="panel-section"><h3>Ask to sign <span>v${F.current}</span></h3>
+<p class="panel-lead">Signers sign version 3. Relik emails each one when you send.</p>
+<ul class="signer-list">
+<li class="signer-row"><strong>ana@harbor.studio</strong>${fpPlate(F.fps['ana@harbor.studio'], true)}<p class="signer-note">${ic('key')}<span>ana@harbor.studio can't open this relik yet. Access to version 3 will be granted when you send.</span></p></li>
+<li class="signer-row is-blocked"><strong>ben@harbor.studio</strong><p class="signer-note">${ic('warn')}<span>ben@harbor.studio has an invitation but hasn't set up a private-share key, so they can't sign yet.</span></p><div><button type="button" class="btn is-small" data-remove-signer>Remove</button></div></li>
+<li class="signer-row"><strong>studio@harbor.studio</strong><p class="signer-note">${ic('check')}<span>Already a reader.</span></p></li>
+</ul>
+<div class="share-foot"><div><button type="button" class="action primary" data-action="sign-send">${ic('passkey')}Send with passkey</button></div><p class="passkey-note">${ic('lock')}One tap grants access and sends the request.</p></div></section>`;
+  S('SG1', 'SG', 'Composer: a signer with no access yet, and an invitation-only address', {
+    view: () => ({ band: band({ active: 'signing' }), stage: `<main class="ready-stage">${DOC}</main>`, panel: panel('Request signatures', null, composer()) }),
+  });
+  S('SG2', 'SG', 'Send with passkey: the grant listed in the passkey prompt', {
+    view: () => ({ band: band({ active: 'signing' }), stage: `<main class="ready-stage">${DOC}</main>`, panel: panel('Request signatures', null, composer()), overlay: passkeyScrim('Send with passkey', [
+      ['Grant', `<strong>ana@harbor.studio</strong> can open version 3, to the key with this fingerprint:${fpPlate(F.fps['ana@harbor.studio'], true)}`],
+      ['Ask to sign', 'ana@harbor.studio and studio@harbor.studio sign version 3.'],
+    ], 'Waiting for your passkey\u2026') }),
+  });
+
+  // ---- EM: email ----
+  S('EM1', 'EM', 'directShareMail: names the owner, carries the recipient\u2019s fingerprint, no title', {
+    view: () => ({ band: '', stage: mail({ label: 'Relik notice · direct share', from: 'Relik &lt;notices@relik.link&gt;', to: 'ana@harbor.studio', subject: `${F.owner} shared a relik with you`,
+      body: `<p>${F.owner} shared a private relik with you on Relik. Sign in with this address to open it. You'll also find it under Shared with you.</p><p class="fp-caption" style="margin:0">Your fingerprint, as ${F.owner} saw it</p>${fpPlate(F.fps['ana@harbor.studio'])}<p class="small">It should match the fingerprint in your Relik settings.</p><p class="linkline">${F.origin}/${F.id}</p><p>If you don't know ${F.owner}, ignore this email.</p>`,
+      absent: 'No title, no file name, no key.' }) }),
+  });
+  S('EM2', 'EM', 'inviteNoticeMail: names the owner, no link', {
+    view: () => ({ band: '', stage: mail({ label: 'Relik notice · invitation', from: 'Relik &lt;notices@relik.link&gt;', to: 'ben@harbor.studio', subject: `${F.owner} invited you to a relik`,
+      body: `<p>${F.owner} invited you to open a private relik on Relik.</p><p>They'll send you the link themselves: it holds the key, and Relik never has it. The link opens only after you confirm this address, and it works until ${F.until}.</p><p>If you don't know ${F.owner}, ignore this email.</p>`,
+      absent: 'No link, no title, no file name, no key.' }) }),
+  });
+  S('EM3', 'EM', 'Owner-composed draft carrying the link (Draft email)', {
+    view: () => { const x = SENT()[1]; const c = composeInvite(x); return { band: '', stage: mail({ label: 'Draft in the owner\u2019s mail app', draft: true, from: F.owner, to: x.email, subject: c.subject,
+      body: `<p>I've invited you to a private file on Relik. Open this link and confirm your address with the code Relik emails you, then set up a passkey there to keep access.</p><p class="linkline">${esc(x.link)}</p><p>The link holds the key to the file, so don't forward it. It works until ${x.until}.</p>` }) }; },
+  });
+  S('EM4', 'EM', 'inviteClaimedMail to the owner', {
+    view: () => ({ band: '', stage: mail({ label: 'Relik notice · invitation accepted', from: 'Relik &lt;notices@relik.link&gt;', to: F.owner, subject: 'cora@harbor.studio accepted your invitation',
+      body: `<p>cora@harbor.studio accepted your invitation to a relik on Relik. They can open the versions you invited them to.</p><p>To let them open later versions too, confirm in Access: <span class="linkline" style="display:block;margin-top:0.4rem">${F.origin}/${F.id}?access=invites</span></p>`,
+      absent: 'No title, no file name, no key.' }) }),
+  });
+
+  // ---- LG: access log ----
+  S('LG1', 'LG', 'Owner\u2019s access log: share, invite, key fetched, claim, revoke', {
+    view: ownerView(() => `<section class="panel-section"><h3>Access log</h3><table class="log"><thead><tr><th>When</th><th>What</th><th>Who</th><th>About</th></tr></thead><tbody>
+<tr><td class="when">25 Nov 14:12</td><td class="kind">Shared directly</td><td class="who">${F.owner}</td><td class="subj is-mono">ana@harbor.studio</td></tr>
+<tr><td class="when">25 Nov 14:12</td><td class="kind">Invited</td><td class="who">${F.owner}</td><td class="subj is-mono">ben@harbor.studio, to v3</td></tr>
+<tr><td class="when">24 Nov 09:40</td><td class="kind">Invitation accepted</td><td class="who">cora@harbor.studio</td><td class="subj is-mono">cora@harbor.studio</td></tr>
+<tr><td class="when">24 Nov 09:31</td><td class="kind">Key fetched</td><td class="who">cora@harbor.studio</td><td class="subj is-mono">cora@harbor.studio, invitation</td></tr>
+<tr><td class="when">18 Nov 17:05</td><td class="kind">Access revoked</td><td class="who">${F.owner}</td><td class="subj is-mono">eli@harbor.studio, invitation cancelled</td></tr>
+</tbody></table><p class="panel-foot">Lookups add nothing to the log.</p></section>`, { tab: 'log' }),
+  });
+
+  // ---- GU: grant_url landing ----
+  S('GU1', 'GU', 'grant_url landing: /h7q2m9xa?access=share#to=ana%40harbor.studio,ben%40harbor.studio', {
+    init: { rows: [{ email: 'ana@harbor.studio', kind: 'key', on: true }, { email: 'ben@harbor.studio', kind: 'unregistered', on: true, days: 7 }], versions: [3], lifetime: '7' },
+    view: ownerView(() => shareSection({ notice: `<p>Opened from relic-mcp with these addresses filled in. Check each one, then share with your passkey.</p><p class="row-meta" style="font-family:var(--mono)">${F.origin}/${F.id}?access=share#to=ana%40harbor.studio,ben%40harbor.studio</p>` })),
+  });
+
+  // ================== render ==================
+  let current = null;
+  function render(key, keep) {
+    const st = BYKEY[key] || STATES[0];
+    current = st;
+    if (!keep) {
+      M = JSON.parse(JSON.stringify(st.init || {}));
+      M.rows ||= []; M.versions ||= [2, 3]; M.lifetime ||= '7'; M.sent ||= []; M.invites ||= [];
+    }
+    document.body.removeAttribute('data-ready');
+    paint();
+    $('#rail-key').textContent = st.key;
+    $('#rail-text').textContent = `${GROUPS[st.group]}: ${st.title}`;
+    $$('#rail-groups button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.key === st.key)));
+    window.scrollTo(0, 0);
+    requestAnimationFrame(() => requestAnimationFrame(() => { document.body.dataset.ready = st.key; }));
+  }
+  function paint() {
+    const v = current.view();
+    if (v.panel) root.dataset.panelOpen = ''; else delete root.dataset.panelOpen;
+    app.innerHTML = `${v.band || ''}${v.strip || ''}${v.stage || ''}${v.panel || ''}${v.overlay || ''}`;
+    if (M.focusInput) { M.focusInput = false; const i = $('[data-share-input]'); if (i) i.focus(); }
+  }
+  function go(key, keep) {
+    if (keep) { history.replaceState(null, '', '#' + key); render(key, true); return; }
+    if (location.hash.slice(1) === key) render(key); else location.hash = key;
+  }
+  function feedback(el, text) {
+    const f = el.closest('[data-invite-link], li')?.querySelector('.feedback') || el.parentElement.querySelector('.feedback');
+    if (!f) return;
+    f.textContent = text;
+    clearTimeout(f._t); f._t = setTimeout(() => { f.textContent = ''; }, 2400);
+  }
+
+  // ================== interactions ==================
+  function addAddress() {
+    const inp = $('[data-share-input]');
+    const raw = (inp?.value || '').trim().toLowerCase();
+    M.draft = raw;
+    if (!raw) { M.addErr = 'Type an email address first.'; paint(); return; }
+    const list = raw.split(/[\s,;]+/).filter(Boolean);
+    for (const email of list) {
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { M.addErr = `${email} isn't an email address.`; paint(); return; }
+      if (M.rows.some((r) => r.email === email)) { M.addErr = `${email} is already in the list.`; paint(); return; }
+    }
+    if (M.rows.length + list.length > 20) { M.addErr = 'Share with at most 20 addresses at a time.'; paint(); return; }
+    for (const email of list) {
+      const kind = KNOWN[email] || 'unregistered';
+      const n = Number(M.lifetime);
+      M.rows.push({ email, kind, on: kind === 'key' || kind === 'unregistered', days: Number.isInteger(n) && n >= 1 && n <= 30 ? n : 7 });
+    }
+    M.draft = ''; M.addErr = ''; M.focusInput = true;
+    paint();
+  }
+  function validateLifetime(value) {
+    M.lifetime = value;
+    const t = String(value).trim();
+    if (!/^\d+$/.test(t)) M.ltErr = 'Enter a whole number of days from 1 to 30.';
+    else if (+t < 1) M.ltErr = 'An invitation stays open for at least 1 day.';
+    else if (+t > 30) M.ltErr = 'Enter a whole number of days from 1 to 30.';
+    else { M.ltErr = ''; M.rows.forEach((r) => { if (r.kind === 'unregistered') r.days = +t; }); }
+    // repaint but keep the cursor in the field
+    paint();
+    const f = $('[data-lifetime-days]'); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
+  }
+
+  app.addEventListener('click', (e) => {
+    const t = e.target.closest('button, a, [data-go]');
+    if (!t) return;
+    if (t.dataset.go) { e.preventDefault(); go(t.dataset.go); return; }
+    if (t.dataset.tab) {
+      const map = { share: M.sent.length ? 'DS6' : 'DS2', invites: 'IV1', readers: 'DS3', log: 'LG1' };
+      go(map[t.dataset.tab]); return;
+    }
+    if (t.hasAttribute('data-add-address')) { addAddress(); return; }
+    if (t.dataset.removeRow !== undefined) { M.rows.splice(+t.dataset.removeRow, 1); paint(); return; }
+    const a = t.dataset.action;
+    if (a === 'share-passkey') {
+      const rows = M.rows.filter((r) => r.on && (r.kind === 'key' || r.kind === 'invited' || r.kind === 'unregistered'));
+      M.sent = rows.map((r, i) => (r.kind === 'unregistered'
+        ? { kind: 'invite', id: i ? 'b' + i + '0e7d3a' : '4f9c2a71', email: r.email, until: addDays(r.days || 7), versions: M.versions.join(' and '), link: r.email === 'ben@harbor.studio' ? F.links.ben : F.links.dev.replace('9b1e7d3a5c08', (Math.random().toString(16) + '000000000000').slice(2, 14)) }
+        : { kind: 'grant', email: r.email }));
+      const keep = M.sent;
+      go('DS5', true);
+      M.sent = keep;
+      setTimeout(() => { if (current.key === 'DS5') { const s = M.sent; render('DS6', false); M.sent = s; paint(); history.replaceState(null, '', '#DS6'); } }, 1400);
+      return;
+    }
+    if (a === 'passkey-cancel') { go(current.key === 'IV2' ? 'IV1' : current.key === 'SG2' ? 'SG1' : 'DS2'); return; }
+    if (a === 'invite-copy') {
+      const text = t.closest('[data-invite-link]').querySelector('[data-link-text]').textContent;
+      try { navigator.clipboard?.writeText(text).catch(() => {}); } catch (_) { /* mock */ }
+      feedback(t, 'Link copied'); return;
+    }
+    if (a === 'invite-draft') { e.preventDefault(); feedback(t, 'Draft opened in your mail app'); return; }
+    if (a === 'links-done') { if (M.linksGone) { go('DS1'); } else { M.linksGone = true; paint(); } return; }
+    if (a === 'invite-cancel') { const li = t.closest('[data-invite]'); const r = M.invites.find((x) => x.id === li.dataset.invite); r.state = 'revoked'; r.when = F.today; paint(); return; }
+    if (a === 'invite-remove') { const li = t.closest('[data-invite]'); const r = M.invites.find((x) => x.id === li.dataset.invite); r.state = 'revoked'; r.when = F.today; paint(); return; }
+    if (a === 'invite-again') {
+      const li = t.closest('[data-invite]'); const r = M.invites.find((x) => x.id === li.dataset.invite);
+      const email = r.email; render('DS1'); M.rows = [{ email, kind: 'unregistered', on: true, days: 7 }]; paint(); history.replaceState(null, '', '#DS1'); return;
+    }
+    if (a === 'invite-confirm') {
+      const inv = M.invites;
+      go('IV2', true);
+      setTimeout(() => {
+        if (current.key !== 'IV2') return;
+        inv.forEach((r) => { if (r.state === 'claimed' && r.pick !== false) { r.state = 'confirmed'; r.when = F.today; } });
+        current = BYKEY.IV3; M.invites = inv; paint(); history.replaceState(null, '', '#IV3');
+        document.body.dataset.ready = 'IV3';
+      }, 1400);
+      return;
+    }
+    if (a === 'invite-send-code') {
+      const v = ($('[data-invite-email]').value || '').trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { $('[data-in-err]').innerHTML = ic('warn') + '<span>Enter the address the invitation was sent to.</span>'; return; }
+      M.inEmail = v; go('IN2', true); return;
+    }
+    if (a === 'invite-code') {
+      const v = ($('[data-invite-code]').value || '').trim();
+      if (!/^\d{6}$/.test(v)) { $('[data-code-err]').innerHTML = ic('warn') + '<span>Enter the 6 digits from the email.</span>'; return; }
+      go(M.inEmail && M.inEmail !== 'ben@harbor.studio' ? 'IN4' : 'IN5', true); return;
+    }
+    if (a === 'invite-keep') { go('IN7', true); return; }
+    if (a === 'invite-setup') { go('IN8', true); setTimeout(() => { if (current.key === 'IN8') go('IN12', true); }, 1400); return; }
+    if (a === 'sign-send') { go('SG2'); return; }
+    if (t.classList.contains('panel-close')) { go('IN5' === current.key ? 'IN5' : 'RC2'); return; }
+    if (t.dataset.act === 'access') { go('DS2'); return; }
+    if (t.dataset.act === 'signing') { go('SG1'); return; }
+    if (t.hasAttribute('data-remove-signer')) { t.closest('.signer-row').remove(); return; }
+  });
+  app.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.matches('[data-share-input]')) { e.preventDefault(); addAddress(); }
+  });
+  app.addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.matches('[data-share-input]')) { M.draft = t.value; return; }
+    if (t.matches('[data-lifetime-days]')) { validateLifetime(t.value); return; }
+  });
+  app.addEventListener('change', (e) => {
+    const t = e.target;
+    const li = t.closest('[data-share-row]');
+    if (li && (t.matches('[data-share-invite]') || t.matches('[data-share-grant]'))) {
+      const i = $$('[data-share-row]').indexOf(li); M.rows[i].on = t.checked; paint(); return;
+    }
+    if (li && t.matches('[data-invite-days]')) { const i = $$('[data-share-row]').indexOf(li); M.rows[i].days = +t.value; return; }
+    if (t.matches('[data-share-version]')) { const v = +t.dataset.shareVersion; M.versions = t.checked ? [...new Set([...M.versions, v])].sort() : M.versions.filter((x) => x !== v); return; }
+    if (t.matches('[data-confirm-pick]')) { const id = t.closest('[data-invite]').dataset.invite; M.invites.find((x) => x.id === id).pick = t.checked; paint(); return; }
+  });
+
+  // ================== rail ==================
+  const view = $('#rail-view');
+  const viewBtn = (label, on, isOn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.onclick = () => { on(); syncView(); render(current.key, true); }; b._on = isOn; view.append(b); };
+  viewBtn('Light', () => { root.dataset.theme = 'light'; }, () => root.dataset.theme !== 'dark');
+  viewBtn('Dark', () => { root.dataset.theme = 'dark'; }, () => root.dataset.theme === 'dark');
+  viewBtn('1440', () => { delete root.dataset.width; }, () => root.dataset.width !== '390');
+  viewBtn('390', () => { root.dataset.width = '390'; }, () => root.dataset.width === '390');
+  function syncView() { $$('button', view).forEach((b) => b.setAttribute('aria-pressed', String(b._on()))); }
+  if (!root.dataset.theme) root.dataset.theme = 'light';
+  const groupsEl = $('#rail-groups');
+  for (const g of Object.keys(GROUPS)) {
+    const wrap = document.createElement('div'); wrap.className = 'rail-group';
+    wrap.innerHTML = `<b>${g} · ${GROUPS[g]}</b><div></div>`;
+    for (const s of STATES.filter((x) => x.group === g)) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = s.key; b.title = s.title; b.dataset.key = s.key;
+      b.onclick = () => go(s.key); $('div', wrap).append(b);
+    }
+    groupsEl.append(wrap);
+  }
+  $('#rail-collapse').onclick = (e) => { const c = $('#rail').classList.toggle('is-collapsed'); e.currentTarget.textContent = c ? 'Show' : 'Hide'; e.currentTarget.setAttribute('aria-expanded', String(!c)); };
+  syncView();
+  window.__STATES = STATES.map((s) => ({ key: s.key, group: s.group, title: s.title }));
+  window.addEventListener('hashchange', () => render(location.hash.slice(1)));
+  render(location.hash.slice(1) || 'DS2');
+})();
+</script>
+</body>
+</html>
