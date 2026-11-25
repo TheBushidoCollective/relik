@@ -570,7 +570,7 @@ p { margin: 0; }
     C9: 'Signing is paused by the owner.',
     C10r: 'Comments are closed.',
     C10o: 'Comments are closed to readers. You can still comment.',
-    C12: 'Served: Relik handed over their key (Relik\u2019s record). Opened: their browser opened and checked this version (signed by them).',
+    C12: 'Delivered: Relik handed their passkey the key to this version (Relik\u2019s record), and only that passkey can open it. Opened: their browser opened and checked this version (signed by them). On a public relik there is no delivered record, only whether the page was opened by a signer.',
   };
   const C4 = `${C.C4p} ${C.C4n}`;
 
@@ -1017,20 +1017,20 @@ p { margin: 0; }
   // ================= STATUS =================
   function statusBody(o) {
     if (o.private) {
-      const row = (i, served, opened, signed) => `<tr><td class="who"><span class="signer-tag ${F.signers[i].cls}" style="margin-right:0.4rem">${i + 1}</span>${F.signers[i].email}</td>
-        <td>${served ? `<span class="mark-yes" aria-label="yes">${ic('check')}</span><span class="t">${served}</span>` : '<span class="mark-no">·</span>'}</td>
+      const row = (i, delivered, opened, signed) => `<tr><td class="who"><span class="signer-tag ${F.signers[i].cls}" style="margin-right:0.4rem">${i + 1}</span>${F.signers[i].email}</td>
+        <td>${delivered ? `<span class="mark-yes" aria-label="yes">${ic('check')}</span><span class="t">${delivered}</span>` : '<span class="mark-no">·</span>'}</td>
         <td>${opened ? `<span class="mark-yes" aria-label="yes">${ic('check')}</span><span class="t">${opened}</span>` : '<span class="mark-no">·</span>'}</td>
         <td>${signed ? `<span class="mark-yes" aria-label="yes">${ic('check')}</span><span class="t">${signed}</span>` : '<span class="mark-no">·</span>'}</td></tr>`;
       return `<div class="request"><div class="request-head"><strong>Version 3 · in order</strong><span class="request-when">Sent 24 Nov 13:41 UTC</span></div>
-        <table class="receipts"><thead><tr><th>Signer</th><th>Served</th><th>Opened</th><th>Signed</th></tr></thead><tbody>
+        <table class="receipts"><thead><tr><th>Signer</th><th>Delivered</th><th>Opened</th><th>Signed</th></tr></thead><tbody>
         ${row(0, '13:52', '13:52', '14:02')}${row(1, '15:10', '', '')}</tbody></table>
         <p class="legend">${C.C12}</p></div>
-        <section class="panel-section"><h3>Other readers</h3><table class="receipts"><tbody><tr><td class="who">studio@harbor.studio</td><td><span class="mark-yes">${ic('check')}</span><span class="t">Served 12:08</span></td><td><span class="mark-yes">${ic('check')}</span><span class="t">Opened 12:08</span></td><td></td></tr></tbody></table></section>
+        <section class="panel-section"><h3>Other readers</h3><table class="receipts"><tbody><tr><td class="who">studio@harbor.studio</td><td><span class="mark-yes">${ic('check')}</span><span class="t">Delivered 12:08</span></td><td><span class="mark-yes">${ic('check')}</span><span class="t">Opened 12:08</span></td><td></td></tr></tbody></table></section>
         <div class="panel-foot"><button type="button" class="btn danger" data-go="SS4">Cancel request</button></div>`;
     }
     return `<div class="request"><div class="request-head"><strong>Version 3 · any order</strong><span class="request-when">Sent 24 Nov 13:41 UTC</span></div>
       <ul class="status-list">
-        <li><span class="signer-tag s1">1</span><span class="who">ana@harbor.studio</span><span class="chip ok">${ic('check')}Signed</span><span class="when">14:02 UTC</span></li>
+        <li><span class="signer-tag s1">1</span><span class="who">ana@harbor.studio</span><span class="chip ok">${ic('check')}Signed</span><span class="when">Opened 13:52 · signed 14:02 UTC</span></li>
         <li><span class="signer-tag s2">2</span><span class="who">ben@harbor.studio</span><span class="chip wait">Ready</span><span class="when">Not opened yet</span></li>
       </ul></div>
       <p class="panel-lead">1 of 2 signed. You can\u2019t republish while this request is open.</p>
@@ -1046,7 +1046,7 @@ p { margin: 0; }
   }).join('')}</ul>`;
   const lockStrip = (o = {}) => `<div class="strip is-oxide" data-strip><span class="strip-line">${ic('lock')}<span><strong>${o.private ? C.C6(3, F.date) : C.C5(3, F.date)}</strong></span></span>${o.link ? `<a href="#CF1" class="strip-fp">Signing certificate</a>` : ''}</div>`;
   S('SS1', 'SS', 'Public open request with per-signer status', { init: { boxes: SIGNER_BOXES('other') }, view: () => ({ band: band({ actions: ['comments', 'suggest', 'decisions', 'signing', 'settings'], active: 'signing', signCount: 1 }), stage: pagesHTML({ pages: [2] }), panel: panel('Signing', statusBody({})) }) });
-  S('SS2', 'SS', 'Private: Served, Opened, Signed with the C12 legend', { view: () => ({ band: band({ private: true, actions: ['comments', 'decisions', 'signing', 'settings'], active: 'signing', signCount: 1 }), stage: pagesHTML({ pages: [6] }), panel: panel('Signing', statusBody({ private: true })) }) });
+  S('SS2', 'SS', 'Private: Delivered, Opened, Signed with the C12 legend', { view: () => ({ band: band({ private: true, actions: ['comments', 'decisions', 'signing', 'settings'], active: 'signing', signCount: 1 }), stage: pagesHTML({ pages: [6] }), panel: panel('Signing', statusBody({ private: true })) }) });
   S('SS3', 'SS', 'Complete: lock banner, Download certificate, Verified in this browser', {
     init: { boxes: [{ s: 0, p: 6, x: 9, y: 61, w: 36, h: 5.5, st: 'signed' }, { s: 1, p: 6, x: 9, y: 72, w: 36, h: 5.5, st: 'signed' }] },
     view: () => ({
