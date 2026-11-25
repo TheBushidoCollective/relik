@@ -1326,9 +1326,13 @@ async function sendCompletionNotices(
     `Version ${statement.version}; digest ${statement.ciphertext_sha256.slice(0, 16)}; expiry ${row.expiresAt === undefined ? 'never' : new Date(row.expiresAt).toISOString()}. ` +
     signatures
       .filter((item) => request.signedBy?.includes(item.signerIndex))
-      .map(
-        (item) => `${item.email}: ${new Date(item.recordedAt).toISOString()}`
-      )
+      .map((item) => {
+        const signed = parseStatement(
+          'signature',
+          item.attestation.statements[0]?.statement
+        );
+        return `${item.email}: ${new Date(signed.at).toISOString()}`;
+      })
       .join('; ');
   const owner = await ownerRecord(env, row);
   for (const address of new Set([
