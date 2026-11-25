@@ -491,6 +491,23 @@ describe("a private relik: publish, seal and the owner's own read", () => {
     expect(typeof (key.body['wrap'] as Record<string, unknown>)['enc']).toBe(
       'string'
     );
+    const firstReceipt = (await store.listReceipts(RELIC_ID, 1)).find(
+      (receipt) => receipt.kind === 'served'
+    );
+    expect(firstReceipt).toEqual({
+      version: 1,
+      identityId: owner.identityId,
+      kind: 'served',
+      at: now,
+    });
+    now += 1000;
+    app = createApp({ store, storage, now: () => now });
+    const again = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({}, owner.cookie)
+    );
+    expect(again.status).toBe(200);
+    expect(await store.listReceipts(RELIC_ID, 1)).toEqual([firstReceipt]);
 
     expect(storage.customTimeOf(RELIC_ID)).toBe(
       (await store.getRelic(RELIC_ID))!.expiresAt

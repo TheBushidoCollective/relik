@@ -7671,6 +7671,10 @@ Decisions can be opened or closed. The signing setting is stored but does not ye
 enforce signing. Changing the lifetime changes when access ends. Shortening a
 private lifetime does not move its storage erasure earlier.
 
+When a signed-in reader receives a private relik's version key, Relik records
+the reader's identity, version and time as a delivered receipt. This records
+key delivery, not that the reader opened or read the file.
+
 ## What your own browser keeps
 
 Opening a relik strips the key out of the address bar immediately, which means

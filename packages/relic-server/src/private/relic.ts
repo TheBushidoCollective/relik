@@ -854,6 +854,14 @@ export async function deliverKey(
       ? {}
       : { actorIdentityId: me.identityId, subjectIdentityId: me.identityId }),
   });
+  if (me !== undefined) {
+    await env.store.putReceipt(row.id, {
+      version,
+      identityId: me.identityId,
+      kind: 'served',
+      at: env.now,
+    });
+  }
   return {
     relic_id: row.id,
     version,
