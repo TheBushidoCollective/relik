@@ -430,8 +430,7 @@ describe('statementBytes', () => {
   test('covers every statement kind in the contract', () => {
     const expected: string[] = Object.keys(STATEMENT_SHA256).sort();
     expect([...STATEMENT_KINDS].map(String).sort()).toEqual(expected);
-    // 17 until relic_settings joined; 22 with the signing kinds (plan 3.1).
-    expect(STATEMENT_KINDS.length).toBe(22);
+    expect(STATEMENT_KINDS.length).toBe(24);
   });
 });
 
