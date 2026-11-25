@@ -116,6 +116,8 @@ export type ProblemCode =
   | 'fingerprint_mismatch'
   | 'grant_stale_version'
   | 'grant_exists'
+  | 'invite_not_found'
+  | 'invite_limit_reached'
   | 'recipients_changed'
   | 'version_conflict'
   | 'private_seal_required'
@@ -212,6 +214,8 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   fingerprint_mismatch: 409,
   grant_stale_version: 409,
   grant_exists: 409,
+  invite_not_found: 404,
+  invite_limit_reached: 409,
   recipients_changed: 409,
   version_conflict: 409,
   private_seal_required: 409,
@@ -313,6 +317,8 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   fingerprint_mismatch: 'The fingerprint does not match',
   grant_stale_version: 'A newer version exists',
   grant_exists: 'This person can already read this relik',
+  invite_not_found: 'No such invitation',
+  invite_limit_reached: 'This relik has too many open invitations',
   recipients_changed: 'Who can read this relik changed',
   version_conflict: 'The relik changed while this was in progress',
   private_seal_required: 'This version needs its seal',
@@ -356,6 +362,7 @@ export interface ProblemExtensions {
   readonly cover_validation_failure?: CoverValidationFailure;
   readonly current_version?: number;
   readonly grantee_identity_id?: string;
+  readonly email?: string;
   /** Grantee identities whose grants this call already applied before it was refused. */
   readonly granted?: readonly string[];
   readonly share_limit?: number;

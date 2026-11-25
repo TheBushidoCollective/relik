@@ -574,6 +574,22 @@ export function directShareMail(p: {
   };
 }
 
+export function inviteNoticeMail(p: {
+  readonly ownerAddress: string;
+  readonly expiresAt: string;
+}): OutboundMail {
+  const paragraphs = [
+    `${p.ownerAddress} invited you to open a private relik on Relik.`,
+    `They'll send you the link themselves: it holds the key, and Relik never has it. The link opens only after you confirm this address, and it works until ${p.expiresAt}.`,
+    `If you don't know ${p.ownerAddress}, ignore this email.`,
+  ];
+  return {
+    subject: `${p.ownerAddress} invited you to a relik`,
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, []),
+  };
+}
+
 export function privateActivityMail(p: {
   readonly relicUrl: string;
   readonly stopUrl: string;

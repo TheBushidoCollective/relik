@@ -223,6 +223,7 @@ export async function logAccess(
     readonly actorDeviceId?: string;
     readonly actorEmail?: string;
     readonly subjectIdentityId?: string;
+    readonly subjectEmail?: string;
   } = {}
 ): Promise<void> {
   const owner = await env.store.getIdentity(ownerIdentityId);

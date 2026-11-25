@@ -2271,6 +2271,10 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       );
     },
 
+    async deleteInvite(relicId: string, inviteId: string): Promise<void> {
+      await remove(key('invite', relicId, `${inviteId}.json`));
+    },
+
     async deleteInvitesForRelic(relicId: string): Promise<number> {
       const names = await listObjectNames(`${key('invite', relicId)}/`);
       for (const name of names) await remove(name);

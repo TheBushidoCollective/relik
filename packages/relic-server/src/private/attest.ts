@@ -63,7 +63,7 @@ export const PURPOSE_KINDS: Readonly<
 export const PURPOSE_REPEAT: Partial<
   Record<AttestPurpose, readonly StatementKind[]>
 > = {
-  grant: ['grant'],
+  grant: ['grant', 'invite'],
 };
 
 /** A statement as it was verified: its kind, its parsed fields and its signature. */
@@ -295,7 +295,10 @@ export async function verifyAttestation(
       refuseStatement('kinds');
     }
   } else {
-    if (bundle.statements.length > env.config.privateShareMaxPerCall) {
+    if (
+      bundle.statements.length < 1 ||
+      bundle.statements.length > env.config.privateShareMaxPerCall
+    ) {
       refuseStatement('count');
     }
     if (

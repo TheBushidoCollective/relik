@@ -18,12 +18,14 @@ import {
   fingerprintsEqual,
   formatFingerprint,
   identityFingerprint,
+  inviteIdOf,
   parseStatement,
   parseTypedFingerprint,
   statementBytes,
   verifyStatement,
   InvalidStatementError,
   type GrantJSON,
+  type InviteJSON,
   type KeyJSON,
   type PartyJSON,
   type PrivateAccessJSON,
@@ -33,6 +35,7 @@ import { encryptedSize, isRendererClass, normalizeEmail } from '@relic/format';
 import { ProblemError } from '../problems.ts';
 import type {
   AccessRequestRow,
+  InviteRow,
   GrantRow,
   IdentityRecord,
   RelicRow,
@@ -44,6 +47,7 @@ import {
   accessRequestedMail,
   accessGrantedMail,
   directShareMail,
+  inviteNoticeMail,
 } from '../mail.ts';
 import {
   deviceJson,
@@ -75,6 +79,7 @@ import {
 } from './access.ts';
 import { ownerParty } from './context.ts';
 import { verifyOwnerBind } from './devices.ts';
+import { DAY_MS, type BudgetCharge } from './context.ts';
 
 // ---------------------------------------------------------------- helpers
 
@@ -374,7 +379,7 @@ export async function grantAccess(
     readonly attestation: unknown;
     readonly wraps: unknown;
   }
-): Promise<{ status: 201; grants: GrantWireJSON[] }> {
+): Promise<GrantsResult> {
   const { row, owner } = await ownedPrivate(env, input.email, input.relicId);
   const verified = await verifyAttestation(env, {
     bundle: input.attestation,
@@ -384,7 +389,13 @@ export async function grantAccess(
     signerKey: identitySigner(owner),
     relicId: row.id,
   });
-  return applyGrants(env, row, owner, verified, input.wraps, false);
+  return applyGrants(env, row, owner, verified, input.wraps, false, input.ip);
+}
+
+export interface GrantsResult {
+  readonly status: 201;
+  readonly grants: GrantWireJSON[];
+  readonly invites: InviteJSON[];
 }
 
 export async function applyGrants(
@@ -395,19 +406,34 @@ export async function applyGrants(
     readonly attestation: StoredAttestation;
   },
   rawWraps: unknown,
-  signing: boolean
-): Promise<{ status: 201; grants: GrantWireJSON[] }> {
-  const statements = verified.statements.map((item) => item.statement);
+  signing: boolean,
+  ip?: string
+): Promise<GrantsResult> {
+  const now = env.now;
+  const grantItems = verified.statements.filter(
+    (item) => item.kind === 'grant'
+  );
+  const inviteItems = verified.statements.filter(
+    (item) => item.kind === 'invite'
+  );
 
   // Checks that do not depend on who is registered (plan 3.3 B.4).
   const granteeIds = new Set<string>();
-  for (const s of statements) {
+  const addresses = new Set<string>();
+  for (const { kind, statement: s } of verified.statements) {
     if (s['owner_identity_id'] !== owner.identityId) {
       refuseStatement('owner_identity_id');
     }
-    const granteeId = String(s['grantee_identity_id']);
-    if (granteeIds.has(granteeId)) refuseStatement('grantee');
-    granteeIds.add(granteeId);
+    const address = normalizeEmail(
+      String(kind === 'grant' ? s['grantee_email'] : s['invited_email'])
+    );
+    if (addresses.has(address)) refuseStatement('grantee');
+    addresses.add(address);
+    if (kind === 'grant') {
+      const granteeId = String(s['grantee_identity_id']);
+      if (granteeIds.has(granteeId)) refuseStatement('grantee');
+      granteeIds.add(granteeId);
+    }
     const versions = s['versions'] as number[];
     for (const version of versions) {
       if (isDeleted(row, version)) {
@@ -430,27 +456,94 @@ export async function applyGrants(
     }
   }
 
+  const inviteIds = new Set<string>();
+  const plannedInvites: PlannedInvite[] = [];
+  for (const { statement: s, identitySignature } of inviteItems) {
+    const at = s['at'] as number;
+    const expiresAt = s['expires_at'] as number;
+    const relikExpiry = row.expiresAt;
+    if (
+      expiresAt <= at ||
+      expiresAt > at + env.config.inviteMaxDays * DAY_MS ||
+      (expiresAt < at + env.config.inviteMinDays * DAY_MS &&
+        expiresAt !== relikExpiry) ||
+      (relikExpiry !== undefined && expiresAt > relikExpiry)
+    ) {
+      refuseStatement('expires_at');
+    }
+    const publicKey = await validInvitePublicKey(
+      String(s['invite_public_key'])
+    );
+    if (publicKey === undefined) refuseStatement('invite_key');
+    const inviteId = await inviteIdOf(publicKey);
+    if (
+      inviteIds.has(inviteId) ||
+      (await env.store.getInvite(row.id, inviteId)) !== undefined
+    ) {
+      refuseStatement('invite_key');
+    }
+    inviteIds.add(inviteId);
+    plannedInvites.push({
+      email: normalizeEmail(String(s['invited_email'])),
+      inviteId,
+      versions: [...(s['versions'] as number[])],
+      expiresAt,
+      statement: s,
+      identitySignature,
+    });
+  }
+  if (plannedInvites.length > 0) {
+    const open = (await env.store.listInvites(row.id)).filter(
+      (invite) => invite.status === 'open' && invite.expiresAt > now
+    ).length;
+    if (open + plannedInvites.length > env.config.privateInvitesMaxOpen) {
+      throw new ProblemError('invite_limit_reached');
+    }
+  }
+
   // Who has a pending request decides how each grant is logged. A grant with
-  // no pending request spends the owner's direct-share budget (plan 3.3 B.5).
+  // no pending request, and every invitation, spends the owner's direct-share
+  // budget (plan 3.3 B.5).
   const pending = new Map<string, boolean>();
-  for (const s of statements) {
-    const granteeId = String(s['grantee_identity_id']);
+  for (const item of grantItems) {
+    const granteeId = String(item.statement['grantee_identity_id']);
     const request = await env.store.getAccessRequest(row.id, granteeId);
     pending.set(granteeId, request?.status === 'pending');
   }
-  const direct = statements.filter(
-    (s) => pending.get(String(s['grantee_identity_id'])) !== true
+  const directGrants = grantItems.filter(
+    (item) =>
+      pending.get(String(item.statement['grantee_identity_id'])) !== true
   ).length;
-  env.limit(
-    'direct-share',
-    owner.identityId,
-    env.config.directShareRateLimit,
-    direct
-  );
+  const charges: BudgetCharge[] = [
+    {
+      scope: 'direct-share',
+      key: owner.identityId,
+      budget: env.config.directShareRateLimit,
+      units: directGrants + plannedInvites.length,
+    },
+  ];
+  if (plannedInvites.length > 0) {
+    charges.push(
+      {
+        scope: 'identity-lookup',
+        key: owner.email,
+        budget: env.config.identityLookupRateLimit,
+        units: plannedInvites.length,
+      },
+      {
+        scope: 'identity-lookup-ip',
+        key: ip ?? '',
+        budget: env.config.identityLookupIpRateLimit,
+        units: plannedInvites.length,
+      }
+    );
+  }
+  env.limitAll(charges);
 
   // Checks that depend on who is registered (plan 3.3 B.6).
   const planned: PlannedGrant[] = [];
-  for (const s of statements) {
+  for (const item of grantItems) {
+    const s = item.statement;
     const granteeId = String(s['grantee_identity_id']);
     const grantee = await env.store.getIdentity(granteeId);
     if (
@@ -484,13 +577,22 @@ export async function applyGrants(
       pending: pending.get(granteeId) === true,
     });
   }
+  for (const invite of plannedInvites) {
+    if ((await currentIdentity(env, invite.email)) !== undefined) {
+      throw new ProblemError('identity_exists', { email: invite.email });
+    }
+  }
 
-  // The wraps must cover exactly grantee keys x versions (plan 3.3 B.7).
+  // The wraps must cover exactly grantee keys x versions, and invitation keys
+  // x versions (plan 3.3 B.7).
   if (!Array.isArray(rawWraps)) throw new ProblemError('invalid_wrap');
   const wraps = (rawWraps as unknown[]).map(parseWrapItem);
   const expected = new Set<string>();
   for (const p of planned) {
     for (const v of p.versions) expected.add(`${v}:${p.grantee.kemKeyId}`);
+  }
+  for (const p of plannedInvites) {
+    for (const v of p.versions) expected.add(`${v}:${p.inviteId}`);
   }
   const seen = new Set(wraps.map((w) => `${w.version}:${w.recipientKeyId}`));
   if (
@@ -512,12 +614,15 @@ export async function applyGrants(
   const granteeByKey = new Map(
     planned.map((p) => [p.grantee.kemKeyId, p.grantee.identityId] as const)
   );
+  const inviteKeys = new Set(plannedInvites.map((p) => p.inviteId));
   const writtenWraps: WrapRow[] = [];
   const created: string[] = [];
+  const createdInvites: string[] = [];
   const replaced: { granteeId: string; prior: GrantRow }[] = [];
   const writtenGrants = new Map<string, GrantRow>();
+  const writtenInviteRows: InviteRow[] = [];
 
-  /** Whether a live grant of this relik, read now, covers a version for a grantee. */
+  /** Whether a live grant of this relic, read now, covers a version for a grantee. */
   const covers = async (granteeId: string, version: number) => {
     const live = await env.store.getGrant(row.id, granteeId);
     return (
@@ -534,9 +639,10 @@ export async function applyGrants(
    * is restored. A wrap this call wrote is removed, unless another role keeps
    * its key current or a live grant covers its version. A wrap that was
    * already there (`putWrap` returned false) is never removed: a wrap for the
-   * same version and key opens the same content whoever wrote it. When a
-   * seal raced this call (`sealRace`), a key left with no live grant also
-   * loses the wraps the seal made for it.
+   * same version and key opens the same content whoever wrote it. An
+   * invitation row this call created is removed with its wraps. When a seal
+   * raced this call (`sealRace`), a key left with no live grant also loses
+   * the wraps the seal made for it.
    */
   const rollback = async (sealRace: boolean) => {
     for (const granteeId of created) {
@@ -544,6 +650,9 @@ export async function applyGrants(
     }
     for (const r of replaced) {
       await env.store.updateGrant(row.id, r.granteeId, () => r.prior);
+    }
+    for (const inviteId of createdInvites) {
+      await env.store.deleteInvite(row.id, inviteId);
     }
     const keptElsewhere = new Map<string, boolean>();
     for (const p of planned) {
@@ -578,6 +687,7 @@ export async function applyGrants(
   let epochStarted = false;
   try {
     for (const wrap of wraps) {
+      if (inviteKeys.has(wrap.recipientKeyId)) continue;
       const record: WrapRow = {
         relicId: row.id,
         version: wrap.version,
@@ -592,6 +702,11 @@ export async function applyGrants(
 
     for (const p of planned) {
       const granteeId = p.grantee.identityId;
+      const signedGrant = verified.statements.find(
+        (item) =>
+          item.kind === 'grant' &&
+          item.statement['grantee_identity_id'] === granteeId
+      );
       const grantRow: GrantRow = {
         relicId: row.id,
         granteeIdentityId: granteeId,
@@ -599,15 +714,11 @@ export async function applyGrants(
         versions: [...p.versions],
         grantedAt: env.now,
         attestation: verified.attestation,
-        ...(signing
+        ...(signing && signedGrant !== undefined
           ? {
               grantStatement: {
-                statement: verified.statements.find(
-                  (item) => item.statement['grantee_identity_id'] === granteeId
-                )!.statement,
-                identitySignature: verified.statements.find(
-                  (item) => item.statement['grantee_identity_id'] === granteeId
-                )!.identitySignature,
+                statement: signedGrant.statement,
+                identitySignature: signedGrant.identitySignature,
               },
             }
           : {}),
@@ -645,19 +756,46 @@ export async function applyGrants(
       writtenGrants.set(granteeId, grantRow);
     }
 
-    epochStarted = true;
-    await env.store.updateRelic(row.id, (cur) => {
-      const sealed = cur.sealedVersion;
-      if (
-        sealed === undefined ||
-        planned.some((p) => !p.versions.includes(sealed))
-      ) {
-        throw new ProblemError('grant_stale_version', {
-          current_version: cur.version,
-        });
+    // Invitation rows are create-only and carry their own wraps. They never
+    // enter `m/wrap/`, so the recipient set and the sweeps cannot see them.
+    for (const invite of plannedInvites) {
+      const inviteRow: InviteRow = {
+        relicId: row.id,
+        inviteId: invite.inviteId,
+        ownerIdentityId: owner.identityId,
+        invitedEmail: invite.email,
+        invitePublicKey: String(invite.statement['invite_public_key']),
+        versions: [...invite.versions],
+        expiresAt: invite.expiresAt,
+        createdAt: env.now,
+        status: 'open',
+        wraps: wraps
+          .filter((w) => w.recipientKeyId === invite.inviteId)
+          .map((w) => ({ version: w.version, enc: w.enc, ct: w.ct })),
+        attestation: verified.attestation,
+      };
+      if (!(await env.store.putInvite(inviteRow))) {
+        refuseStatement('invite_key');
       }
-      return { ...cur, accessEpoch: (cur.accessEpoch ?? 0) + 1 };
-    });
+      createdInvites.push(invite.inviteId);
+      writtenInviteRows.push(inviteRow);
+    }
+
+    if (planned.length > 0) {
+      epochStarted = true;
+      await env.store.updateRelic(row.id, (cur) => {
+        const sealed = cur.sealedVersion;
+        if (
+          sealed === undefined ||
+          planned.some((p) => !p.versions.includes(sealed))
+        ) {
+          throw new ProblemError('grant_stale_version', {
+            current_version: cur.version,
+          });
+        }
+        return { ...cur, accessEpoch: (cur.accessEpoch ?? 0) + 1 };
+      });
+    }
   } catch (error) {
     await rollback(epochStarted).catch((rollbackError: unknown) => {
       console.error('relic: grant rollback failed:', rollbackError);
@@ -713,7 +851,31 @@ export async function applyGrants(
     const stored = await env.store.getGrant(row.id, granteeId);
     grants.push(grantJson(stored ?? writtenGrants.get(granteeId)!, p.grantee));
   }
-  return { status: 201, grants };
+
+  const invites: InviteJSON[] = [];
+  for (const [index, invite] of plannedInvites.entries()) {
+    const inviteRow = writtenInviteRows[index]!;
+    await logAccess(env, owner.identityId, row.id, 'invite', {
+      actorIdentityId: owner.identityId,
+      version: Math.max(...invite.versions),
+      subjectEmail: invite.email,
+    });
+    try {
+      await env.sendMail(
+        invite.email,
+        inviteNoticeMail({
+          ownerAddress: owner.email,
+          expiresAt: iso(invite.expiresAt),
+        })
+      );
+    } catch {
+      console.error('relic: invitation notice failed');
+    }
+    invites.push(
+      inviteJson(inviteRow, invite.statement, invite.identitySignature)
+    );
+  }
+  return { status: 201, grants, invites };
 }
 
 /** One grant of a batch, once the checks that depend on who is registered have passed. */
@@ -724,6 +886,61 @@ interface PlannedGrant {
   readonly prior: GrantRow | undefined;
   /** True when the grantee has a pending request this grant answers. */
   readonly pending: boolean;
+}
+
+/** One invitation of a batch, once its statement has passed the checks that do not depend on registration. */
+interface PlannedInvite {
+  readonly email: string;
+  readonly inviteId: string;
+  readonly versions: readonly number[];
+  readonly expiresAt: number;
+  readonly statement: Record<string, unknown>;
+  readonly identitySignature: string;
+}
+
+/** The owner's view of one invitation, as the grant response and the invitation list carry it. */
+export function inviteJson(
+  row: InviteRow,
+  statement: Record<string, unknown>,
+  identitySignature: string
+): InviteJSON {
+  return {
+    invite_id: row.inviteId,
+    invited_email: row.invitedEmail,
+    versions: [...row.versions],
+    created_at: iso(row.createdAt),
+    expires_at: iso(row.expiresAt),
+    status: row.status,
+    claimed_by: null,
+    claimed_at: null,
+    statement,
+    identity_signature: identitySignature,
+  };
+}
+
+/** The invitation's public key as P-256 SEC1 bytes, or undefined when it is not a point on the curve. */
+async function validInvitePublicKey(
+  value: string
+): Promise<Uint8Array | undefined> {
+  let bytes: Uint8Array;
+  try {
+    bytes = decodeBase64url(value);
+  } catch {
+    return undefined;
+  }
+  if (bytes.length !== 65 || bytes[0] !== 0x04) return undefined;
+  try {
+    await crypto.subtle.importKey(
+      'raw',
+      bytes as BufferSource,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      []
+    );
+  } catch {
+    return undefined;
+  }
+  return bytes;
 }
 
 export async function listGrants(

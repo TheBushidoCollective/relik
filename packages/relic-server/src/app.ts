@@ -1353,6 +1353,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
             },
           ]);
           const results = [];
+          const invitations = await store.listInvites(row.id);
           for (const address of addresses) {
             const identity = await currentIdentity(env, address);
             results.push({
@@ -1377,12 +1378,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
             passkeys: await store.getPasskeys(email),
             attestation: body['attestation'],
             wraps: body['wraps'],
+            ip,
           });
           return Response.json(
             {
               grant: result.grants.length === 1 ? result.grants[0] : null,
               grants: result.grants,
-              invites: [],
+              invites: result.invites,
             },
             { status: 201 }
           );

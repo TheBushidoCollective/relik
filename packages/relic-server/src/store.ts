@@ -473,6 +473,7 @@ export interface AccessEvent {
   readonly actorDeviceId?: string | undefined;
   readonly actorEmail?: string | undefined;
   readonly subjectIdentityId?: string | undefined;
+  readonly subjectEmail?: string | undefined;
   readonly retainUntil: number;
 }
 /**
@@ -1053,6 +1054,7 @@ export interface RelicStore {
     inviteId: string,
     change: (r: InviteRow) => InviteRow
   ): Promise<InviteRow | undefined>;
+  deleteInvite(relicId: string, inviteId: string): Promise<void>;
   deleteInvitesForRelic(relicId: string): Promise<number>;
   /** Create-only. */
   putInviteClaim(row: InviteClaimRow): Promise<boolean>;
@@ -2248,6 +2250,10 @@ export class MemoryStore implements RelicStore {
     change: (r: InviteRow) => InviteRow
   ): Promise<InviteRow | undefined> {
     return updateEntry(this.invites, compositeKey(relicId, inviteId), change);
+  }
+
+  async deleteInvite(relicId: string, inviteId: string): Promise<void> {
+    this.invites.delete(compositeKey(relicId, inviteId));
   }
 
   async deleteInvitesForRelic(relicId: string): Promise<number> {
