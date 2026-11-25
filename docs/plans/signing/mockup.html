@@ -1,0 +1,1342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio lease, Unit 4B · Relik · settings and signing mock</title>
+<!--
+  A clickable mock of live per-relik Settings and passkey signing
+  (docs/plans/signing/plan.md, section 10). Tokens, the accession band, the
+  card, the side panel, the fingerprint plate and the request ticket are taken
+  from packages/relic-viewer/src/styles.css, so what is judged here is the
+  signing interaction and its words, not a palette.
+
+  Nothing here talks to a service and nothing here is a key. Every address,
+  fingerprint, digest and id is a literal in this file.
+
+  States register with S(key, group, title, cfg). The state comes from the
+  hash (#ST1). body[data-ready] is set two animation frames after a render.
+  ?shot hides the mock rail for screenshots.
+-->
+<style>
+:root {
+  color-scheme: light dark;
+  --ground: #f1f2f0;
+  --surface: #fbfbfa;
+  --ink: #16191a;
+  --ink-soft: #5a6163;
+  --rule: #d2d5d2;
+  --rule-strong: #b3b8b4;
+  --patina: #1f6b64;
+  --patina-ink: #0f3b37;
+  --oxide: #8c4a2f;
+  --diff-added: #dfeeea;
+  --diff-added-strong: #a7d6ca;
+  --diff-removed: #f3e5df;
+  --diff-removed-strong: #ddb6a6;
+  --oxide-ink: #5e2f1b;
+  --paper: #ffffff;
+  --paper-ink: #1d2122;
+  --paper-soft: #545b5d;
+  --paper-rule: #d9dcd9;
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino, "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bar-height: 3.25rem;
+  --panel-w: 27rem;
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #101314;
+  --surface: #171b1c;
+  --ink: #e6e9e7;
+  --ink-soft: #969e9d;
+  --rule: #2a3032;
+  --rule-strong: #3b4345;
+  --patina: #4fb3a6;
+  --patina-ink: #a7ded6;
+  --oxide: #c98058;
+  --diff-added: #15332f;
+  --diff-added-strong: #24564e;
+  --diff-removed: #34231d;
+  --diff-removed-strong: #684331;
+  --oxide-ink: #e6b394;
+  --paper: #f4f4f1;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+  overflow: hidden;
+}
+:root[data-width="390"] body { background: var(--rule); }
+a { color: var(--patina); }
+a:hover { color: var(--patina-ink); }
+:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+p { margin: 0; }
+
+.icon { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: square; }
+
+/* The app frame: a viewport-sized scroller. transform makes it the box that
+   fixed descendants (the panel, the sheet) are placed against, so the 390
+   width toggle shows the phone layout inside a wide window. */
+#app {
+  position: relative;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  transform: translateZ(0);
+  container: app / inline-size;
+  background: var(--ground);
+}
+:root[data-width="390"] #app { width: 390px; margin: 0 auto; border-left: 1px solid var(--rule-strong); border-right: 1px solid var(--rule-strong); }
+
+/* ---------- accession band ---------- */
+.bar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: stretch;
+  min-height: var(--bar-height);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.mark { display: flex; align-items: center; padding: 0 1rem; font-family: var(--mono); font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em; border-right: 1px solid var(--rule); white-space: nowrap; }
+.identity { display: flex; flex-direction: column; justify-content: center; gap: 0.1rem; padding: 0.4rem 1rem; min-width: 0; flex: 1; }
+.filename { font-size: 0.9rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.filename.is-generic { color: var(--ink-soft); font-weight: 400; }
+.identity-meta { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.accession { min-width: 0; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.version-label { display: inline-flex; align-items: center; flex: none; padding: 0.05rem 0.35rem; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink-soft); font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.06em; white-space: nowrap; }
+.private-tag, .locked-tag { display: inline-flex; align-items: center; gap: 0.3rem; flex: none; padding: 0.05rem 0.4rem 0.05rem 0.3rem; border: 1px solid var(--patina); color: var(--patina); font-family: var(--mono); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
+.locked-tag { border-color: var(--oxide); color: var(--oxide); }
+.private-tag .icon, .locked-tag .icon { width: 10px; height: 10px; }
+.actions { display: flex; align-items: stretch; border-left: 1px solid var(--rule); }
+.action {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  padding: 0 0.9rem; border: 0; border-right: 1px solid var(--rule);
+  background: transparent; color: var(--ink); font: inherit; font-size: 0.82rem;
+  cursor: pointer; white-space: nowrap; text-decoration: none;
+}
+.actions .action:last-child { border-right: 0; }
+.action:hover { background: var(--ground); color: var(--patina-ink); }
+.action[aria-pressed="true"] { background: var(--ground); box-shadow: inset 0 -2px 0 var(--patina); }
+.action-count { display: inline-flex; align-items: center; justify-content: center; min-width: 1.15rem; height: 1.15rem; padding: 0 0.3rem; background: var(--patina); color: var(--surface); font-family: var(--mono); font-size: 0.62rem; font-weight: 600; }
+.band-more { display: none; }
+
+/* A line under the band, catalogued like the band: the lock, the request. */
+.strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.1rem;
+  padding: 0.6rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  border-left: 3px solid var(--patina);
+  font-size: 0.86rem; color: var(--ink-soft);
+}
+.strip strong { color: var(--ink); font-weight: 600; }
+.strip.is-oxide { border-left-color: var(--oxide); }
+.strip .icon { color: var(--patina); }
+.strip.is-oxide .icon { color: var(--oxide); }
+.strip-line { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.strip-fp { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
+
+/* ---------- buttons, fields ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+  padding: 0.55rem 1rem; border: 1px solid var(--rule-strong);
+  background: var(--surface); color: var(--ink); font: inherit; font-size: 0.82rem;
+  cursor: pointer; white-space: nowrap; text-decoration: none; position: relative;
+}
+.btn:hover { border-color: var(--patina); color: var(--patina-ink); background: var(--ground); }
+.btn.primary { background: var(--patina); border-color: var(--patina); color: var(--surface); }
+.btn.primary:hover { background: var(--patina-ink); border-color: var(--patina-ink); color: var(--surface); }
+.btn.danger:hover { border-color: var(--oxide); color: var(--oxide); background: var(--diff-removed); }
+.btn.small { padding: 0.3rem 0.65rem; font-size: 0.76rem; }
+.btn:disabled, .btn:disabled:hover { color: var(--ink-soft); background: var(--ground); border-color: var(--rule-strong); cursor: not-allowed; }
+.btn[data-waiting]::after, .action[data-waiting]::after {
+  content: ""; position: absolute; inset: auto -1px -1px -1px; height: 2px;
+  background: linear-gradient(90deg, transparent 0 30%, var(--surface) 30% 70%, transparent 70% 100%);
+  background-size: 250% 100%; animation: running 1.4s linear infinite;
+}
+.btn:not(.primary)[data-waiting]::after { background: linear-gradient(90deg, transparent 0 30%, var(--patina) 30% 70%, transparent 70% 100%); background-size: 250% 100%; }
+@keyframes running { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) { .btn[data-waiting]::after { animation: none; } }
+:root[data-shot] .btn[data-waiting]::after { animation: none; background-position: 40% 0; }
+.link-button { padding: 0; border: 0; background: none; color: var(--patina); font: inherit; font-size: 0.86rem; text-decoration: underline; text-underline-offset: 0.15em; cursor: pointer; }
+
+.field { display: grid; gap: 0.3rem; min-width: 0; }
+.field-label { font-size: 0.76rem; font-weight: 600; letter-spacing: 0.02em; }
+.field-hint { font-size: 0.78rem; color: var(--ink-soft); }
+.input {
+  width: 100%; min-width: 0; padding: 0.5rem 0.6rem;
+  background: var(--ground); border: 1px solid var(--rule-strong); border-left-width: 3px;
+  color: var(--ink); font: inherit; font-size: 0.9rem;
+}
+.input:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.input[aria-invalid="true"] { border-left-color: var(--oxide); }
+.field-error { display: flex; gap: 0.35rem; font-size: 0.8rem; color: var(--oxide); min-height: 1.2em; }
+.field-error .icon { margin-top: 0.2rem; }
+
+/* ---------- the side panel, as the viewer's access panel ---------- */
+.panel {
+  position: fixed; top: var(--bar-height); right: 0; bottom: 0; z-index: 8;
+  width: min(var(--panel-w), 100%);
+  overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface);
+  border-left: 1px solid var(--rule-strong);
+  border-top: 3px double var(--ink);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 12%);
+}
+.panel.has-strip { top: calc(var(--bar-height) + var(--strip-h, 0px)); }
+.panel-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-height: 2.75rem; padding: 0 0.4rem 0 1.25rem; background: var(--surface); border-bottom: 1px solid var(--rule); }
+.panel-title { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; margin: 0; font-size: 1rem; font-weight: 600; }
+.panel-title .accession { font-weight: 400; }
+.panel-close { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; padding: 0; border: 0; background: none; color: var(--ink-soft); cursor: pointer; }
+.panel-close:hover { color: var(--patina-ink); background: var(--ground); }
+.panel-body { display: grid; gap: 1.4rem; padding: 1.1rem 1.25rem 1.5rem; }
+.panel-section { display: grid; gap: 0.6rem; }
+.panel-section > h3 { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; margin: 0; padding-bottom: 0.35rem; border-bottom: 1px solid var(--rule); font-size: 0.68rem; font-family: var(--mono); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.panel-lead { font-size: 0.86rem; color: var(--ink-soft); }
+.panel-notice { padding: 0.6rem 0.75rem; font-size: 0.86rem; background: var(--ground); border-left: 3px solid var(--patina); }
+.panel-notice.is-oxide { border-left-color: var(--oxide); }
+.panel-notice strong { font-weight: 600; }
+.panel-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; padding-top: 0.85rem; border-top: 1px solid var(--rule); font-size: 0.82rem; color: var(--ink-soft); }
+.panel-foot .btn { margin-left: auto; }
+.panel-meta { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-soft); }
+
+/* switches: a row is a label you can click, the state is a word as well as a knob */
+.switch-list { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.switch-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.15rem 1rem; align-items: center; padding: 0.7rem 0.1rem; border-bottom: 1px solid var(--rule); cursor: pointer; }
+.switch-row strong { font-size: 0.9rem; font-weight: 500; }
+.switch-row small { grid-column: 1; font-size: 0.78rem; color: var(--ink-soft); line-height: 1.4; }
+.switch { grid-row: 1 / span 2; grid-column: 2; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0; border: 0; background: none; color: var(--ink-soft); font: inherit; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; }
+.switch-knob { position: relative; width: 2.2rem; height: 1.2rem; border: 1px solid var(--rule-strong); background: var(--ground); }
+.switch-knob::after { content: ""; position: absolute; top: 2px; left: 2px; width: calc(1.2rem - 6px); height: calc(1.2rem - 6px); background: var(--ink-soft); transition: transform 0.12s; }
+.switch[aria-checked="true"] { color: var(--patina); }
+.switch[aria-checked="true"] .switch-knob { border-color: var(--patina); background: var(--diff-added); }
+.switch[aria-checked="true"] .switch-knob::after { background: var(--patina); transform: translateX(1rem); }
+.switch:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.pick-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.pick { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.6rem; border: 1px solid var(--rule-strong); background: var(--surface); font-family: var(--mono); font-size: 0.76rem; cursor: pointer; }
+.pick:has(input:checked) { border-color: var(--patina); color: var(--patina-ink); background: var(--diff-added); }
+.pick:has(input:disabled) { cursor: not-allowed; color: var(--ink-soft); }
+.pick input { margin: 0; accent-color: var(--patina); width: 0.9rem; height: 0.9rem; }
+.pick:has(input:focus-visible) { outline: 2px solid var(--patina); outline-offset: 1px; }
+.days-row { display: flex; align-items: center; gap: 0.5rem; }
+.days-row .input { max-width: 7rem; font-family: var(--mono); }
+
+/* ---------- fingerprint plate ---------- */
+.fingerprint { display: inline-grid; grid-template-columns: repeat(8, max-content); gap: 0.15rem 0.6rem; padding: 0.3rem 0.55rem; background: var(--ground); border: 1px solid var(--rule-strong); border-left: 3px solid var(--patina); font-family: var(--mono); font-size: 0.74rem; font-weight: 600; letter-spacing: 0.08em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.fp-caption { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+
+/* ---------- chips ---------- */
+.chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.08rem 0.45rem; border: 1px solid var(--rule-strong); font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.06em; white-space: nowrap; color: var(--ink-soft); background: var(--surface); }
+.chip .icon { width: 10px; height: 10px; }
+.chip.ok { border-color: var(--patina); color: var(--patina-ink); background: var(--diff-added); }
+.chip.bad { border-color: var(--oxide); color: var(--oxide); background: var(--diff-removed); }
+.chip.wait { border-style: dashed; }
+:root[data-theme="dark"] .chip.ok { color: var(--patina-ink); }
+
+/* signer identity: colour plus number, never colour alone */
+.signer-tag { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 1.35rem; height: 1.35rem; font-family: var(--mono); font-size: 0.68rem; font-weight: 700; color: #fff; background: var(--s1); }
+.s1 { --sc: var(--patina); --sbg: var(--diff-added); --sink: var(--patina-ink); }
+.s2 { --sc: var(--oxide); --sbg: var(--diff-removed); --sink: var(--oxide-ink); }
+.signer-tag.s1 { background: var(--patina); color: var(--surface); }
+.signer-tag.s2 { background: var(--oxide); color: var(--surface); }
+
+/* ---------- the document stage ---------- */
+.stage { padding: 1.5rem 1.25rem 6rem; }
+@container app (min-width: 64rem) {
+  .has-panel .stage { padding-right: calc(var(--panel-w) + 1.25rem); }
+}
+.pages { display: grid; justify-content: center; gap: 1.25rem; }
+.page-wrap { display: grid; gap: 0.35rem; }
+.page-label { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); display: flex; justify-content: space-between; gap: 1rem; }
+.page {
+  position: relative;
+  width: min(36rem, calc(100cqw - 2.5rem));
+  aspect-ratio: 8.5 / 11;
+  padding: 7% 9%;
+  background: var(--paper);
+  color: var(--paper-ink);
+  box-shadow: 0 1px 0 var(--rule-strong), 0 4px 14px rgb(0 0 0 / 9%);
+  font-family: var(--serif);
+  font-size: clamp(7.5px, 1.55cqw, 0.74rem);
+  line-height: 1.5;
+  overflow: hidden;
+  touch-action: none;
+}
+.page h4 { margin: 0 0 0.9em; font-size: 1.55em; font-weight: 600; letter-spacing: 0.01em; text-align: center; }
+.page h5 { margin: 1.1em 0 0.35em; font-size: 1em; font-weight: 700; }
+.page p { margin: 0 0 0.55em; text-align: justify; hyphens: auto; }
+.page .lede { text-align: center; color: var(--paper-soft); margin-bottom: 1.6em; }
+.page .page-no { position: absolute; bottom: 3.5%; left: 0; right: 0; text-align: center; font-family: var(--mono); font-size: 0.85em; color: var(--paper-soft); }
+.page .initials { position: absolute; bottom: 7%; right: 9%; font-family: var(--mono); font-size: 0.8em; color: var(--paper-soft); }
+.sigline { display: grid; grid-template-columns: 1fr 1fr; gap: 2.6em 3em; margin-top: 2.4em; }
+.sigline div { border-top: 1px solid var(--paper-ink); padding-top: 0.3em; font-size: 0.9em; color: var(--paper-soft); }
+
+/* signature boxes over a page */
+.sbox {
+  position: absolute;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.4em;
+  padding: 0 0.45em;
+  border: 2px solid var(--sc);
+  background: color-mix(in srgb, var(--sbg) 82%, transparent);
+  color: var(--bink);
+  font-family: var(--sans); font-size: 11px; font-weight: 600;
+  cursor: grab; user-select: none;
+}
+/* boxes sit on the page, and the page stays paper in both themes */
+.sbox.s1 { --sc: #1f6b64; --sbg: #dfeeea; --bink: #0f3b37; }
+.sbox.s2 { --sc: #8c4a2f; --sbg: #f3e5df; --bink: #5e2f1b; }
+.sbox .signer-tag { width: 1.1rem; height: 1.1rem; font-size: 0.6rem; }
+.sbox.is-target { border-style: solid; box-shadow: 0 0 0 3px color-mix(in srgb, var(--sc) 25%, transparent); cursor: pointer; }
+.sbox.is-other { border-style: dashed; opacity: 0.75; cursor: default; }
+.sbox.is-selected { outline: 2px solid var(--ink); outline-offset: 2px; }
+.sbox.is-signed { cursor: default; border-style: solid; background: color-mix(in srgb, var(--paper) 70%, var(--sbg)); }
+.sbox .mark-script { font-family: "Snell Roundhand", "Apple Chancery", "Brush Script MT", var(--serif); font-style: italic; font-weight: 400; font-size: 1.5em; color: var(--paper-ink); }
+.sbox .box-x { border: 0; background: none; color: inherit; cursor: pointer; padding: 0; display: inline-flex; }
+.sbox.is-dragging { cursor: grabbing; opacity: 0.85; }
+.sbox.is-refused { border-color: var(--oxide); border-style: dashed; }
+
+/* markdown document and the signature block after it */
+.md-doc { width: min(42rem, 100%); margin: 0 auto; padding: 2rem 2.4rem; background: var(--surface); border: 1px solid var(--rule); font-family: var(--serif); font-size: 1rem; line-height: 1.65; }
+.md-doc h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 0.9rem; }
+.md-doc h2 { font-size: 1.05rem; margin: 1.4rem 0 0.4rem; }
+.md-doc p { margin: 0 0 0.8rem; }
+.sig-block { width: min(42rem, 100%); margin: 1rem auto 0; padding: 1rem 1.25rem 1.2rem; background: var(--surface); border: 1px solid var(--rule); border-top: 3px solid var(--patina); display: grid; gap: 0.75rem; }
+.sig-block h3 { margin: 0; font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.sig-slot { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.75rem; align-items: center; padding: 0.7rem 0.8rem; border: 2px solid var(--sc); background: var(--sbg); }
+.sig-slot.is-other { border-style: dashed; }
+.sig-slot strong { font-size: 0.88rem; word-break: break-word; }
+.sig-slot small { display: block; font-size: 0.76rem; color: var(--ink-soft); }
+
+/* ---------- the composer ---------- */
+.signer-list { display: grid; margin: 0; padding: 0; list-style: none; gap: 0.5rem; }
+.signer-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.3rem 0.6rem; align-items: center; padding: 0.55rem 0.6rem; border: 1px solid var(--rule); border-left: 3px solid var(--sc); background: var(--ground); cursor: pointer; }
+.signer-row[aria-current="true"] { border-color: var(--sc); background: var(--sbg); }
+.signer-row .input { padding: 0.35rem 0.5rem; border-left-width: 1px; background: var(--surface); }
+.signer-row .row-meta { grid-column: 2 / span 2; font-size: 0.76rem; color: var(--ink-soft); }
+.signer-row .warn { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; padding: 0.5rem 0.6rem; background: var(--surface); border-left: 3px solid var(--oxide); font-size: 0.8rem; }
+.signer-row .warn .icon { color: var(--oxide); }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 1.9rem; height: 1.9rem; padding: 0; border: 1px solid transparent; background: none; color: var(--ink-soft); cursor: pointer; }
+.icon-btn:hover { color: var(--oxide); border-color: var(--rule-strong); }
+.seg { display: inline-flex; border: 1px solid var(--rule-strong); }
+.seg button { padding: 0.4rem 0.8rem; border: 0; border-right: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); font: inherit; font-size: 0.8rem; cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--patina); color: var(--surface); }
+.kbd-place { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.kbd-place select { padding: 0.35rem 0.4rem; border: 1px solid var(--rule-strong); background: var(--ground); color: var(--ink); font: inherit; font-size: 0.8rem; }
+.feedback { font-family: var(--mono); font-size: 0.7rem; color: var(--patina); min-height: 1em; }
+
+.invite-list { display: grid; gap: 0.6rem; margin: 0; padding: 0; list-style: none; }
+.invite { display: grid; gap: 0.45rem; padding: 0.7rem 0.75rem; border: 1px solid var(--rule); border-left: 3px solid var(--sc); background: var(--ground); }
+.invite-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; font-weight: 500; word-break: break-word; }
+.invite-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+
+/* ---------- signing panel ---------- */
+.mark-pad { position: relative; height: 8rem; border: 1px solid var(--rule-strong); border-bottom: 2px solid var(--ink-soft); background: var(--paper); touch-action: none; cursor: crosshair; }
+.mark-pad canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.mark-pad .pad-hint { position: absolute; left: 0.6rem; bottom: 0.35rem; font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--paper-soft); pointer-events: none; }
+.typed-mark { display: flex; align-items: flex-end; height: 5rem; padding: 0 0.8rem 0.5rem; border: 1px solid var(--rule-strong); border-bottom: 2px solid var(--ink-soft); background: var(--paper); color: var(--paper-ink); font-family: "Snell Roundhand", "Apple Chancery", "Brush Script MT", var(--serif); font-style: italic; font-size: 2rem; line-height: 1; overflow: hidden; white-space: nowrap; }
+.consent { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.6rem; align-items: start; padding: 0.8rem; border: 1px solid var(--rule-strong); background: var(--ground); cursor: pointer; }
+.consent input { margin: 0.2rem 0 0; width: 1.05rem; height: 1.05rem; accent-color: var(--patina); }
+.consent strong { font-size: 0.92rem; font-weight: 600; }
+.consent-detail { display: block; margin-top: 0.35rem; font-size: 0.8rem; color: var(--ink-soft); line-height: 1.5; }
+.sign-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; }
+.sign-row .btn.primary { padding: 0.65rem 1.4rem; font-size: 0.9rem; }
+.passkey-note { display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; color: var(--ink-soft); }
+.passkey-note .icon { color: var(--patina); }
+
+/* request ticket and the receipts table */
+.request { display: grid; gap: 0.75rem; padding: 0.9rem 1rem 1rem; background: var(--ground); border: 1px solid var(--rule); border-left: 3px solid var(--patina); }
+.request.is-oxide { border-left-color: var(--oxide); }
+.request.is-quiet { border-left-color: var(--rule-strong); }
+.request-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.3rem 0.75rem; }
+.request-head strong { font-size: 0.92rem; font-weight: 600; }
+.request-when { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-soft); }
+.status-list { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.status-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.15rem 0.6rem; align-items: center; padding: 0.6rem 0.1rem; border-bottom: 1px solid var(--rule); }
+.status-list .who { font-size: 0.86rem; font-weight: 500; word-break: break-word; }
+.status-list .when { grid-column: 2 / span 2; font-family: var(--mono); font-size: 0.7rem; color: var(--ink-soft); }
+.receipts { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.receipts th { text-align: left; font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); font-weight: 600; padding: 0.35rem 0.3rem; border-bottom: 1px solid var(--rule-strong); }
+.receipts td { padding: 0.55rem 0.3rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.receipts td.who { word-break: break-word; font-weight: 500; }
+.receipts .t { display: block; font-family: var(--mono); font-size: 0.66rem; color: var(--ink-soft); }
+.mark-yes { color: var(--patina); }
+.mark-no { color: var(--ink-soft); }
+.legend { font-size: 0.78rem; color: var(--ink-soft); padding: 0.55rem 0.7rem; border: 1px dashed var(--rule-strong); }
+.checks { display: grid; margin: 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 0.74rem; }
+.checks li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.5rem; align-items: center; padding: 0.32rem 0; border-bottom: 1px dotted var(--rule-strong); }
+.checks .ok { color: var(--patina); }
+.checks .bad { color: var(--oxide); }
+.checks li.is-bad { background: var(--diff-removed); padding-left: 0.3rem; padding-right: 0.3rem; }
+.checks .detail { grid-column: 2 / -1; font-family: var(--sans); font-size: 0.76rem; color: var(--oxide); }
+
+/* comments panel (reader gates) */
+.thread { display: grid; gap: 0.35rem; padding: 0.75rem 0.85rem; border: 1px solid var(--rule); background: var(--ground); }
+.thread-who { display: flex; justify-content: space-between; gap: 0.6rem; font-size: 0.78rem; color: var(--ink-soft); }
+.thread-who strong { color: var(--ink); font-weight: 600; }
+.thread-quote { font-family: var(--serif); font-size: 0.86rem; border-left: 2px solid var(--rule-strong); padding-left: 0.6rem; color: var(--ink-soft); }
+.thread-body { font-size: 0.88rem; }
+.suggest del { background: var(--diff-removed); text-decoration-color: var(--oxide); }
+.suggest ins { background: var(--diff-added); text-decoration: none; border-bottom: 1px solid var(--patina); }
+.composer { display: grid; gap: 0.5rem; }
+.composer textarea { min-height: 4.5rem; resize: vertical; }
+
+/* cards and dialogs */
+.card { max-width: 34rem; margin: 3rem auto; padding: 1.75rem; background: var(--surface); border: 1px solid var(--rule); border-top: 3px solid var(--patina); }
+.card.is-refusal { border-top-color: var(--oxide); }
+.card-title { margin: 0 0 0.35rem; font-size: 1.15rem; font-weight: 600; }
+.card-meta { margin: 0 0 1.1rem; font-family: var(--mono); font-size: 0.76rem; color: var(--ink-soft); }
+.card-body { font-size: 0.95rem; display: grid; gap: 0.75rem; }
+.card-note { margin-top: 1.25rem; padding-top: 0.85rem; border-top: 1px solid var(--rule); font-size: 0.86rem; color: var(--ink-soft); }
+.card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 1.25rem; }
+.scrim { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 1rem; background: rgb(10 14 15 / 42%); }
+.scrim .card { margin: 0; width: min(32rem, 100%); box-shadow: 0 12px 34px rgb(0 0 0 / 22%); }
+.passkey-art { display: grid; place-items: center; width: 3.2rem; height: 3.2rem; border: 1px solid var(--rule-strong); background: var(--ground); color: var(--patina); }
+.passkey-art .icon { width: 26px; height: 26px; stroke-width: 1.3; }
+.pk-head { display: flex; gap: 0.9rem; align-items: center; margin-bottom: 1rem; }
+
+/* certificate */
+.cert { width: min(52rem, 100%); margin: 0 auto; background: var(--surface); border: 1px solid var(--rule-strong); border-top: 3px double var(--ink); }
+.cert-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem 1rem; padding: 1.4rem 1.75rem 1.1rem; border-bottom: 1px solid var(--rule); }
+.cert-head h1 { margin: 0; font-family: var(--serif); font-size: 1.5rem; font-weight: 600; }
+.cert-kicker { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.cert-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--rule); }
+.cert-grid div { padding: 0.75rem 1rem; border-right: 1px solid var(--rule); min-width: 0; }
+.cert-grid div:last-child { border-right: 0; }
+.cert-grid dt { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); }
+.cert-grid dd { margin: 0.15rem 0 0; font-family: var(--mono); font-size: 0.8rem; word-break: break-all; }
+.cert-section { padding: 1.1rem 1.75rem; border-bottom: 1px solid var(--rule); display: grid; gap: 0.7rem; }
+.cert-section h2 { margin: 0; font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); font-weight: 600; }
+.proves { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border-bottom: 1px solid var(--rule); }
+.proves > div { padding: 1.1rem 1.75rem; display: grid; gap: 0.5rem; align-content: start; }
+.proves > div + div { border-left: 1px solid var(--rule); }
+.proves h2 { margin: 0; font-size: 0.95rem; font-weight: 600; display: flex; gap: 0.45rem; align-items: center; }
+.proves .yes h2 .icon { color: var(--patina); }
+.proves .no h2 .icon { color: var(--oxide); }
+.proves p { font-size: 0.88rem; color: var(--ink); }
+.unsigned-note { font-size: 0.78rem; color: var(--ink-soft); }
+.cert-foot { display: flex; flex-wrap: wrap; gap: 0.6rem; padding: 1rem 1.75rem 1.3rem; align-items: center; }
+.verdict { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.7rem; border: 1px solid var(--patina); background: var(--diff-added); color: var(--patina-ink); font-size: 0.82rem; font-weight: 600; white-space: nowrap; align-self: start; }
+.verdict.bad { border-color: var(--oxide); background: var(--diff-removed); color: var(--oxide); }
+
+/* mail */
+.mail-stage { padding: 2rem 1.25rem 4rem; }
+.mail { width: min(44rem, 100%); margin: 0 auto; background: var(--surface); border: 1px solid var(--rule-strong); }
+.mail-head { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.25rem 0.9rem; padding: 1rem 1.25rem; border-bottom: 1px solid var(--rule); font-size: 0.84rem; }
+.mail-head dt { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); padding-top: 0.15rem; }
+.mail-head dd { margin: 0; word-break: break-word; }
+.mail-head dd.subject { font-weight: 600; font-size: 0.95rem; }
+.mail-body { padding: 1.25rem 1.25rem 1.5rem; display: grid; gap: 0.85rem; font-size: 0.92rem; line-height: 1.6; }
+.mail-body .linkline { font-family: var(--mono); font-size: 0.78rem; word-break: break-all; padding: 0.55rem 0.7rem; background: var(--ground); border-left: 3px solid var(--patina); }
+.mail-body ul { margin: 0; padding-left: 1.1rem; }
+.mail-body .small { font-size: 0.78rem; color: var(--ink-soft); }
+.attach { display: inline-flex; align-items: center; gap: 0.55rem; padding: 0.5rem 0.75rem; border: 1px solid var(--rule-strong); background: var(--ground); font-family: var(--mono); font-size: 0.76rem; justify-self: start; }
+.attach .icon { color: var(--patina); }
+.draft-tag { justify-self: start; }
+.mail-label { width: min(44rem, 100%); margin: 0 auto 0.5rem; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+
+/* ---------- narrow: the panel becomes a sheet ---------- */
+@container app (max-width: 40rem) {
+  .mark { display: none; }
+  .identity { padding: 0.4rem 0.75rem; }
+  .action { padding: 0 0.7rem; }
+  .action .label { display: none; }
+  .action.keep-label .label { display: inline; }
+  .stage { padding: 1rem 0.75rem 55vh; }
+  .panel {
+    top: auto; left: 0; right: 0; bottom: 0; width: 100%;
+    max-height: 56%;
+    border-left: 0;
+    border-top: 3px double var(--ink);
+    box-shadow: 0 -8px 22px rgb(0 0 0 / 18%);
+  }
+  .panel.has-strip { top: auto; }
+  .panel-head::before { content: ""; position: absolute; top: 5px; left: 50%; width: 2.5rem; height: 3px; margin-left: -1.25rem; background: var(--rule-strong); }
+  .panel-body { padding: 0.9rem 0.9rem 1.25rem; }
+  .strip { padding: 0.55rem 0.75rem; }
+  .strip-fp { margin-left: 0; }
+  .fingerprint { grid-template-columns: repeat(4, max-content); }
+  .md-doc { padding: 1.25rem; }
+  .cert-grid { grid-template-columns: 1fr 1fr; }
+  .proves { grid-template-columns: 1fr; }
+  .proves > div + div { border-left: 0; border-top: 1px solid var(--rule); }
+}
+
+/* ---------- mock rail (not product) ---------- */
+.rail {
+  position: fixed; left: 0.75rem; bottom: 0.75rem; z-index: 100;
+  width: 19rem; max-height: calc(100vh - 1.5rem); overflow: auto;
+  background: #16191a; color: #e6e9e7; border: 1px solid #3b4345;
+  font-family: var(--mono); font-size: 0.68rem;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+}
+:root[data-shot] .rail { display: none; }
+.rail-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.45rem 0.6rem; background: #101314; border-bottom: 1px solid #3b4345; }
+.rail-head strong { letter-spacing: 0.12em; text-transform: uppercase; }
+.rail button { font: inherit; color: inherit; background: #232829; border: 1px solid #3b4345; padding: 0.15rem 0.4rem; cursor: pointer; }
+.rail button[aria-pressed="true"] { background: #4fb3a6; color: #101314; border-color: #4fb3a6; }
+.rail-body { padding: 0.5rem 0.6rem 0.7rem; display: grid; gap: 0.55rem; }
+.rail.is-collapsed .rail-body { display: none; }
+.rail-group { display: grid; gap: 0.25rem; }
+.rail-group b { color: #969e9d; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+.rail-group div { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.rail-title { color: #a7ded6; line-height: 1.4; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></symbol>
+  <symbol id="i-cog" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 16 16"><path d="M10.5 2.5l3 3-8 8H2.5v-3z"/><path d="M9 4l3 3"/></symbol>
+  <symbol id="i-comment" viewBox="0 0 16 16"><path d="M2 3h12v8H7l-3 2.5V11H2z"/></symbol>
+  <symbol id="i-suggest" viewBox="0 0 16 16"><path d="M2.5 13.5h11"/><path d="M4 10.5l6.5-6.5 2 2L6 12.5H4z"/></symbol>
+  <symbol id="i-decide" viewBox="0 0 16 16"><path d="M2.5 8.5l3.5 3.5 7.5-8"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7"/></symbol>
+  <symbol id="i-cross" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2l6.5 12h-13z"/><path d="M8 6.5v3.5M8 11.5v1"/></symbol>
+  <symbol id="i-key" viewBox="0 0 16 16"><circle cx="5" cy="8" r="3"/><path d="M8 8h6.5M12 8v2.5M14 8v2"/></symbol>
+  <symbol id="i-print" viewBox="0 0 16 16"><path d="M8 1.8c-2.6 0-4.5 2-4.5 4.6M8 4.2c-1.3 0-2.3 1-2.3 2.4v2.2M8 6.4v3.8c0 1.3.6 2.6 1.6 3.5M10.3 6.6v1.8c0 1.5.4 2.8 1.1 3.8M12.5 6.4c0-2.6-2-4.6-4.5-4.6M5.7 10.8c.2 1.1.6 2.1 1.3 3"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5" y="5" width="8.5" height="8.5"/><path d="M3 11V2.5h8.5"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 16 16"><rect x="2" y="3.5" width="12" height="9"/><path d="M2 4l6 5 6-5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2v8.5M4.5 7l3.5 3.5L11.5 7M2.5 13.5h11"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-file" viewBox="0 0 16 16"><path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 16 16"><path d="M5.5 3v10M10.5 3v10"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></symbol>
+  <symbol id="i-history" viewBox="0 0 16 16"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.6h2.6"/><path d="M8 5v3.2l2 1.3"/></symbol>
+</svg>
+
+<div id="app"></div>
+
+<aside class="rail" id="rail" aria-label="Mock states">
+  <div class="rail-head"><strong>Mock</strong><span id="rail-key"></span><button type="button" id="rail-collapse" aria-expanded="true">Hide</button></div>
+  <div class="rail-body">
+    <div class="rail-title" id="rail-title"></div>
+    <div class="rail-group"><b>View</b><div id="rail-view"></div></div>
+    <div id="rail-groups"></div>
+  </div>
+</aside>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const app = $('#app');
+  const root = document.documentElement;
+  if (new URLSearchParams(location.search).has('shot')) root.dataset.shot = '';
+  const ic = (id, cls = '') => `<svg class="icon ${cls}" aria-hidden="true"><use href="#i-${id}"/></svg>`;
+
+  // ---------------- fixtures ----------------
+  const F = {
+    title: 'Studio lease, Unit 4B',
+    id: 'h7q2m9xa4tb0p4dvw8cr1nezf6',
+    version: 3,
+    owner: 'jason@waldrip.net',
+    ownerFp: ['7K2M', '9QXA', 'H3TB', '0P4D', 'VW8C', 'R1NE', 'ZF6G', 'Y5SK'],
+    signers: [
+      { email: 'ana@harbor.studio', name: 'Ana Ruiz', cls: 's1' },
+      { email: 'ben@harbor.studio', name: 'Ben Okafor', cls: 's2' },
+    ],
+    digest: '9f3c1a7e52b04d6c',
+    date: '24 Nov 2026',
+    link: 'https://relik.link/h7q2m9xa4tb0p4dvw8cr1nezf6#k=Qm3v8Rr1xT0yWc5JpL2aNs',
+  };
+  // C1 to C12, verbatim from plan section 10
+  const C = {
+    C1: 'I agree to sign this document electronically.',
+    C2: (n, email) => `Your passkey approval is your signature on version ${n} of this file. It shows that a device holding your passkey for ${email}, signed in to that address, approved this exact file at the time shown. Relik doesn\u2019t check who you are, and it doesn\u2019t say whether an electronic signature is legally binding where you are.`,
+    C3: 'Each signer confirms with a passkey on their own device. Relik records which passkey approved which version, and when. It doesn\u2019t verify anyone\u2019s identity.',
+    C4p: 'Proves: each listed passkey approved this exact version after agreeing to sign electronically, and the request came from the owner shown.',
+    C4n: 'Doesn\u2019t prove: who held the passkey, that the person is who the address suggests, or that the signature is legally binding. On a public relik a passkey is trusted from its first use with that address. Times come from each signer\u2019s device, checked by Relik to within 5 minutes.',
+    C5: (n, d) => `Version ${n} was signed by everyone on ${d}. It\u2019s locked: this relik can\u2019t be republished.`,
+    C6: (n, d) => `Version ${n} was signed by everyone on ${d}. It can\u2019t be deleted.`,
+    C7: (o) => `This file doesn\u2019t match the one you were asked to sign. Don\u2019t sign it. Ask ${o} to send the request again.`,
+    C8: (e) => `Waiting for ${e} to sign first.`,
+    C9: 'Signing is paused by the owner.',
+    C10r: 'Comments are closed.',
+    C10o: 'Comments are closed to readers. You can still comment.',
+    C12: 'Served: Relik handed over their key (Relik\u2019s record). Opened: their browser opened and checked this version (signed by them).',
+  };
+  const C4 = `${C.C4p} ${C.C4n}`;
+
+  const PAGES = [
+    `<h4>Studio Lease Agreement</h4>
+     <p class="lede">Unit 4B, Harbor Works, 218 Wharf Street</p>
+     <p>This lease is made between Jason Waldrip (the Landlord) and Harbor Studio LLC (the Tenant), represented by its members Ana Ruiz and Ben Okafor, who sign below on its behalf and as guarantors.</p>
+     <h5>1. Premises</h5>
+     <p>The Landlord leases to the Tenant the studio known as Unit 4B on the fourth floor of Harbor Works, comprising approximately 1,180 square feet of open floor, one enclosed office, a darkroom with running water, and the shared use of the freight elevator and loading bay during permitted hours.</p>
+     <p>The Tenant has inspected the Premises and accepts them in their present condition, except for the items listed on the move-in record signed by both parties on or before the start date.</p>
+     <h5>2. Term</h5>
+     <p>The term is twelve months, beginning on 1 December 2026 and ending on 30 November 2027. The Tenant may renew for a further twelve months by written notice given at least sixty days before the term ends, at a rent agreed in writing.</p>
+     <p>If the Tenant stays in possession after the term ends without a renewal, the tenancy continues from month to month on the same terms, ending on thirty days' written notice by either party.</p>`,
+    `<h5>3. Rent</h5>
+     <p>The monthly rent is $2,450, due in advance on the first day of each month, paid by bank transfer to the account the Landlord names in writing. Rent for any part month is charged by the day.</p>
+     <p>A late fee of $75 applies to any payment received more than five days after its due date. Two late payments in any six-month period are a default under clause 11.</p>
+     <h5>4. Security deposit</h5>
+     <p>On signing, the Tenant pays a security deposit of $4,900. The Landlord holds it in a separate account and returns it within thirty days after the Tenant leaves, less any amount needed to repair damage beyond ordinary wear, with an itemised statement of every deduction.</p>
+     <h5>5. Use</h5>
+     <p>The Tenant may use the Premises only as a photography and design studio, including client sessions, small workshops of no more than twelve people, and the storage of equipment used in that work. The Premises may not be used as a residence, and nobody may stay overnight.</p>
+     <p>The Tenant will keep noise from amplified sound below the level set by the building rules after 8 pm on weekdays and at all times on Sundays.</p>`,
+    `<h5>6. Utilities</h5>
+     <p>Electricity for Unit 4B is separately metered and paid by the Tenant directly to the supplier. Water, heating, refuse collection and the building's shared internet connection are included in the rent. The Tenant may install its own line at its own cost, routed through the existing risers.</p>
+     <h5>7. Alterations</h5>
+     <p>The Tenant may hang lighting rigs, backdrops and shelving from the existing ceiling track and wall battens without consent. Any other alteration, including new partitions, plumbing, wiring or a change to the darkroom, needs the Landlord's prior written consent, which will not be unreasonably withheld.</p>
+     <p>At the end of the term the Tenant removes its fittings and makes good any damage caused by their removal, unless the Landlord agrees in writing that a fitting may stay.</p>
+     <h5>8. Access and hours</h5>
+     <p>The Tenant and its invitees may use the Premises at any time. The freight elevator and loading bay may be used between 7 am and 9 pm. The Landlord may enter on twenty-four hours' notice to inspect or repair, and at any time in an emergency.</p>`,
+    `<h5>9. Insurance</h5>
+     <p>The Tenant will hold, for the whole term, contents insurance covering its own equipment and public liability insurance of at least $1,000,000 for any one claim, naming the Landlord as an additional insured. The Tenant gives the Landlord a copy of each policy before the start date and on each renewal.</p>
+     <p>The Landlord insures the building structure and the shared areas. Nothing in the Landlord's policy covers the Tenant's property.</p>
+     <h5>10. Maintenance and repairs</h5>
+     <p>The Tenant keeps the interior of the Premises clean and in good order, and reports any defect promptly in writing. The Landlord repairs the structure, roof, windows, shared plumbing, the heating system and the freight elevator, within a reasonable time after notice.</p>
+     <p>The Tenant pays for repairing any damage caused by the Tenant, its staff or its invitees, including damage to the darkroom drains from chemicals not disposed of under the building rules.</p>`,
+    `<h5>11. Default</h5>
+     <p>If rent stays unpaid fourteen days after it is due, or the Tenant breaks another term and does not put it right within twenty-one days of written notice, the Landlord may end this lease by a further written notice, without affecting any other claim.</p>
+     <h5>12. Notices</h5>
+     <p>Notices under this lease are given in writing by email to the addresses each party gives on signing, and take effect the next working day. A party may change its address by notice to the other.</p>
+     <h5>13. Assignment and subletting</h5>
+     <p>The Tenant may not assign this lease or sublet the whole of the Premises without the Landlord's written consent. The Tenant may share the Premises with freelancers working with it on a day basis, provided they follow the building rules and the Tenant stays responsible for them.</p>
+     <h5>14. Building rules</h5>
+     <p>The Tenant follows the Harbor Works building rules in force from time to time, a copy of which is attached. The Landlord gives thirty days' notice of any change to them.</p>`,
+    `<h5>15. Entire agreement</h5>
+     <p>This lease, the building rules and the move-in record are the whole agreement between the parties about the Premises. Any change must be in writing and signed by both parties.</p>
+     <h5>16. Governing law</h5>
+     <p>This lease is governed by the law of the state where the Premises are located.</p>
+     <p style="margin-top:1.4em">Signed by the parties on the dates shown.</p>
+     <div class="sigline">
+       <div>Landlord: Jason Waldrip</div><div>Date</div>
+       <div>Tenant: Ana Ruiz, for Harbor Studio LLC</div><div>Date</div>
+       <div>Tenant: Ben Okafor, for Harbor Studio LLC</div><div>Date</div>
+     </div>`,
+  ];
+
+  const MD = `<h1>Studio lease, Unit 4B: side letter on the darkroom</h1>
+    <p>This letter sits alongside the studio lease for Unit 4B and records what the Landlord and Harbor Studio LLC agreed about the darkroom before the term starts on 1 December 2026.</p>
+    <h2>Drains and chemicals</h2>
+    <p>The Tenant may use the darkroom sink for rinse water only. Developer, fixer and any other chemical waste is collected in the sealed containers the Landlord supplies and taken away by the licensed contractor on the first Monday of each month.</p>
+    <h2>Ventilation</h2>
+    <p>The Landlord services the extractor fan before the start date and every six months after that. The Tenant does not run the enlarger room with the fan off.</p>
+    <h2>Keys</h2>
+    <p>Two keys to the darkroom are handed over with the studio keys. A lost key is replaced at the Tenant's cost, and the lock is changed if both are lost.</p>`;
+
+  // ---------------- state ----------------
+  const STATES = [];
+  const BYKEY = {};
+  function S(key, group, title, cfg) { const s = { key, group, title, ...cfg }; STATES.push(s); BYKEY[key] = s; }
+  const GROUPS = { ST: 'Settings', RG: 'Reader gates', RQ: 'Composer', SG: 'Signer', SS: 'Status', LK: 'Lock', CF: 'Certificate', EM: 'Email' };
+
+  // live, per render
+  let M = {};
+
+  // ---------------- band ----------------
+  function band(o = {}) {
+    const acts = o.actions || ['comments', 'suggest', 'decisions'];
+    const A = {
+      comments: [ 'comment', 'Comments', o.commentCount ?? 3 ],
+      suggest: [ 'suggest', 'Suggest' ],
+      decisions: [ 'decide', 'Decisions' ],
+      signing: [ 'pen', 'Signing', o.signCount ],
+      sign: [ 'pen', 'Sign' ],
+      history: [ 'history', 'Versions' ],
+      settings: [ 'cog', 'Settings' ],
+    };
+    const btns = acts.map((a) => {
+      const [i, label, count] = A[a];
+      const pressed = o.active === a ? 'true' : 'false';
+      return `<button type="button" class="action ${a === 'sign' ? 'keep-label' : ''}" data-act="${a}" aria-pressed="${pressed}" aria-label="${label}">${ic(i)}<span class="label">${label}</span>${count ? `<span class="action-count">${count}</span>` : ''}</button>`;
+    }).join('');
+    const v = o.version ?? F.version;
+    return `<header class="bar">
+      <div class="mark">relik.link</div>
+      <div class="identity">
+        <div class="filename ${o.private ? 'is-generic' : ''}">${o.private ? 'Private relik' : F.title}</div>
+        <div class="identity-meta">
+          <div class="accession" title="${F.id}">${F.id}</div>
+          <span class="version-label">v${v}</span>
+          ${o.private ? `<span class="private-tag">${ic('lock')}Private</span>` : ''}
+          ${o.locked ? `<span class="locked-tag">${ic('lock')}Signed</span>` : ''}
+        </div>
+      </div>
+      <div class="actions">${btns}</div>
+    </header>`;
+  }
+
+  // ---------------- pages and boxes ----------------
+  // boxes: {s: signer index, p: page, x, y, w, h (percent of page), st: 'edit'|'target'|'other'|'signed'|'refused', mark}
+  function pagesHTML(o = {}) {
+    const list = o.pages || [1, 2, 3, 4, 5, 6];
+    return `<div class="pages">${list.map((p) => `
+      <div class="page-wrap" data-page-wrap="${p}">
+        <div class="page-label"><span>Page ${p} of 6</span>${o.label?.[p] ? `<span>${o.label[p]}</span>` : ''}</div>
+        <div class="page" data-page="${p}" aria-label="Page ${p}">
+          ${PAGES[p - 1]}
+          <div class="initials">Initials ______</div>
+          <div class="page-no">${p}</div>
+        </div>
+      </div>`).join('')}</div>`;
+  }
+  function boxHTML(b, i) {
+    const s = F.signers[b.s];
+    const st = b.st || 'edit';
+    let inner;
+    if (st === 'signed') inner = `<span class="mark-script">${b.mark || s.name}</span><span class="signer-tag ${s.cls}">${b.s + 1}</span>`;
+    else if (st === 'target') inner = `<span>${ic('pen')} Sign here</span><span class="signer-tag ${s.cls}">${b.s + 1}</span>`;
+    else if (st === 'other') inner = `<span>${s.email}</span><span class="signer-tag ${s.cls}">${b.s + 1}</span>`;
+    else if (st === 'refused') inner = `<span>Page ${b.p}</span><span class="signer-tag ${s.cls}">${b.s + 1}</span>`;
+    else inner = `<span class="signer-tag ${s.cls}">${b.s + 1}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.name}</span>${b.removable !== false ? `<button type="button" class="box-x" data-remove-box="${i}" aria-label="Remove box">${ic('cross')}</button>` : ''}`;
+    return `<div class="sbox ${s.cls} is-${st} ${M.sel === i ? 'is-selected' : ''}" data-box="${i}" tabindex="0" role="${st === 'edit' ? 'button' : 'img'}" aria-label="Signature box for ${s.email}, page ${b.p}" style="left:${b.x}%;top:${b.y}%;width:${b.w}%;height:${b.h}%">${inner}</div>`;
+  }
+  function drawBoxes() {
+    $$('.sbox').forEach((e) => e.remove());
+    (M.boxes || []).forEach((b, i) => {
+      const pg = $(`.page[data-page="${b.p}"]`);
+      if (pg) pg.insertAdjacentHTML('beforeend', boxHTML(b, i));
+    });
+    const counts = [0, 0];
+    (M.boxes || []).forEach((b) => counts[b.s]++);
+    $$('[data-box-count]').forEach((e) => { const n = counts[+e.dataset.boxCount]; e.textContent = n === 0 ? 'No boxes: signs in the block after the document' : `${n} box${n === 1 ? '' : 'es'}`; });
+  }
+
+  // ---------------- panel shell ----------------
+  function panel(title, body, o = {}) {
+    return `<aside class="panel ${o.strip ? 'has-strip' : ''}" aria-label="${title}">
+      <div class="panel-head"><h2 class="panel-title">${title}${o.sub ? ` <span class="accession">${o.sub}</span>` : ''}</h2>
+      <button type="button" class="panel-close" aria-label="Close">${ic('cross')}</button></div>
+      <div class="panel-body">${body}</div></aside>`;
+  }
+  const fp = (arr = F.ownerFp) => `<span class="fingerprint" aria-label="Fingerprint ${arr.join(' ')}">${arr.map((g) => `<span>${g}</span>`).join('')}</span>`;
+
+  // ================= SETTINGS =================
+  const SWITCHES = [
+    ['suggestions', 'Suggested edits', 'Readers can propose wording changes in place.'],
+    ['comments', 'Comments', 'Readers can add and edit comments. You can always comment.'],
+    ['decisions', 'Decisions', 'Readers can approve or reject a version with a passkey.'],
+    ['signing', 'Signing', 'You can ask named people to sign a version. Off pauses an open request.'],
+    ['notifications', 'Notification emails', 'Change notices and comment mail. Signing and access mail still go.'],
+  ];
+  function settingsBody(o) {
+    const sw = SWITCHES.map(([k, label, desc]) => `
+      <li class="switch-row" data-switch-row="${k}">
+        <strong id="sw-${k}">${label}</strong>
+        <small>${desc}</small>
+        <button type="button" class="switch" role="switch" aria-labelledby="sw-${k}" aria-checked="${M.settings[k]}" data-switch="${k}"><span class="sw-word">${M.settings[k] ? 'On' : 'Off'}</span><span class="switch-knob"></span></button>
+      </li>`).join('');
+    let life;
+    if (o.private) {
+      life = `<div class="field">
+          <label class="field-label" for="life-days">Expires after</label>
+          <div class="days-row"><input class="input" id="life-days" inputmode="numeric" value="${M.days}" aria-describedby="life-hint life-err" ${o.invalid ? 'aria-invalid="true"' : ''}><span>days</span></div>
+          <span class="field-hint" id="life-hint">${o.locked ? 'Version 3 is signed, so the lifetime can be extended, not shortened. At least 212 days, at most 365 days from today.' : 'Required for a private relik, at most 365 days from today. Expires on <span id="life-date">23 Jan 2027</span>.'}</span>
+          <span class="field-error" id="life-err" aria-live="polite"></span>
+        </div>
+        <p class="panel-notice">Shortening a private lifetime ends access at the new time, but erasure keeps the original schedule.</p>`;
+    } else {
+      life = `<div class="pick-row" role="radiogroup" aria-label="Lifetime">
+          <label class="pick"><input type="radio" name="life" value="never" ${M.life === 'never' ? 'checked' : ''}>Never</label>
+          <label class="pick"><input type="radio" name="life" value="days" ${M.life === 'days' ? 'checked' : ''}>Expires after</label>
+        </div>
+        <div class="days-row" ${M.life === 'never' ? 'hidden' : ''} data-days-row><input class="input" id="life-days" inputmode="numeric" value="${M.days}" aria-label="Days" aria-describedby="life-err"><span>days</span></div>
+        <span class="field-error" id="life-err" aria-live="polite"></span>`;
+    }
+    const foot = o.saved
+      ? `<span class="chip ok">${ic('check')}Saved</span><span class="panel-meta">Changed just now by you</span><button type="button" class="btn" data-go="${o.private ? 'ST2' : 'ST1'}">Done</button>`
+      : `<span class="panel-meta">Changed 2 days ago by the publisher</span><button type="button" class="btn primary" data-save ${o.waiting ? 'data-waiting' : ''}>${ic('key')}${o.waiting ? 'Waiting for passkey' : 'Save with passkey'}</button>`;
+    return `
+      <p class="panel-lead">Changes apply to everyone at their next request. Pages already open catch up when they reload.</p>
+      <section class="panel-section"><h3>Reading</h3><ul class="switch-list">${sw}</ul></section>
+      <section class="panel-section"><h3>Lifetime ${o.locked ? '<span class="chip">Extend only</span>' : ''}</h3>${life}</section>
+      <div class="panel-foot">${foot}</div>`;
+  }
+  function settingsView(o) {
+    return {
+      band: band({ private: o.private, actions: ['comments', 'suggest', 'decisions', 'signing', 'settings'], active: 'settings', locked: o.locked }),
+      stage: pagesHTML({ pages: [1, 2] }),
+      panel: panel('Settings', settingsBody(o), { sub: o.private ? 'Private' : 'Public' }),
+      overlay: o.waiting ? passkeyOverlay('Confirm settings', 'Touch your security key or use Touch ID to confirm these settings as the owner of this relik.', o.private ? 'ST2s' : 'ST1s') : '',
+    };
+  }
+  function passkeyOverlay(title, text, next) {
+    return `<div class="scrim"><div class="card" role="dialog" aria-modal="true" aria-labelledby="pk-t">
+      <div class="pk-head"><span class="passkey-art">${ic('print')}</span><div><h2 class="card-title" id="pk-t">${title}</h2><p class="card-meta">relik.link wants to use your passkey</p></div></div>
+      <div class="card-body"><p>${text}</p></div>
+      <div class="card-actions"><button type="button" class="btn primary" data-go="${next}">${ic('check')}Approve (mock)</button><button type="button" class="btn" data-back>Cancel</button></div>
+    </div></div>`;
+  }
+
+  S('ST1', 'ST', 'Public owner, all switches on, lifetime Never', { init: { settings: allOn(), life: 'never', days: 30 }, view: () => settingsView({}) });
+  S('ST2', 'ST', 'Private owner, lifetime required, note on shortening erasure', { init: { settings: allOn(), days: 60 }, view: () => settingsView({ private: true }) });
+  S('ST3', 'ST', 'Save with the passkey prompt', { init: { settings: { ...allOn(), suggestions: false }, life: 'never', days: 30 }, view: () => settingsView({ waiting: true }) });
+  S('ST4', 'ST', 'Saved, changed just now', { init: { settings: { ...allOn(), suggestions: false }, life: 'never', days: 30 }, view: () => settingsView({ saved: true }) });
+  S('ST5', 'ST', 'Lifetime out of range', { init: { settings: allOn(), days: 400 }, view: () => settingsView({ private: true, invalid: true }) });
+  S('ST6', 'ST', 'Locked relik: lifetime can only be extended', { init: { settings: allOn(), days: 212, min: 212 }, view: () => settingsView({ private: true, locked: true }) });
+  S('ST7', 'ST', 'Settings at 390 px as a sheet', { init: { settings: allOn(), life: 'never', days: 30 }, view: () => settingsView({}), narrow: true });
+  // the two "saved" landings that Save navigates to
+  S('ST1s', 'ST', 'Saved (from ST1/ST3)', { hidden: true, init: { settings: { ...allOn(), suggestions: false }, life: 'never', days: 30 }, view: () => settingsView({ saved: true }) });
+  S('ST2s', 'ST', 'Saved (private)', { hidden: true, init: { settings: allOn(), days: 60 }, view: () => settingsView({ private: true, saved: true }) });
+  function allOn() { return { suggestions: true, comments: true, decisions: true, signing: true, notifications: true }; }
+
+  // ================= READER GATES =================
+  const THREADS = `
+    <div class="thread"><div class="thread-who"><strong>ana@harbor.studio</strong><span>2 days ago</span></div>
+      <div class="thread-quote">a late fee of $75 applies to any payment received more than five days after its due date</div>
+      <div class="thread-body">Can this be seven days? Our client invoices clear on the 5th.</div></div>
+    <div class="thread"><div class="thread-who"><strong>jason@waldrip.net</strong><span>yesterday</span></div>
+      <div class="thread-body">Seven is fine. I'll change it in version 4 if we need one.</div></div>`;
+  const SUGG = `
+    <div class="thread suggest"><div class="thread-who"><strong>ben@harbor.studio</strong><span>Suggestion · 1 day ago</span></div>
+      <div class="thread-body">workshops of no more than <del>twelve</del> <ins>sixteen</ins> people</div></div>`;
+  function commentsPanel(o) {
+    const closed = o.closed ? `<p class="panel-notice is-oxide">${o.owner ? C.C10o : C.C10r}</p>` : '';
+    const composer = (!o.closed || o.owner) ? `<div class="composer"><label class="field-label" for="cmt">Comment on the selection</label><textarea class="input" id="cmt" placeholder="Add a comment"></textarea><div><button type="button" class="btn primary small">Comment</button></div></div>` : '';
+    return panel('Comments', `${closed}<section class="panel-section"><h3>Page 2 <span>${o.suggest ? 3 : 2}</span></h3>${THREADS}${o.suggest ? SUGG : ''}</section>${composer}`);
+  }
+  S('RG1', 'RG', 'Comments closed, reader view', { view: () => ({ band: band({ actions: ['comments', 'suggest', 'decisions'], active: 'comments' }), stage: pagesHTML({ pages: [2, 3] }), panel: commentsPanel({ closed: true }) }) });
+  S('RG2', 'RG', 'Comments closed, owner view (C10)', { view: () => ({ band: band({ actions: ['comments', 'suggest', 'decisions', 'signing', 'settings'], active: 'comments' }), stage: pagesHTML({ pages: [2, 3] }), panel: commentsPanel({ closed: true, owner: true }) }) });
+  S('RG3', 'RG', 'Suggestions off: no Suggest control, existing suggestion still listed', { view: () => ({ band: band({ actions: ['comments', 'decisions'], active: 'comments' }), stage: pagesHTML({ pages: [2, 3] }), panel: commentsPanel({ suggest: true }) }) });
+  S('RG4', 'RG', 'Decisions off: no Decisions control', { view: () => ({ band: band({ actions: ['comments', 'suggest'] }), stage: pagesHTML({ pages: [1, 2] }) }) });
+
+  // ================= COMPOSER =================
+  function signerRows(o) {
+    return M.signerList.map((s, i) => {
+      const sig = F.signers[i] || F.signers[1];
+      const warn = o.private && i === 1 ? `<div class="warn">${ic('warn')}<span>${s} can\u2019t open this relik yet.</span><button type="button" class="btn small" data-grant>Grant access first</button></div>` : '';
+      return `<li class="signer-row ${sig.cls}" data-signer="${i}" aria-current="${M.cur === i}">
+        <span class="signer-tag ${sig.cls}">${i + 1}</span>
+        <input class="input" value="${s}" aria-label="Signer ${i + 1} email" data-signer-email="${i}">
+        <button type="button" class="icon-btn" data-remove-signer="${i}" aria-label="Remove signer ${i + 1}">${ic('cross')}</button>
+        <span class="row-meta" data-box-count="${i}"></span>
+        ${warn}
+      </li>`;
+    }).join('');
+  }
+  function composerBody(o) {
+    const pageOpts = (o.md ? [] : [1, 2, 3, 4, 5, 6]).map((p) => `<option value="${p}" ${p === M.page ? 'selected' : ''}>Page ${p}</option>`).join('');
+    return `
+      <p class="panel-lead">Pick a signer, then drag on a page to place their box. A signer with no boxes signs in a block after the document.</p>
+      <section class="panel-section"><h3>Signers <span>${M.signerList.length} of 20</span></h3>
+        <ul class="signer-list" id="signer-list">${signerRows(o)}</ul>
+        <div><button type="button" class="btn small" data-add-signer>${ic('plus')}Add signer</button></div>
+      </section>
+      <section class="panel-section"><h3>Order</h3>
+        <div class="seg" role="group" aria-label="Signing order"><button type="button" data-order="parallel" aria-pressed="${M.order === 'parallel'}">Any order</button><button type="button" data-order="sequential" aria-pressed="${M.order === 'sequential'}">In order</button></div>
+        <span class="field-hint" data-order-hint>${M.order === 'sequential' ? 'Signer 2 can sign once signer 1 has signed.' : 'Every signer can sign as soon as the request is sent.'}</span>
+      </section>
+      ${o.md ? '' : `<section class="panel-section"><h3>Place with the keyboard</h3>
+        <div class="kbd-place"><select aria-label="Page" data-kbd-page>${pageOpts}</select><button type="button" class="btn small" data-add-box>${ic('plus')}Add box on this page</button></div>
+        <span class="field-hint">Select a box and use the arrow keys to move it, Shift with the arrows to resize, Delete to remove.</span>
+      </section>`}
+      ${o.private ? `<section class="panel-section"><h3>Receipts</h3><ul class="switch-list">
+        <li class="switch-row"><strong id="sw-ro">Require opened</strong><small>A signer\u2019s browser must open and check version 3 before they can sign.</small>
+        <button type="button" class="switch" role="switch" aria-labelledby="sw-ro" aria-checked="true" data-switch-local><span class="sw-word">On</span><span class="switch-knob"></span></button></li></ul></section>` : ''}
+      <div class="panel-foot"><span class="panel-meta">Version 3 · ${o.md ? 'Markdown' : 'PDF, 6 pages'}</span><button type="button" class="btn primary" data-go="RQ5">Review and send</button></div>`;
+  }
+  function composerView(o) {
+    return {
+      band: band({ private: o.private, actions: ['comments', 'suggest', 'decisions', 'signing', 'settings'], active: 'signing' }),
+      stage: o.md ? `<article class="md-doc">${MD}</article>${mdBlock({ compose: true })}` : pagesHTML({ pages: o.pages, label: o.label }),
+      panel: panel('Request signatures', composerBody(o)),
+      scrollTo: o.scrollTo,
+    };
+  }
+  function mdBlock(o = {}) {
+    const slots = F.signers.map((s, i) => {
+      let right = '', mid = `<strong>${s.email}</strong><small>Signs here: name and optional drawn mark</small>`;
+      if (o.signer === i && o.signed) { mid = `<strong><span class="mark-script" style="font-family:'Snell Roundhand','Apple Chancery',var(--serif);font-style:italic;font-size:1.4rem">${s.name}</span></strong><small>Signed at 14:02 UTC</small>`; right = `<span class="chip ok">${ic('check')}Signed</span>`; }
+      else if (o.signer === i) { right = `<button type="button" class="btn primary small" data-go="SG4">${ic('pen')}Sign here</button>`; }
+      else if (o.signer !== undefined) { right = `<span class="chip wait">Waiting</span>`; }
+      return `<div class="sig-slot ${s.cls} ${o.signer !== undefined && o.signer !== i ? 'is-other' : ''}"><span class="signer-tag ${s.cls}">${i + 1}</span><div>${mid}</div>${right}</div>`;
+    }).join('');
+    return `<section class="sig-block" aria-label="Signatures"><h3>Signatures · version 3</h3>${slots}</section>`;
+  }
+  const RQ_INIT = (extra = {}) => ({ signerList: F.signers.map((s) => s.email), cur: 0, order: 'parallel', page: 2, ...extra });
+  S('RQ1', 'RQ', 'PDF: signer list, colour per signer, box dragged on page 2, order toggle', {
+    init: RQ_INIT({ boxes: [{ s: 0, p: 2, x: 52, y: 70, w: 34, h: 6 }], sel: 0 }),
+    view: () => composerView({ pages: [2, 3], label: { 2: 'Drag to place' } }), scrollTo: 2,
+  });
+  S('RQ2', 'RQ', 'Page 4: two boxes for signer 2, keyboard "Add box on this page"', {
+    init: RQ_INIT({ cur: 1, page: 4, order: 'sequential', boxes: [{ s: 0, p: 2, x: 52, y: 70, w: 34, h: 6 }, { s: 1, p: 4, x: 9, y: 66, w: 30, h: 5.5 }, { s: 1, p: 4, x: 58, y: 76, w: 30, h: 5.5 }], sel: 2 }),
+    view: () => composerView({ pages: [4, 5] }),
+  });
+  S('RQ3', 'RQ', 'Markdown: block preview after the document', { init: RQ_INIT({ boxes: [] }), view: () => composerView({ md: true }) });
+  S('RQ4', 'RQ', 'Private: signer without access, Grant access first, Require opened', {
+    init: RQ_INIT({ boxes: [{ s: 0, p: 6, x: 9, y: 61, w: 36, h: 5.5 }, { s: 1, p: 6, x: 9, y: 72, w: 36, h: 5.5 }] }),
+    view: () => composerView({ private: true, pages: [6] }),
+  });
+  S('RQ5', 'RQ', 'Confirm with C3 and the passkey', {
+    init: RQ_INIT({ boxes: [{ s: 0, p: 2, x: 52, y: 70, w: 34, h: 6, removable: false }] }),
+    view: () => ({ ...composerView({ pages: [2, 3] }), overlay: `<div class="scrim"><div class="card" role="dialog" aria-modal="true" aria-labelledby="rq5">
+      <h2 class="card-title" id="rq5">Send for signing</h2><p class="card-meta">${F.title} · version 3 · 2 signers, any order</p>
+      <div class="card-body"><p>${C.C3}</p>
+      <ul class="status-list">${F.signers.map((s, i) => `<li><span class="signer-tag ${s.cls}">${i + 1}</span><span class="who">${s.email}</span><span class="chip">${i === 0 ? '1 box' : 'Block after the document'}</span></li>`).join('')}</ul></div>
+      <div class="card-actions"><button type="button" class="btn primary" data-waiting data-go="RQ6">${ic('key')}Waiting for passkey</button><button type="button" class="btn" data-go="RQ1">Back</button></div></div></div>` }),
+  });
+  S('RQ6', 'RQ', 'Public invitations: Copy and Email draft', {
+    view: () => ({
+      band: band({ actions: ['comments', 'suggest', 'decisions', 'signing', 'settings'], active: 'signing', signCount: 2 }),
+      stage: pagesHTML({ pages: [2] }),
+      panel: panel('Invitations', `
+        <p class="panel-notice"><strong>Request sent.</strong> Send each signer the link yourself.</p>
+        <p class="panel-lead">The link carries the key. Relik never sees it.</p>
+        <ul class="invite-list">${F.signers.map((s, i) => `<li class="invite ${s.cls}"><div class="invite-head"><span class="signer-tag ${s.cls}">${i + 1}</span>${s.email}</div>
+          <div class="invite-actions"><button type="button" class="btn small" data-copy>${ic('copy')}Copy link</button><button type="button" class="btn small" data-draft>${ic('mail')}Email draft</button><span class="feedback" aria-live="polite"></span></div></li>`).join('')}</ul>
+        <div class="panel-foot"><span class="panel-meta">Signing request · any order</span><button type="button" class="btn" data-go="SS1">See status</button></div>`),
+    }),
+  });
+  S('RQ7', 'RQ', 'Private: Relik emailed both signers', {
+    view: () => ({
+      band: band({ private: true, actions: ['comments', 'decisions', 'signing', 'settings'], active: 'signing', signCount: 2 }),
+      stage: pagesHTML({ pages: [6] }),
+      panel: panel('Request sent', `
+        <p class="panel-notice"><strong>Relik emailed both signers.</strong> The email doesn\u2019t name the file or anyone else on the request.</p>
+        <ul class="status-list">${F.signers.map((s, i) => `<li><span class="signer-tag ${s.cls}">${i + 1}</span><span class="who">${s.email}</span><span class="chip">${ic('mail')}Invited</span><span class="when">Today 13:41 UTC</span></li>`).join('')}</ul>
+        <div class="panel-foot"><span class="panel-meta">Require opened: on</span><button type="button" class="btn" data-go="SS2">See status</button></div>`),
+    }),
+  });
+
+  // ================= SIGNER =================
+  const SIGNER_BOXES = (st = 'target', mark) => [
+    { s: 0, p: 2, x: 52, y: 70, w: 34, h: 6, st, mark },
+    { s: 1, p: 4, x: 58, y: 76, w: 30, h: 5.5, st: 'other' },
+    { s: 0, p: 6, x: 9, y: 61, w: 36, h: 5.5, st, mark },
+    { s: 1, p: 6, x: 9, y: 72, w: 36, h: 5.5, st: 'other' },
+  ];
+  function requestStrip(o = {}) {
+    const who = o.who ?? 0;
+    return `<div class="strip ${o.oxide ? 'is-oxide' : ''}" data-strip>
+      <span class="strip-line">${ic('pen')}<span><strong>${F.owner}</strong> asked you to sign version 3</span></span>
+      ${o.chip || ''}
+      <span class="strip-fp"><span class="fp-caption">Owner</span>${fp()}</span>
+    </div>`;
+  }
+  function signPanel(o) {
+    const s = F.signers[o.who ?? 0];
+    const markTabs = `<div class="seg" role="group" aria-label="Mark"><button type="button" data-mark="typed" aria-pressed="${M.mark === 'typed'}">Type</button><button type="button" data-mark="drawn" aria-pressed="${M.mark === 'drawn'}">Draw</button></div>`;
+    const markArea = M.mark === 'drawn'
+      ? `<div class="mark-pad" data-pad><canvas></canvas><span class="pad-hint">Draw your mark</span></div><div><button type="button" class="link-button" data-clear-pad>Clear</button></div>`
+      : `<div class="typed-mark" data-typed>${M.name || '&nbsp;'}</div>`;
+    const signBtn = o.signing
+      ? `<button type="button" class="btn primary" data-waiting disabled>${ic('key')}Waiting for passkey</button><span class="passkey-note">${ic('print')}Approve on this device</span>`
+      : `<button type="button" class="btn primary" data-sign ${M.consent ? '' : 'disabled'}>${ic('key')}Sign</button><span class="passkey-note" data-sign-hint>${M.consent ? 'Your passkey confirms it.' : 'Tick the box above to sign.'}</span>`;
+    return panel('Sign', `
+      <section class="panel-section"><h3>You <span>${s.email}</span></h3>
+        <div class="field"><label class="field-label" for="nm">Your name</label><input class="input" id="nm" value="${M.name}" maxlength="128" data-name></div>
+        <div class="field"><span class="field-label">Mark</span>${markTabs}</div>
+        ${markArea}
+      </section>
+      <section class="panel-section"><h3>Consent</h3>
+        <label class="consent"><input type="checkbox" data-consent ${M.consent ? 'checked' : ''}><span><strong>${C.C1}</strong><br><span class="consent-detail">${C.C2(3, s.email)}</span></span></label>
+      </section>
+      <div class="sign-row">${signBtn}</div>
+      <p class="panel-meta">${o.boxesText || '2 boxes, pages 2 and 6 · 0 of 2 signed'}</p>`, { strip: true });
+  }
+  function signerView(o = {}) {
+    return {
+      band: band({ private: o.private, actions: ['comments', 'suggest', 'decisions', 'sign'], active: 'sign' }),
+      strip: requestStrip(o),
+      stage: o.md ? `<article class="md-doc">${MD}</article>${mdBlock({ signer: 0, signed: o.signed })}` : pagesHTML({ pages: o.pages || [2, 3] }),
+      panel: o.panel ?? signPanel(o),
+      overlay: o.overlay || '',
+    };
+  }
+  const SG_INIT = (x = {}) => ({ boxes: SIGNER_BOXES(), name: 'Ana Ruiz', mark: 'typed', consent: false, ...x });
+  S('SG1', 'SG', 'Banner, boxes highlighted on the PDF, owner fingerprint', { init: SG_INIT({ name: '' }), view: () => signerView() });
+  S('SG2', 'SG', 'Typed mark', { init: SG_INIT(), view: () => signerView() });
+  S('SG3', 'SG', 'Drawn mark', { init: SG_INIT({ mark: 'drawn', preDraw: true }), view: () => signerView() });
+  S('SG4', 'SG', 'Consent with C1 and C2, Sign disabled until ticked', { init: SG_INIT(), view: () => signerView() });
+  S('SG5', 'SG', 'Passkey in progress', { init: SG_INIT({ consent: true }), view: () => signerView({ signing: true, overlay: passkeyOverlay('Sign version 3', 'Your passkey approval is your signature on version 3 of this file.', 'SG6') }) });
+  S('SG6', 'SG', 'Signed: "You signed at 14:02 UTC. 1 of 2 signed."', {
+    init: { boxes: SIGNER_BOXES('signed', 'Ana Ruiz') },
+    view: () => signerView({ panel: panel('Sign', `
+      <p class="panel-notice"><strong>You signed at 14:02 UTC. 1 of 2 signed.</strong></p>
+      <ul class="status-list">
+        <li><span class="signer-tag s1">1</span><span class="who">ana@harbor.studio</span><span class="chip ok">${ic('check')}Signed</span><span class="when">24 Nov 2026 14:02 UTC</span></li>
+        <li><span class="signer-tag s2">2</span><span class="who">ben@harbor.studio</span><span class="chip wait">Not yet</span></li>
+      </ul>
+      <p class="panel-lead">When everyone has signed, Relik emails each of you the signing certificate.</p>`, { strip: true }) }),
+  });
+  S('SG7', 'SG', 'Waiting for turn (C8)', {
+    init: { boxes: [{ s: 1, p: 4, x: 9, y: 66, w: 30, h: 5.5, st: 'target' }, { s: 1, p: 4, x: 58, y: 76, w: 30, h: 5.5, st: 'target' }] },
+    view: () => signerView({ who: 1, pages: [4, 5], panel: panel('Sign', `
+      <p class="panel-notice">${ic('clock')} ${C.C8('ana@harbor.studio')}</p>
+      <p class="panel-lead">This request runs in order. You\u2019re signer 2. Relik emails you when it\u2019s your turn.</p>
+      <ul class="status-list"><li><span class="signer-tag s1">1</span><span class="who">ana@harbor.studio</span><span class="chip wait">Not yet</span></li><li><span class="signer-tag s2">2</span><span class="who">ben@harbor.studio (you)</span><span class="chip">Waiting</span></li></ul>
+      <div class="sign-row"><button type="button" class="btn primary" disabled>${ic('key')}Sign</button></div>`, { strip: true }) }),
+  });
+  S('SG8', 'SG', 'Private, "Opened and checked" chip', { init: SG_INIT({ consent: true }), view: () => signerView({ private: true, chip: `<span class="chip ok">${ic('check')}Opened and checked</span>` }) });
+  S('SG9', 'SG', 'Content mismatch (C7)', {
+    init: { boxes: [] },
+    view: () => signerView({ oxide: true, panel: panel('Sign', `
+      <div class="card is-refusal" style="margin:0;padding:1.1rem;max-width:none"><h3 class="card-title">${ic('warn')} Don\u2019t sign this file</h3><p class="card-body">${C.C7(F.owner)}</p>
+      <p class="card-note">Expected content ${F.digest.slice(0, 8)}…, this file ${'c41e09b2'}….</p></div>`, { strip: true }) }),
+  });
+  S('SG10', 'SG', 'Signing paused (C9)', {
+    init: { boxes: SIGNER_BOXES('other') },
+    view: () => signerView({ panel: panel('Sign', `<p class="panel-notice is-oxide">${ic('pause')} ${C.C9}</p><p class="panel-lead">The request stays open. You can sign when the owner turns signing back on.</p><div class="sign-row"><button type="button" class="btn primary" disabled>${ic('key')}Sign</button></div>`, { strip: true }) }),
+  });
+  S('SG11', 'SG', 'Non-signer key holder: read-only status', {
+    init: { boxes: SIGNER_BOXES('other') },
+    view: () => ({
+      band: band({ actions: ['comments', 'suggest', 'decisions', 'signing'], active: 'signing' }),
+      stage: pagesHTML({ pages: [6] }),
+      panel: panel('Signing', `<p class="panel-lead"><strong>${F.owner}</strong> asked two people to sign version 3. You can read this relik; you\u2019re not a signer.</p>
+        <ul class="status-list"><li><span class="signer-tag s1">1</span><span class="who">ana@harbor.studio</span><span class="chip ok">${ic('check')}Signed</span><span class="when">24 Nov 2026 14:02 UTC</span></li><li><span class="signer-tag s2">2</span><span class="who">ben@harbor.studio</span><span class="chip wait">Not yet</span></li></ul>`),
+    }),
+  });
+  S('SG12', 'SG', 'Block after a markdown document', { init: SG_INIT({ boxes: [] }), view: () => signerView({ md: true, boxesText: 'Signature block after the document · 0 of 2 signed' }), scrollEnd: true });
+  S('SG13', 'SG', 'Signer at 390 px', { init: SG_INIT(), view: () => signerView(), narrow: true });
+  S('SG14', 'SG', 'No passkey yet: create one (decision panel screen)', {
+    init: { boxes: SIGNER_BOXES() },
+    view: () => signerView({ panel: panel('Sign', `
+      <div class="pk-head"><span class="passkey-art">${ic('key')}</span><div><h3 class="card-title" style="font-size:1rem">Create a passkey to sign</h3><p class="panel-meta">ana@harbor.studio</p></div></div>
+      <p class="panel-lead">Signing on Relik uses a passkey on this device: Touch ID, Windows Hello, or a security key. It takes one tap and no password.</p>
+      <div class="sign-row"><button type="button" class="btn primary" data-go="SG2">${ic('key')}Create passkey</button><button type="button" class="link-button">Use a security key</button></div>
+      <p class="panel-meta">A public relik trusts a passkey from its first use with this address.</p>`, { strip: true }) }),
+  });
+  S('SG15', 'SG', 'A box beyond the last page, refused', {
+    init: { boxes: [] },
+    view: () => signerView({ oxide: true, pages: [6], panel: panel('Sign', `
+      <div class="card is-refusal" style="margin:0;padding:1.1rem;max-width:none"><h3 class="card-title">${ic('warn')} This request can\u2019t be signed</h3>
+      <p class="card-body">It places your box on page 7, and this file has 6 pages. Don\u2019t sign it. Ask ${F.owner} to send the request again.</p></div>`, { strip: true }) }),
+  });
+
+  // ================= STATUS =================
+  function statusBody(o) {
+    if (o.private) {
+      const row = (i, served, opened, signed) => `<tr><td class="who"><span class="signer-tag ${F.signers[i].cls}" style="margin-right:0.4rem">${i + 1}</span>${F.signers[i].email}</td>
+        <td>${served ? `<span class="mark-yes" aria-label="yes">${ic('check')}</span><span class="t">${served}</span>` : '<span class="mark-no">·</span>'}</td>
+        <td>${opened ? `<span class="mark-yes" aria-label="yes">${ic('check')}</span><span class="t">${opened}</span>` : '<span class="mark-no">·</span>'}</td>
+        <td>${signed ? `<span class="mark-yes" aria-label="yes">${ic('check')}</span><span class="t">${signed}</span>` : '<span class="mark-no">·</span>'}</td></tr>`;
+      return `<div class="request"><div class="request-head"><strong>Version 3 · in order</strong><span class="request-when">Sent 24 Nov 13:41 UTC</span></div>
+        <table class="receipts"><thead><tr><th>Signer</th><th>Served</th><th>Opened</th><th>Signed</th></tr></thead><tbody>
+        ${row(0, '13:52', '13:52', '14:02')}${row(1, '15:10', '', '')}</tbody></table>
+        <p class="legend">${C.C12}</p></div>
+        <section class="panel-section"><h3>Other readers</h3><table class="receipts"><tbody><tr><td class="who">studio@harbor.studio</td><td><span class="mark-yes">${ic('check')}</span><span class="t">Served 12:08</span></td><td><span class="mark-yes">${ic('check')}</span><span class="t">Opened 12:08</span></td><td></td></tr></tbody></table></section>
+        <div class="panel-foot"><button type="button" class="btn danger" data-go="SS4">Cancel request</button></div>`;
+    }
+    return `<div class="request"><div class="request-head"><strong>Version 3 · any order</strong><span class="request-when">Sent 24 Nov 13:41 UTC</span></div>
+      <ul class="status-list">
+        <li><span class="signer-tag s1">1</span><span class="who">ana@harbor.studio</span><span class="chip ok">${ic('check')}Signed</span><span class="when">14:02 UTC</span></li>
+        <li><span class="signer-tag s2">2</span><span class="who">ben@harbor.studio</span><span class="chip wait">Ready</span><span class="when">Not opened yet</span></li>
+      </ul></div>
+      <p class="panel-lead">1 of 2 signed. You can\u2019t republish while this request is open.</p>
+      <div class="panel-foot"><button type="button" class="btn small" data-copy>${ic('copy')}Copy link again</button><span class="feedback" aria-live="polite"></span><button type="button" class="btn danger" data-go="SS4">Cancel request</button></div>`;
+  }
+  const CHECKS = [
+    ['format', 'origin https://relik.link'], ['request_statement', ''], ['request_signer', 'jason@waldrip.net'], ['request_attestation', ''],
+    ['signers_complete', '2 of 2'], ['signature_binding', '×2'], ['consent', 'relic/sign-consent/v1'], ['mark_hash', '×2'], ['signature_webauthn', '×2'], ['order', 'any order'], ['content', 'match'],
+  ];
+  const checkList = (bad) => `<ul class="checks">${CHECKS.map(([id, d]) => {
+    const b = bad && bad.id === id;
+    return `<li class="${b ? 'is-bad' : ''}"><span class="${b ? 'bad' : 'ok'}">${ic(b ? 'cross' : 'check')}</span><span>${id}</span><span style="color:var(--ink-soft)">${b ? '' : d}</span>${b ? `<span class="detail">${bad.detail}</span>` : ''}</li>`;
+  }).join('')}</ul>`;
+  const lockStrip = (o = {}) => `<div class="strip is-oxide" data-strip><span class="strip-line">${ic('lock')}<span><strong>${o.private ? C.C6(3, F.date) : C.C5(3, F.date)}</strong></span></span>${o.link ? `<a href="#CF1" class="strip-fp">Signing certificate</a>` : ''}</div>`;
+  S('SS1', 'SS', 'Public open request with per-signer status', { init: { boxes: SIGNER_BOXES('other') }, view: () => ({ band: band({ actions: ['comments', 'suggest', 'decisions', 'signing', 'settings'], active: 'signing', signCount: 1 }), stage: pagesHTML({ pages: [2] }), panel: panel('Signing', statusBody({})) }) });
+  S('SS2', 'SS', 'Private: Served, Opened, Signed with the C12 legend', { view: () => ({ band: band({ private: true, actions: ['comments', 'decisions', 'signing', 'settings'], active: 'signing', signCount: 1 }), stage: pagesHTML({ pages: [6] }), panel: panel('Signing', statusBody({ private: true })) }) });
+  S('SS3', 'SS', 'Complete: lock banner, Download certificate, Verified in this browser', {
+    init: { boxes: [{ s: 0, p: 6, x: 9, y: 61, w: 36, h: 5.5, st: 'signed' }, { s: 1, p: 6, x: 9, y: 72, w: 36, h: 5.5, st: 'signed' }] },
+    view: () => ({
+      band: band({ actions: ['comments', 'suggest', 'decisions', 'signing', 'settings'], active: 'signing', locked: true }),
+      strip: lockStrip(),
+      stage: pagesHTML({ pages: [6] }),
+      panel: panel('Signing', `
+        <div class="request"><div class="request-head"><strong>Everyone signed version 3</strong><span class="request-when">${F.date} 16:27 UTC</span></div>
+        <ul class="status-list"><li><span class="signer-tag s1">1</span><span class="who">ana@harbor.studio</span><span class="chip ok">${ic('check')}Signed</span><span class="when">14:02 UTC</span></li><li><span class="signer-tag s2">2</span><span class="who">ben@harbor.studio</span><span class="chip ok">${ic('check')}Signed</span><span class="when">16:27 UTC</span></li></ul></div>
+        <div class="sign-row"><button type="button" class="btn primary" data-download>${ic('download')}Download certificate</button><button type="button" class="link-button" data-go="CF1">Read it</button><span class="feedback" aria-live="polite"></span></div>
+        <section class="panel-section"><h3>Verified in this browser <span class="chip ok">${ic('check')}11 checks</span></h3>${checkList()}</section>`, { strip: true }),
+    }),
+  });
+  S('SS4', 'SS', 'Cancel confirmation', {
+    init: { boxes: SIGNER_BOXES('other') },
+    view: () => ({ band: band({ actions: ['comments', 'suggest', 'decisions', 'signing', 'settings'], active: 'signing', signCount: 1 }), stage: pagesHTML({ pages: [2] }), panel: panel('Signing', statusBody({})),
+      overlay: `<div class="scrim"><div class="card is-refusal" role="dialog" aria-modal="true" aria-labelledby="ss4"><h2 class="card-title" id="ss4">Cancel this signing request?</h2><p class="card-meta">Version 3 · 1 of 2 signed</p>
+      <div class="card-body"><p>ana@harbor.studio has already signed. Cancelling ends the request for everyone and keeps her signature on record, without a certificate. Both signers get an email saying it was cancelled.</p></div>
+      <div class="card-actions"><button type="button" class="btn danger" data-go="SS5" style="border-color:var(--oxide);color:var(--oxide)">${ic('key')}Cancel request with passkey</button><button type="button" class="btn" data-go="SS1">Keep it open</button></div></div></div>` }),
+  });
+  S('SS5', 'SS', 'Cancelled', {
+    view: () => ({ band: band({ actions: ['comments', 'suggest', 'decisions', 'signing', 'settings'], active: 'signing' }), stage: pagesHTML({ pages: [2] }),
+      panel: panel('Signing', `<div class="request is-quiet"><div class="request-head"><strong>Request cancelled</strong><span class="request-when">${F.date} 15:44 UTC</span></div>
+        <ul class="status-list"><li><span class="signer-tag s1">1</span><span class="who">ana@harbor.studio</span><span class="chip">Signed, then cancelled</span></li><li><span class="signer-tag s2">2</span><span class="who">ben@harbor.studio</span><span class="chip">Cancelled</span></li></ul></div>
+        <p class="panel-lead">You can republish now, or start a new request.</p>
+        <div class="panel-foot"><button type="button" class="btn primary" data-go="RQ1">New request</button></div>`) }),
+  });
+
+  // ================= LOCK =================
+  S('LK1', 'LK', 'Public C5 banner on the band', { init: { boxes: [{ s: 0, p: 6, x: 9, y: 61, w: 36, h: 5.5, st: 'signed' }, { s: 1, p: 6, x: 9, y: 72, w: 36, h: 5.5, st: 'signed' }] }, view: () => ({ band: band({ actions: ['comments', 'suggest', 'decisions', 'signing'], locked: true }), strip: lockStrip({ link: true }), stage: pagesHTML({ pages: [5, 6] }), scrollTo: 6 }) });
+  S('LK2', 'LK', 'Private relik at v4: Version 3 is signed, with a link (C6)', {
+    view: () => ({
+      band: band({ private: true, version: 4, actions: ['comments', 'decisions', 'signing', 'history'] }),
+      strip: `<div class="strip is-oxide" data-strip><span class="strip-line">${ic('lock')}<span><strong>Version 3 is signed.</strong> ${C.C6(3, F.date)}</span></span><a href="#CF1" class="strip-fp">Open version 3</a></div>`,
+      stage: pagesHTML({ pages: [1, 2] }),
+    }),
+  });
+
+  // ================= CERTIFICATE =================
+  function certView(bad) {
+    return {
+      band: `<header class="bar"><div class="mark">relik.link</div><div class="identity"><div class="filename">relik-${F.id.slice(0, 8)}-v3-signing.json</div><div class="identity-meta"><div class="accession">SIGNING CERTIFICATE</div><span class="version-label">v3</span></div></div><div class="actions"><button type="button" class="action" data-download>${ic('download')}<span class="label">Download</span></button></div></header>`,
+      stage: `<article class="cert">
+        <div class="cert-head"><div><div class="cert-kicker">relic/signing-certificate/v1 · public</div><h1>${F.title}</h1></div>
+          <span class="verdict ${bad ? 'bad' : ''}">${ic(bad ? 'cross' : 'check')}${bad ? 'Fails: signature_binding' : 'Verified in this browser'}</span></div>
+        <dl class="cert-grid"><div><dt>Relik</dt><dd>${F.id}</dd></div><div><dt>Version</dt><dd>3</dd></div><div><dt>Content digest</dt><dd>${F.digest}…</dd></div><div><dt>Completed</dt><dd>${F.date} 16:27 UTC*</dd></div></dl>
+        <div class="proves"><div class="yes"><h2>${ic('check')}What this proves</h2><p>${C.C4p}</p></div><div class="no"><h2>${ic('cross')}What this doesn\u2019t prove</h2><p>${C.C4n}</p></div></div>
+        <section class="cert-section"><h2>Requested by</h2><div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:center"><strong style="font-size:0.92rem">${F.owner}</strong>${fp()}</div></section>
+        <section class="cert-section"><h2>Signatures</h2>
+          <table class="receipts"><thead><tr><th>#</th><th>Signer</th><th>Name</th><th>Signed (device)</th><th>Recorded*</th><th>Passkey</th></tr></thead><tbody>
+          <tr><td><span class="signer-tag s1">1</span></td><td class="who">ana@harbor.studio</td><td>Ana Ruiz</td><td>14:02:11 UTC</td><td>14:02:13 UTC</td><td style="font-family:var(--mono);font-size:0.72rem">cred 4QhV…T8a</td></tr>
+          <tr ${bad ? 'style="background:var(--diff-removed)"' : ''}><td><span class="signer-tag s2">2</span></td><td class="who">ben@harbor.studio</td><td>Ben Okafor</td><td>16:27:40 UTC</td><td>16:27:41 UTC</td><td style="font-family:var(--mono);font-size:0.72rem">cred x9Lm…2rC</td></tr></tbody></table>
+          <p class="unsigned-note">* Relik\u2019s own record, not signed by anyone.</p></section>
+        <section class="cert-section"><h2>Checks</h2>${checkList(bad ? { id: 'signature_binding', detail: 'Signature 2: request_sha256 is 51ad…e07 in the statement, and the request in this file hashes to 8c02…f94. The request was changed after ben@harbor.studio signed.' } : null)}</section>
+        <div class="cert-foot"><button type="button" class="btn" data-download>${ic('download')}Download JSON</button><span class="panel-meta">Verifies offline with verifySigningCertificate or relic_verify_certificate.</span><span class="feedback" aria-live="polite"></span></div>
+      </article>`,
+      full: true,
+    };
+  }
+  S('CF1', 'CF', 'Readable certificate: What this proves and doesn\u2019t (C4)', { view: () => certView(false), full: true });
+  S('CF2', 'CF', 'Tampered certificate, failing check named', { view: () => certView(true), full: true });
+
+  // ================= EMAIL =================
+  function mail(o) {
+    return {
+      band: `<header class="bar"><div class="mark">relik.link</div><div class="identity"><div class="filename">${o.kind}</div><div class="identity-meta"><div class="accession">${o.draft ? 'DRAFT IN YOUR MAIL' : 'SENT BY RELIK'}</div></div></div></header>`,
+      stage: `<div class="mail-stage"><div class="mail-label">${o.label}</div><article class="mail">
+        <dl class="mail-head"><dt>From</dt><dd>${o.from}</dd><dt>To</dt><dd>${o.to}</dd><dt>Subject</dt><dd class="subject">${o.subject}</dd></dl>
+        <div class="mail-body">${o.body}</div></article></div>`,
+      full: true,
+    };
+  }
+  const STOP = `<p class="small">You get this because ${'you'} are on a signing request. Stop emails about this relik: <a href="#EM1">https://relik.link/notices/stop</a></p>`;
+  S('EM1', 'EM', 'Public turn', { full: true, view: () => mail({ kind: 'Turn email', label: 'Public relik · sequential order', from: 'Relik &lt;notices@relik.link&gt;', to: 'ben@harbor.studio', subject: `It\u2019s your turn to sign \u201c${F.title}\u201d`,
+    body: `<p>ana@harbor.studio has signed version 3 of \u201c${F.title}\u201d, sent by ${F.owner}. You\u2019re next.</p><p>Open the link the owner sent you, because Relik never holds the key, so this email can\u2019t include it.</p>${STOP}` }) });
+  S('EM2', 'EM', 'Public completion with the attachment chip', { full: true, view: () => mail({ kind: 'Completion email', label: 'Public relik · to every signer and the owner', from: 'Relik &lt;notices@relik.link&gt;', to: `ana@harbor.studio, ben@harbor.studio, ${F.owner}`, subject: `Everyone signed \u201c${F.title}\u201d`,
+    body: `<p>Version 3 of \u201c${F.title}\u201d is signed by everyone. It\u2019s locked: this relik can\u2019t be republished.</p>
+      <ul><li>ana@harbor.studio, ${F.date} 14:02 UTC</li><li>ben@harbor.studio, ${F.date} 16:27 UTC</li></ul>
+      <p>Version 3 · content digest <span style="font-family:var(--mono)">${F.digest}</span> · the relik expires: never.</p>
+      <p>${C4}</p>
+      <span class="attach">${ic('file')}relik-${F.id}-v3-signing.json · 14 KB</span>${STOP}` }) });
+  S('EM3', 'EM', 'Private invite', { full: true, view: () => mail({ kind: 'Invitation email', label: 'Private relik · generic: no title, no other party', from: 'Relik &lt;notices@relik.link&gt;', to: 'ana@harbor.studio', subject: 'You\u2019ve been asked to sign a private relik',
+    body: `<p>Someone has asked you to sign a private relik. Sign in with this address to see what it is and who sent it.</p><p class="linkline"><a href="#SG8">https://relik.link/${F.id}</a></p>${STOP}` }) });
+  S('EM4', 'EM', 'Private completion', { full: true, view: () => mail({ kind: 'Completion email', label: 'Private relik · generic', from: 'Relik &lt;notices@relik.link&gt;', to: 'ana@harbor.studio', subject: 'Everyone signed a private relik you signed',
+    body: `<p>Every signer has signed a private relik you were asked to sign. Open it to download the signing certificate.</p><p class="linkline"><a href="#SS3">https://relik.link/${F.id}</a></p>${STOP}` }) });
+  S('EM5', 'EM', 'Public cancelled', { full: true, view: () => mail({ kind: 'Cancelled email', label: 'Public relik', from: 'Relik &lt;notices@relik.link&gt;', to: 'ana@harbor.studio, ben@harbor.studio', subject: `Signing cancelled: \u201c${F.title}\u201d`,
+    body: `<p>${F.owner} cancelled the request to sign version 3 of \u201c${F.title}\u201d. Nothing more is needed from you.</p>${STOP}` }) });
+  S('EM6', 'EM', 'MCP invitation draft with the full link', { full: true, view: () => mail({ draft: true, kind: 'Invitation draft', label: 'Returned by relic_request_signatures · drafted in the owner\u2019s mailbox, not sent', from: F.owner, to: 'ana@harbor.studio', subject: `Please sign \u201c${F.title}\u201d`,
+    body: `<span class="chip draft-tag">${ic('mail')}Draft</span><p>Hi Ana, please sign version 3 of the studio lease. Open this link, sign in with ana@harbor.studio, and confirm with your passkey:</p><p class="linkline"><a href="#SG1">${F.link}</a></p><p>The link carries the key. Relik never sees it. Please don\u2019t forward it.</p><p>Jason</p>` }) });
+
+  // ================= render =================
+  let current = null;
+  function render(key) {
+    const st = BYKEY[key] || STATES[0];
+    current = st;
+    M = JSON.parse(JSON.stringify(st.init || {}));
+    if (!M.settings) M.settings = allOn();
+    if (M.sel === undefined) M.sel = null;
+    document.body.removeAttribute('data-ready');
+    const v = st.view();
+    app.className = v.panel ? 'has-panel' : '';
+    app.innerHTML = `${v.band}${v.strip || ''}<main class="${v.panel ? 'has-panel' : ''}"><div class="stage">${v.stage}</div></main>${v.panel || ''}${v.overlay || ''}`;
+    const strip = $('[data-strip]', app);
+    app.style.setProperty('--strip-h', strip ? strip.offsetHeight + 'px' : '0px');
+    drawBoxes();
+    wire(st);
+    if (st.key === 'ST5') validateDays();
+    const target = st.scrollTo || v.scrollTo;
+    app.scrollTop = 0;
+    if (target) { const w = $(`[data-page-wrap="${target}"]`); if (w) app.scrollTop = w.offsetTop - 70; }
+    if (st.scrollEnd) app.scrollTop = app.scrollHeight;
+    if (M.preDraw) preDraw();
+    $('#rail-key').textContent = st.key;
+    $('#rail-title').textContent = `${st.key} · ${GROUPS[st.group]}: ${st.title}`;
+    $$('#rail-groups button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.key === st.key)));
+    requestAnimationFrame(() => requestAnimationFrame(() => { document.body.dataset.ready = st.key; }));
+  }
+
+  function go(key) { if (location.hash.slice(1) === key) render(key); else location.hash = key; }
+
+  // ---------------- interactions ----------------
+  function wire(st) {
+    app.onclick = (e) => {
+      const t = e.target.closest('button, [data-go], .switch-row, .signer-row, a');
+      if (!t) { if (!e.target.closest('.sbox')) { if (M.sel !== null && st.group === 'RQ') { M.sel = null; drawBoxes(); } } return; }
+      if (t.dataset.go) { e.preventDefault(); go(t.dataset.go); return; }
+      if (t.hasAttribute('data-back')) { history.back(); return; }
+      if (t.classList.contains('switch-row') && !e.target.closest('.switch')) { $('.switch', t)?.click(); return; }
+      if (t.dataset.switch) { const k = t.dataset.switch; M.settings[k] = !M.settings[k]; t.setAttribute('aria-checked', M.settings[k]); $('.sw-word', t).textContent = M.settings[k] ? 'On' : 'Off'; dirty(); return; }
+      if (t.hasAttribute('data-switch-local')) { const on = t.getAttribute('aria-checked') !== 'true'; t.setAttribute('aria-checked', on); $('.sw-word', t).textContent = on ? 'On' : 'Off'; return; }
+      if (t.hasAttribute('data-save')) { if (validateDays()) go(st.key === 'ST2' || st.key === 'ST5' || st.key === 'ST6' ? 'ST2s' : 'ST3'); return; }
+      if (t.dataset.order) { M.order = t.dataset.order; $$('[data-order]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.order === M.order))); $('[data-order-hint]').textContent = M.order === 'sequential' ? 'Signer 2 can sign once signer 1 has signed.' : 'Every signer can sign as soon as the request is sent.'; return; }
+      if (t.classList.contains('signer-row') || t.closest('.signer-row') && t.tagName !== 'BUTTON') { const i = +(t.closest('.signer-row').dataset.signer); if (M.cur !== i) { M.cur = i; $$('.signer-row').forEach((r) => r.setAttribute('aria-current', String(+r.dataset.signer === i))); } return; }
+      if (t.dataset.removeSigner !== undefined) { const i = +t.dataset.removeSigner; if (M.signerList.length <= 1) return; M.signerList.splice(i, 1); M.boxes = (M.boxes || []).filter((b) => b.s !== i).map((b) => ({ ...b, s: b.s > i ? b.s - 1 : b.s })); M.cur = 0; M.sel = null; rerenderSigners(); return; }
+      if (t.hasAttribute('data-add-signer')) { if (M.signerList.length >= 2) { M.signerList.push(`studio${M.signerList.length - 1}@harbor.studio`); } else { M.signerList.push(F.signers[M.signerList.length].email); } M.cur = M.signerList.length - 1; rerenderSigners(); $(`[data-signer-email="${M.cur}"]`)?.focus(); return; }
+      if (t.hasAttribute('data-add-box')) { const p = +$('[data-kbd-page]').value; if (!$(`.page[data-page="${p}"]`)) { showPage(p); } M.boxes.push({ s: Math.min(M.cur, 1), p, x: 56, y: 46, w: 30, h: 5.5 }); M.sel = M.boxes.length - 1; drawBoxes(); $(`.sbox[data-box="${M.sel}"]`)?.focus(); return; }
+      if (t.dataset.removeBox !== undefined) { M.boxes.splice(+t.dataset.removeBox, 1); M.sel = null; drawBoxes(); return; }
+      if (t.hasAttribute('data-copy')) { feedback(t, 'Link copied'); return; }
+      if (t.hasAttribute('data-draft')) { feedback(t, 'Draft opened in your mail app'); return; }
+      if (t.hasAttribute('data-download')) { feedback(t, 'Saved relik-h7q2m9xa-v3-signing.json'); return; }
+      if (t.dataset.mark) { M.mark = t.dataset.mark; M.preDraw = false; rerenderSign(); return; }
+      if (t.hasAttribute('data-clear-pad')) { const c = $('[data-pad] canvas'); c.getContext('2d').clearRect(0, 0, c.width, c.height); return; }
+      if (t.hasAttribute('data-sign')) { if (!M.consent) return; go('SG5'); return; }
+      if (t.hasAttribute('data-grant')) { const w = t.closest('.warn'); w.innerHTML = `${ic('check')}<span>Access granted to ${M.signerList[1]}. They get an email.</span>`; w.style.borderLeftColor = 'var(--patina)'; return; }
+      if (t.dataset.act === 'settings') { go('ST1'); return; }
+      if (t.dataset.act === 'signing' && st.group !== 'RQ' && st.group !== 'SS') { go('RQ1'); return; }
+      if (t.dataset.act === 'comments' && st.group !== 'RG') { go('RG2'); return; }
+      if (t.classList.contains('panel-close')) { t.closest('.panel').hidden = true; app.querySelector('main').classList.remove('has-panel'); return; }
+    };
+    app.oninput = (e) => {
+      const t = e.target;
+      if (t.id === 'life-days') { M.days = t.value; validateDays(); dirty(); }
+      if (t.name === 'life') { M.life = t.value; $('[data-days-row]').hidden = M.life === 'never'; validateDays(); dirty(); }
+      if (t.hasAttribute('data-name')) { M.name = t.value; const ty = $('[data-typed]'); if (ty) ty.innerHTML = M.name || '&nbsp;'; }
+      if (t.hasAttribute('data-consent')) { M.consent = t.checked; const b = $('[data-sign]'); b.disabled = !M.consent; $('[data-sign-hint]').textContent = M.consent ? 'Your passkey confirms it.' : 'Tick the box above to sign.'; }
+      if (t.dataset.signerEmail !== undefined) { M.signerList[+t.dataset.signerEmail] = t.value; }
+      if (t.hasAttribute('data-kbd-page')) { M.page = +t.value; showPage(M.page); }
+    };
+    app.onchange = app.oninput;
+    if (st.group === 'RQ') wireDrag();
+    if (st.group === 'SG') { $$('.sbox.is-target').forEach((b) => b.addEventListener('click', () => $('#nm')?.focus())); }
+    wirePad();
+  }
+  function dirty() { const s = $('[data-save]'); if (s) s.disabled = !!$('#life-days[aria-invalid="true"]'); }
+  function validateDays() {
+    const inp = $('#life-days'); const err = $('#life-err');
+    if (!inp || !err) return true;
+    if (inp.closest('[hidden]')) { err.innerHTML = ''; inp.removeAttribute('aria-invalid'); return true; }
+    const n = Number(inp.value);
+    const min = M.min || 1;
+    let msg = '';
+    if (!/^\d+$/.test(String(inp.value).trim())) msg = 'Enter a whole number of days.';
+    else if (n < min) msg = M.min ? `A signed relik can\u2019t be shortened. Enter at least ${min} days.` : 'Enter at least 1 day.';
+    else if (inp.closest('.panel-section').querySelector('#life-hint') && n > 365) msg = 'A private relik can be extended at most 365 days from today. Enter 365 or fewer.';
+    else if (n > 36500) msg = 'Enter 36,500 days or fewer, or choose Never.';
+    err.innerHTML = msg ? `${ic('warn')}<span>${msg}</span>` : '';
+    if (msg) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid');
+    const d = $('#life-date'); if (d && !msg) { const dt = new Date(Date.UTC(2026, 10, 24) + n * 864e5); d.textContent = dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }); }
+    const s = $('[data-save]'); if (s) s.disabled = !!msg;
+    return !msg;
+  }
+  function feedback(t, text) { const f = $('.feedback', t.closest('.invite, .panel-foot, .sign-row, .cert-foot') || app) || $('.feedback'); if (f) { f.textContent = text; clearTimeout(f._t); f._t = setTimeout(() => { f.textContent = ''; }, 2400); } }
+  function rerenderSigners() { const st = current; const o = { private: st.key === 'RQ4', md: st.key === 'RQ3' }; $('.panel-body').innerHTML = composerBody(o); drawBoxes(); }
+  function rerenderSign() { const o = { private: current.key === 'SG8', md: current.key === 'SG12' }; const p = $('.panel'); const tmp = document.createElement('div'); tmp.innerHTML = signPanel(o); p.replaceWith(tmp.firstElementChild); wirePad(); }
+  function showPage(p) {
+    const pages = $('.pages'); if (!pages) return;
+    let w = $(`[data-page-wrap="${p}"]`);
+    if (!w) { pages.insertAdjacentHTML('beforeend', pagesHTML({ pages: [p] }).replace(/^<div class="pages">|<\/div>$/g, '')); w = $(`[data-page-wrap="${p}"]`); drawBoxes(); }
+    app.scrollTop = w.offsetTop - 70;
+  }
+
+  function wireDrag() {
+    let drag = null;
+    app.onpointerdown = (e) => {
+      const box = e.target.closest('.sbox.is-edit');
+      const page = e.target.closest('.page');
+      if (e.target.closest('.box-x')) return;
+      if (box) {
+        const i = +box.dataset.box; M.sel = i;
+        const r = box.parentElement.getBoundingClientRect(); const b = M.boxes[i];
+        drag = { mode: 'move', i, r, dx: (e.clientX - r.left) / r.width * 100 - b.x, dy: (e.clientY - r.top) / r.height * 100 - b.y };
+        $$('.sbox').forEach((x) => x.classList.toggle('is-selected', +x.dataset.box === i)); box.classList.add('is-dragging');
+        box.setPointerCapture(e.pointerId); e.preventDefault(); return;
+      }
+      if (page) {
+        const r = page.getBoundingClientRect(); const p = +page.dataset.page;
+        const x = (e.clientX - r.left) / r.width * 100, y = (e.clientY - r.top) / r.height * 100;
+        M.boxes.push({ s: Math.min(M.cur, 1), p, x, y, w: 2, h: 2 }); M.sel = M.boxes.length - 1;
+        drag = { mode: 'draw', i: M.sel, r, x0: x, y0: y }; drawBoxes(); e.preventDefault();
+      }
+    };
+    app.onpointermove = (e) => {
+      if (!drag) return; const b = M.boxes[drag.i]; const r = drag.r;
+      const px = (e.clientX - r.left) / r.width * 100, py = (e.clientY - r.top) / r.height * 100;
+      if (drag.mode === 'move') { b.x = clamp(px - drag.dx, 0, 100 - b.w); b.y = clamp(py - drag.dy, 0, 100 - b.h); }
+      else { b.x = clamp(Math.min(px, drag.x0), 0, 100); b.y = clamp(Math.min(py, drag.y0), 0, 100); b.w = clamp(Math.abs(px - drag.x0), 2, 100 - b.x); b.h = clamp(Math.abs(py - drag.y0), 2, 100 - b.y); }
+      const el = $(`.sbox[data-box="${drag.i}"]`); if (el) Object.assign(el.style, { left: b.x + '%', top: b.y + '%', width: b.w + '%', height: b.h + '%' });
+    };
+    app.onpointerup = () => {
+      if (!drag) return; const b = M.boxes[drag.i];
+      if (drag.mode === 'draw' && (b.w < 6 || b.h < 2.5)) { b.w = Math.max(b.w, 30); b.h = Math.max(b.h, 5.5); b.x = clamp(b.x, 0, 100 - b.w); b.y = clamp(b.y, 0, 100 - b.h); }
+      drag = null; drawBoxes(); $(`.sbox[data-box="${M.sel}"]`)?.focus();
+    };
+    app.onkeydown = (e) => {
+      const box = e.target.closest?.('.sbox.is-edit'); if (!box) return;
+      const i = +box.dataset.box; const b = M.boxes[i]; M.sel = i;
+      const step = 1;
+      const k = e.key;
+      if (k === 'Delete' || k === 'Backspace') { M.boxes.splice(i, 1); M.sel = null; drawBoxes(); e.preventDefault(); return; }
+      const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[k];
+      if (!d) return;
+      if (e.shiftKey) { b.w = clamp(b.w + d[0], 6, 100 - b.x); b.h = clamp(b.h + d[1], 2.5, 100 - b.y); }
+      else { b.x = clamp(b.x + d[0], 0, 100 - b.w); b.y = clamp(b.y + d[1], 0, 100 - b.h); }
+      drawBoxes(); $(`.sbox[data-box="${i}"]`).focus(); e.preventDefault();
+    };
+  }
+  const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
+
+  function wirePad() {
+    const pad = $('[data-pad]'); if (!pad) return;
+    const c = $('canvas', pad); const dpr = window.devicePixelRatio || 1;
+    const size = () => { const r = pad.getBoundingClientRect(); c.width = r.width * dpr; c.height = r.height * dpr; };
+    size();
+    const ctx = c.getContext('2d');
+    const style = () => { ctx.lineWidth = 2.2 * dpr; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1d2122'; };
+    style();
+    let down = false;
+    pad.onpointerdown = (e) => { down = true; pad.setPointerCapture(e.pointerId); const r = c.getBoundingClientRect(); ctx.beginPath(); ctx.moveTo((e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr); $('.pad-hint', pad).hidden = true; e.preventDefault(); };
+    pad.onpointermove = (e) => { if (!down) return; const r = c.getBoundingClientRect(); ctx.lineTo((e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr); ctx.stroke(); };
+    pad.onpointerup = pad.onpointercancel = () => { down = false; };
+    pad._ctx = ctx; pad._dpr = dpr;
+  }
+  function preDraw() {
+    const pad = $('[data-pad]'); if (!pad) return; const ctx = pad._ctx; const d = pad._dpr; const c = $('canvas', pad);
+    const W = c.width / d, H = c.height / d;
+    $('.pad-hint', pad).hidden = true;
+    const strokes = [
+      [[0.08, 0.72], [0.12, 0.35], [0.17, 0.25], [0.2, 0.4], [0.18, 0.72], [0.15, 0.55], [0.24, 0.5]],
+      [[0.26, 0.7], [0.29, 0.5], [0.31, 0.7], [0.34, 0.5], [0.37, 0.72], [0.4, 0.52], [0.43, 0.7], [0.48, 0.62]],
+      [[0.52, 0.72], [0.55, 0.3], [0.62, 0.32], [0.58, 0.5], [0.66, 0.72], [0.7, 0.55], [0.74, 0.7], [0.78, 0.52], [0.8, 0.7], [0.92, 0.6]],
+      [[0.1, 0.84], [0.5, 0.8], [0.88, 0.82]],
+    ];
+    for (const s of strokes) { ctx.beginPath(); s.forEach(([x, y], i) => (i ? ctx.lineTo(x * W * d, y * H * d) : ctx.moveTo(x * W * d, y * H * d))); ctx.stroke(); }
+  }
+
+  // ---------------- rail ----------------
+  const view = $('#rail-view');
+  const viewBtn = (label, on, isOn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.onclick = () => { on(); syncView(); render(current.key); }; b._on = isOn; view.append(b); };
+  viewBtn('Light', () => { root.dataset.theme = 'light'; }, () => root.dataset.theme !== 'dark');
+  viewBtn('Dark', () => { root.dataset.theme = 'dark'; }, () => root.dataset.theme === 'dark');
+  viewBtn('1440', () => { delete root.dataset.width; }, () => root.dataset.width !== '390');
+  viewBtn('390', () => { root.dataset.width = '390'; }, () => root.dataset.width === '390');
+  function syncView() { $$('button', view).forEach((b) => b.setAttribute('aria-pressed', String(b._on()))); }
+  if (!root.dataset.theme) root.dataset.theme = 'light';
+  const groupsEl = $('#rail-groups');
+  for (const g of Object.keys(GROUPS)) {
+    const wrap = document.createElement('div'); wrap.className = 'rail-group';
+    wrap.innerHTML = `<b>${g} · ${GROUPS[g]}</b><div></div>`;
+    for (const s of STATES.filter((x) => x.group === g && !x.hidden)) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = s.key; b.title = s.title; b.dataset.key = s.key;
+      b.onclick = () => go(s.key); $('div', wrap).append(b);
+    }
+    groupsEl.append(wrap);
+  }
+  $('#rail-collapse').onclick = (e) => { const c = $('#rail').classList.toggle('is-collapsed'); e.currentTarget.textContent = c ? 'Show' : 'Hide'; e.currentTarget.setAttribute('aria-expanded', String(!c)); };
+  syncView();
+  window.__STATES = STATES.filter((s) => !s.hidden).map((s) => ({ key: s.key, full: !!(s.full), narrow: !!s.narrow }));
+  window.addEventListener('hashchange', () => render(location.hash.slice(1)));
+  render(location.hash.slice(1) || 'ST1');
+})();
+</script>
+</body>
+</html>
