@@ -39,10 +39,32 @@ export interface ShareResult {
   readonly shared_count: number;
   readonly share_limit: number | null;
   readonly email: ShareEmail;
+  readonly grant_url?: string;
   readonly mailto_url: string;
 }
 
 export { composeShareEmail, shareMailtoUrl, type ShareEmail, type ShareSender };
+/**
+ * The owner Share form link for a private relik. The addresses ride in the
+ * fragment, so the browser never sends them and this call makes no request.
+ */
+export function grantUrl(
+  origin: string,
+  relicId: string,
+  emails: readonly string[]
+): string {
+  return `${origin}/${relicId}?access=share#to=${encodeURIComponent(emails.join(','))}`;
+}
+
+/** Refuse a list that is not 1 to 20 addresses, before any service call. */
+function assertEmailCount(emails: readonly string[]): void {
+  if (!Array.isArray(emails) || emails.length < 1 || emails.length > 20) {
+    throw new PublishError(
+      'local_share_emails_invalid',
+      'The address list must have between 1 and 20 entries.'
+    );
+  }
+}
 
 /**
  * Share a private relic: a draft invitation carrying the keyless link and
@@ -62,6 +84,7 @@ function privateInvitation(input: ShareInput, deps: PublishDeps): ShareResult {
     shared_count: 0,
     share_limit: null,
     email,
+    grant_url: grantUrl(deps.relicOrigin, input.relic_id, input.emails),
     mailto_url: shareMailtoUrl(email),
   };
 }
@@ -85,8 +108,10 @@ export async function shareRelic(
   // 2. Load local state. If the relic is missing, refuse with no_local_publish_state:
   //    "can only be shared from the machine that published it".
   //    If the state file cannot be read, refuse with local_state_unreadable.
+  //    A private relik is answered from local state alone: no service call.
   let state: PublishState;
   if (await isPrivateRelic(input.relic_id)) {
+    assertEmailCount(input.emails);
     return privateInvitation(input, deps);
   }
 
@@ -106,16 +131,7 @@ export async function shareRelic(
   }
 
   // 3. If the address list is not 1 to 20 entries, refuse with local_share_emails_invalid.
-  if (
-    !Array.isArray(input.emails) ||
-    input.emails.length < 1 ||
-    input.emails.length > 20
-  ) {
-    throw new PublishError(
-      'local_share_emails_invalid',
-      'The address list must have between 1 and 20 entries.'
-    );
-  }
+  assertEmailCount(input.emails);
 
   // 4. postJson(deps, `${deps.serviceOrigin}/api/relics/${id}/share`, {publish_token, emails}).
   let data: unknown;
