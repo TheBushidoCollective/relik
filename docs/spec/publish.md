@@ -215,25 +215,26 @@ It takes two inputs:
 - `relic_id`: the 26-character relik id.
 - `emails`: an array of 1 to 20 email address strings.
 
-Success returns `structuredContent` with seven members, all required:
+Success returns `structuredContent` with seven members, all required, plus `grant_url` for a private relik:
 - `relic_id`: the canonical relik id.
 - `registered`: normalized email addresses accepted by the service.
 - `added`: number of new addresses added to the share list.
 - `shared_count`: total count of shared addresses on this relik.
-- `share_limit`: maximum shared addresses allowed per relik (50).
+- `share_limit`: maximum shared addresses allowed per relik (50), or `null` on a private relik.
 - `email`: a `ShareEmail` object with `to`, `subject`, and `text`.
 - `mailto_url`: a pre-populated `mailto:` link opening a draft in the user's mail client.
+- `grant_url`: present only for a private relik. The owner's Share form, `{origin}/{relic_id}?access=share#to=<addresses>`, with the addresses comma-joined and percent-encoded in the fragment. The fragment never leaves the browser, so this call makes no request and the service never sees the addresses. Opening it needs the owner's sign-in and passkey. On a private relik `registered` is empty and `added` and `shared_count` are 0.
 
-**The email is composed on the client, and the service never sends it.** For a public relik, the share URL carries the decryption key in its fragment, and the fragment must never reach the service, so the share email cannot be sent by Relik. The client composes the email locally for the sharer to draft and send from their own mailbox. Calling `relic_share` for a public relik discloses the full link into the session transcript, so the key enters the transcript at share time. For a private relik, `composeShareEmail({..., access:'private'})` writes the keyless link (plan 4.16), so no key enters the transcript at share time. The service stores only the email addresses in the clear, linked to the relik id, to deliver comment and change notices.
+**The email is composed on the client, and the service never sends it.** For a public relik, the share URL carries the decryption key in its fragment, and the fragment must never reach the service, so the share email cannot be sent by Relik. The client composes the email locally for the sharer to draft and send from their own mailbox. Calling `relic_share` for a public relik discloses the full link into the session transcript, so the key enters the transcript at share time. For a private relik, `relic_share` composes the keyless invitation draft with `composePrivateInvitation` and returns it beside `grant_url`, so no key enters the transcript and no request is made. The service stores only the email addresses in the clear, linked to the relik id, to deliver comment and change notices.
 
 **Refusals distinguish local boundaries from server enforcement:**
 - `no_local_publish_state`: the relik id is invalid, or the relik was published on another machine (the key and publish token live only on the publishing machine). Passing a full share URL instead of an id is refused locally to avoid putting the key into the transcript unnecessarily.
 - `local_state_unreadable`: local publish state could not be read from disk.
-- `local_share_emails_invalid`: the email address list is empty or exceeds 20 addresses.
+- `local_share_emails_invalid`: the email address list is empty or exceeds 20 addresses. The check runs locally, before any service call, for public and private reliks alike.
 - `app_response_unusable`: the service returned an unrecognized response shape, or a plain 404 indicating an older service that does not support `relic_share`.
 - Server refusals: `service_paused` (kill switch active), `share_rate_limited` (rate limited by IP), `invalid_relic_id` (malformed id), `relic_removed` (relik was taken down), `relic_not_found` (relik does not exist), `invalid_publish_token` (token mismatch), `relic_expired` or `download_cap_exhausted` (relik no longer available), `invalid_share` (malformed email syntax), and `share_limit_reached` (relik reached 50 address cap).
 
-For a public relik, readers holding the link can also share from the viewer once the relik was published or republished by a client that supplies a share verifier. A private relik has no share verifier (plan 4.13), and sharing it from the viewer needs a session with access (plan 4.7). The plan does not say which route relic-mcp uses to register addresses on a private relik, so this document states no behavior for that case and lists it as open.
+For a private relik, `relic_share` makes no service call and registers nothing. It returns `grant_url` (section 1.8) for the owner, because a grant or an invitation needs the owner's passkey, which relic-mcp cannot use.
 
 ### 1.9 The decisions read tool: `relic_read_decisions`
 
@@ -365,7 +366,7 @@ Every code names its leg in its prefix. `source_*` is the local read path with n
 | `owner_pin_mismatch` | The service names a different owner than the one this device was certified by, or the local record is for another owner. No key is wrapped. | none |
 | `recipient_key_mismatch` | An identity or device the service named does not hash to the id or keys it claims. | none |
 | `recipient_uncertified_device` | A device is not certified by the pinned owner. | none |
-| `recipient_forged_grant` | A grant is not signed by the pinned owner for this relik. No key is wrapped for it. | none |
+| `recipient_forged_grant` | A signer holds no grant for this relik, or a grant is not signed by the pinned owner. No key is wrapped for that signer. The refusal's details are `signer_email` and `grant_url`: the owner's Share form with that address filled in (plan 3.9). The signing request is not posted. | `signer_email`, `grant_url` |
 | `recovery_unsigned` | The recovery designation is not signed by the pinned owner. | none |
 | `recovery_ambiguous` | Two recovery designations carry the same time and name different holders, so neither is trusted. | none |
 | `recipients_stale` | The service answered with an older view of the owner than this machine has already accepted. Nothing is wrapped to it. | none |
