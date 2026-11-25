@@ -70,6 +70,7 @@ async function setup(store: RelicStore) {
       require_opened: boolean;
       version: number;
       ciphertext_sha256: string;
+      order: 'parallel' | 'sequential';
     }> = {}
   ) => {
     const layout = encodeBase64url(randomBytes(64));
@@ -866,3 +867,21 @@ test.each(['requests', 'cancel', 'read'] as const)(
     expect((await (await send(RELIC_ID)).json()).code).toBe('relic_removed');
   }
 );
+
+test('sequential requests show only the first unsigned signer ready', async () => {
+  const store = new MemoryStore();
+  const { a, make } = await setup(store);
+  const request = await make({
+    order: 'sequential',
+    signers: [
+      { email: 'one@example.com', identity_id: null },
+      { email: 'two@example.com', identity_id: null },
+    ],
+  });
+  const response = await a.fetch(post(request));
+  expect(response.status).toBe(201);
+  const result = await response.json();
+  expect(
+    result.signers.map((signer: { status: string }) => signer.status)
+  ).toEqual(['ready', 'waiting']);
+});
