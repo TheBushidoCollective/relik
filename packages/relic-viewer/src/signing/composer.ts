@@ -26,6 +26,80 @@ import type { ViewerDeps } from '../viewer.ts';
 import { signingApi, signingContent } from './api.ts';
 import { mountSigningBoxes } from './boxes.ts';
 
+/** The scope a send resolves signers within: who may already open the relik, and the owner. */
+export interface SignerScope {
+  readonly deps: ViewerDeps;
+  readonly relicId: string;
+  readonly grants: readonly {
+    readonly email: string;
+    readonly identityId: string;
+  }[];
+  readonly owner?: { readonly identityId: string; readonly email: string };
+}
+
+/** The signers a send resolved: granted people carry their verified party. */
+export interface Resolved {
+  readonly signers: { email: string; identity_id: string | null }[];
+  readonly grants: readonly GrantTarget[];
+}
+
+export type Resolution =
+  | ({ readonly kind: 'ready' } & Resolved)
+  | { readonly kind: 'refused'; readonly message: string };
+
+/**
+ * Resolves each typed address to a signer. A signer with access keeps it; a
+ * registered or invited address is granted in the same tap; anything else is
+ * refused, so no request names a signer who could never open the relik.
+ */
+export async function resolveSigners(
+  scope: SignerScope,
+  names: readonly string[]
+): Promise<Resolution> {
+  const known = new Map<string, string>(
+    scope.grants.map((grant) => [normalizeEmail(grant.email), grant.identityId])
+  );
+  if (scope.owner !== undefined) {
+    known.set(normalizeEmail(scope.owner.email), scope.owner.identityId);
+  }
+  const unknown = names.filter((email) => !known.has(email));
+  const looked =
+    unknown.length === 0
+      ? []
+      : await lookupShares(
+          scope.deps,
+          scope.relicId,
+          unknown,
+          new Set(scope.grants.map((grant) => grant.identityId))
+        );
+  const signers: { email: string; identity_id: string | null }[] = [];
+  const grants: GrantTarget[] = [];
+  for (const email of names) {
+    const identityId = known.get(email);
+    if (identityId !== undefined) {
+      signers.push({ email, identity_id: identityId });
+      continue;
+    }
+    const row = looked.find((entry) => normalizeEmail(entry.email) === email);
+    if (row?.kind === 'registered' || row?.kind === 'invited') {
+      grants.push({ party: row.party, fingerprint: row.fingerprint });
+      signers.push({ email, identity_id: row.party.identity.identity_id });
+      continue;
+    }
+    return {
+      kind: 'refused',
+      message: `${email} can't open this relik yet, so they can't be asked to sign. Invite them in Access first.`,
+    };
+  }
+  return { kind: 'ready', signers, grants };
+}
+
+/** The notice that names each person a send will grant, with the fingerprint to check. */
+export function grantNotice(grants: readonly GrantTarget[]): string {
+  if (grants.length === 0) return '';
+  return `Relik will grant ${grants.map((grant) => grant.party.email).join(', ')} access when you send. Check each fingerprint first: ${grants.map((grant) => formatFingerprint(grant.fingerprint)).join('; ')}.`;
+}
+
 /** Owner-only composer. Private signer identities come from the owner's verified grants. */
 export function openSigningComposer(input: {
   readonly deps: ViewerDeps;
@@ -273,58 +347,7 @@ export function openSigningComposer(input: {
     pageEvents.abort();
     panel.remove();
   });
-  /** The signers a send resolved: granted people carry their verified party. */
-  interface Resolved {
-    readonly signers: { email: string; identity_id: string | null }[];
-    readonly grants: readonly GrantTarget[];
-  }
   let resolved: Resolved | undefined;
-  // A private signer who cannot open the relik yet is granted in the same tap.
-  async function resolveSigners(
-    names: readonly string[]
-  ): Promise<Resolved | undefined> {
-    const known = new Map<string, string>(
-      input.grants.map((grant) => [
-        normalizeEmail(grant.email),
-        grant.identityId,
-      ])
-    );
-    if (input.owner !== undefined) {
-      known.set(normalizeEmail(input.owner.email), input.owner.identityId);
-    }
-    const unknown = names.filter((email) => !known.has(email));
-    const looked =
-      unknown.length === 0
-        ? []
-        : await lookupShares(
-            input.deps,
-            input.relicId,
-            unknown,
-            new Set(input.grants.map((grant) => grant.identityId))
-          );
-    const signers: { email: string; identity_id: string | null }[] = [];
-    const grants: GrantTarget[] = [];
-    for (const email of names) {
-      const identityId = known.get(email);
-      if (identityId !== undefined) {
-        signers.push({ email, identity_id: identityId });
-        continue;
-      }
-      const row = looked.find((entry) => normalizeEmail(entry.email) === email);
-      if (row?.kind === 'registered' || row?.kind === 'invited') {
-        grants.push({ party: row.party, fingerprint: row.fingerprint });
-        signers.push({ email, identity_id: row.party.identity.identity_id });
-        continue;
-      }
-      notice.textContent = `${email} can't open this relik yet, so they can't be asked to sign. Invite them in Access first.`;
-      return undefined;
-    }
-    notice.textContent =
-      grants.length === 0
-        ? ''
-        : `Relik will grant ${grants.map((grant) => grant.party.email).join(', ')} access when you send. Check each fingerprint first: ${grants.map((grant) => formatFingerprint(grant.fingerprint)).join('; ')}.`;
-    return { signers, grants };
-  }
   send.addEventListener('click', () => {
     const names = emails.map((field) => normalizeEmail(field.value));
     if (
@@ -337,11 +360,23 @@ export function openSigningComposer(input: {
     }
     if (send.dataset['confirmed'] !== 'true') {
       send.disabled = true;
-      void resolveSigners(names)
+      void resolveSigners(
+        {
+          deps: input.deps,
+          relicId: input.relicId,
+          grants: input.grants,
+          ...(input.owner === undefined ? {} : { owner: input.owner }),
+        },
+        names
+      )
         .then((next) => {
           send.disabled = false;
-          if (next === undefined) return;
+          if (next.kind === 'refused') {
+            notice.textContent = next.message;
+            return;
+          }
           resolved = next;
+          notice.textContent = grantNotice(next.grants);
           send.dataset['confirmed'] = 'true';
           send.textContent = 'Send with passkey';
         })
