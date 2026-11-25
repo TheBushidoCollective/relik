@@ -708,7 +708,9 @@ export function openAccessPanel(
       const data = await load();
       share.update({ access: data.access, admitted: data.admitted });
       if (ctx.mode !== 'focused') {
-        void invitations.update(data.access).catch((error: unknown) => showNotice(problemMessage(error), true));
+        void invitations
+          .update(data.access)
+          .catch((error: unknown) => showNotice(problemMessage(error), true));
       }
       const count = data.admitted.size;
       const readers =

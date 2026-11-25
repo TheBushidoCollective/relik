@@ -445,7 +445,9 @@ class PrivateReader {
   private requestCount: HTMLElement | undefined;
   private detached = false;
   private sharePrefill: readonly string[] = [];
-  private inviteRef: { readonly inviteId: string; readonly d: Uint8Array | undefined } | undefined;
+  private inviteRef:
+    | { readonly inviteId: string; readonly d: Uint8Array | undefined }
+    | undefined;
   private invitation: VerifiedInvitation | undefined;
   private verifiedAt: number | undefined;
 
@@ -738,7 +740,9 @@ class PrivateReader {
     for (const element of this.host.querySelectorAll('[data-invite-date]')) {
       element.textContent = date === undefined ? '' : formatUtcDay(date);
     }
-    for (const element of this.host.querySelectorAll('[data-invite-versions]')) {
+    for (const element of this.host.querySelectorAll(
+      '[data-invite-versions]'
+    )) {
       element.textContent = versions ?? '';
     }
     for (const element of this.host.querySelectorAll('[data-invite-address]')) {
@@ -1164,7 +1168,6 @@ class PrivateReader {
     };
   }
 
-
   /** One version's key, fetched once per page and never written anywhere. */
   private keyFor(
     version: number,
@@ -1359,8 +1362,8 @@ class PrivateReader {
       );
       if (requester === null) void this.openOwnerPanel();
       else void this.openGrantCard(requester);
-    }
-    else if (wanted === 'share' || wanted === 'invites') void this.openOwnerPanel();
+    } else if (wanted === 'share' || wanted === 'invites')
+      void this.openOwnerPanel();
   }
 
   /** The owner's Access control on the relic's taskbar, with the pending count. */
@@ -1400,8 +1403,12 @@ class PrivateReader {
         'GET',
         `/api/relics/${encodeURIComponent(this.mount.relicId)}/requests`
       );
-      const accepted = await listInvites(this.mount.deps, this.mount.relicId).then(
-        (invites) => invites.filter((invite) => invite.status === 'claimed').length,
+      const accepted = await listInvites(
+        this.mount.deps,
+        this.mount.relicId
+      ).then(
+        (invites) =>
+          invites.filter((invite) => invite.status === 'claimed').length,
         () => 0
       );
       // The Access button counts pending requests and accepted invitations awaiting Confirm.

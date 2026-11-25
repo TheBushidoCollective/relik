@@ -3,7 +3,11 @@
  * service is a change to this file alone. Each function names the route it
  * posts to and the answer it expects; the callers never build these paths.
  */
-import type { InviteJSON, InviteOpenJSON, WrapJSON } from '@relic/format/private';
+import type {
+  InviteJSON,
+  InviteOpenJSON,
+  WrapJSON,
+} from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
 import { privateApi } from './fingerprint-input.ts';
 
@@ -75,4 +79,3 @@ export async function claimInvite(
     claim
   );
 }
-

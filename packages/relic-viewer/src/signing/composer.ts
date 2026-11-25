@@ -280,9 +280,14 @@ export function openSigningComposer(input: {
   }
   let resolved: Resolved | undefined;
   // A private signer who cannot open the relik yet is granted in the same tap.
-  async function resolveSigners(names: readonly string[]): Promise<Resolved | undefined> {
+  async function resolveSigners(
+    names: readonly string[]
+  ): Promise<Resolved | undefined> {
     const known = new Map<string, string>(
-      input.grants.map((grant) => [normalizeEmail(grant.email), grant.identityId])
+      input.grants.map((grant) => [
+        normalizeEmail(grant.email),
+        grant.identityId,
+      ])
     );
     if (input.owner !== undefined) {
       known.set(normalizeEmail(input.owner.email), input.owner.identityId);

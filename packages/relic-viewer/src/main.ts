@@ -11656,7 +11656,6 @@ export function renderReady(
               openSharePanel(activeView, relicId, deps, opener);
             },
           }),
-      ...(activeView.settings?.decisions === false || activeView.viewOnly === true
       ...(activeView.settings?.decisions === false ||
       activeView.viewOnly === true
         ? {}

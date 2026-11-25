@@ -2686,7 +2686,10 @@ interface Invitation {
 }
 
 /** The owner's signed invitation to the reader's address, over the sealed world's version 1. */
-async function invitationFor(relicId: string, status = 'open'): Promise<Invitation> {
+async function invitationFor(
+  relicId: string,
+  status = 'open'
+): Promise<Invitation> {
   const pair = await generateInviteKeyPair();
   const inviteId = await inviteIdOf(pair.publicKey);
   const world = await sealedWorld(relicId, {
@@ -2787,7 +2790,8 @@ function inviteeDeps(
 async function signInByCode(root: El): Promise<void> {
   const emailInput = root.querySelector('#signin-email');
   const codeForm = root.querySelector('#signin-code-form');
-  if (emailInput === null || codeForm === null) throw new Error('no sign-in form');
+  if (emailInput === null || codeForm === null)
+    throw new Error('no sign-in form');
   emailInput.value = READER_EMAIL;
   root.querySelector('#signin-email-form')?.dispatch('submit');
   await until(() => codeForm.hidden === false, 'the code form');
@@ -2803,9 +2807,15 @@ describe('the invitee reads an address-bound invitation', () => {
     const inv = await invitationFor(relicId);
     const { fetch, seen } = inviteeService(inv, relicId, { signedIn: false });
     let stripped = 0;
-    const deps = inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {
-      stripped += 1;
-    });
+    const deps = inviteeDeps(
+      inv,
+      relicId,
+      fetch,
+      `#${inviteFragment(inv.d)}`,
+      () => {
+        stripped += 1;
+      }
+    );
     const { root, views } = await mountReader(deps, relicId);
 
     expect(stateOf(root)).toBe('invite-signin');
@@ -2835,14 +2845,21 @@ describe('the invitee reads an address-bound invitation', () => {
       )
     ).toBe(true);
     const keyText = encodeBase64url(inv.d);
-    for (const request of seen) expect(request.text.includes(keyText)).toBe(false);
+    for (const request of seen)
+      expect(request.text.includes(keyText)).toBe(false);
   });
 
   test('Keep access claims the listed version with a signed invite_claim re-wrapped to the reader', async () => {
     const relicId = freshRelicId();
     const inv = await invitationFor(relicId);
     const { fetch, seen } = inviteeService(inv, relicId, { signedIn: false });
-    const deps = inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {});
+    const deps = inviteeDeps(
+      inv,
+      relicId,
+      fetch,
+      `#${inviteFragment(inv.d)}`,
+      () => {}
+    );
     const { root, views } = await mountReader(deps, relicId);
     await signInByCode(root);
     await until(() => views.length === 1, 'the invitation ready view');
@@ -2888,7 +2905,13 @@ describe('the invitee reads an address-bound invitation', () => {
     const relicId = freshRelicId();
     const inv = await invitationFor(relicId);
     const { fetch, seen } = inviteeService(inv, relicId, { signedIn: true });
-    const deps = inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {});
+    const deps = inviteeDeps(
+      inv,
+      relicId,
+      fetch,
+      `#${inviteFragment(inv.d)}`,
+      () => {}
+    );
     const { root, views } = await mountReader(deps, relicId);
     await until(() => views.length === 1, 'the invitation ready view');
 
@@ -2896,9 +2919,9 @@ describe('the invitee reads an address-bound invitation', () => {
     await until(() => stateOf(root) === 'invite-signin', 'a new sign-in');
     // The passkey sign-in mounted here writes its own outcome to the same note,
     // so the copy is asserted in the copy tests, not here.
-    expect(
-      seen.some((request) => request.route.endsWith('/claim'))
-    ).toBe(false);
+    expect(seen.some((request) => request.route.endsWith('/claim'))).toBe(
+      false
+    );
   });
 
   test('a link without its key opens the key-missing stage and makes no request', async () => {
@@ -2918,12 +2941,19 @@ describe('the invitee reads an address-bound invitation', () => {
       signedIn: true,
       openStatus: 404,
     });
-    const deps = inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {});
+    const deps = inviteeDeps(
+      inv,
+      relicId,
+      fetch,
+      `#${inviteFragment(inv.d)}`,
+      () => {}
+    );
     const { root } = await mountReader(deps, relicId);
     expect(stateOf(root)).toBe('invite-wrong-address');
     expect(
-      stageOf(root, 'invite-wrong-address').querySelector('[data-invite-address]')
-        ?.textContent
+      stageOf(root, 'invite-wrong-address').querySelector(
+        '[data-invite-address]'
+      )?.textContent
     ).toBe(READER_EMAIL);
   });
 
@@ -2937,7 +2967,13 @@ describe('the invitee reads an address-bound invitation', () => {
       const relicId = freshRelicId();
       const inv = await invitationFor(relicId, status);
       const { fetch } = inviteeService(inv, relicId, { signedIn: true });
-      const deps = inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {});
+      const deps = inviteeDeps(
+        inv,
+        relicId,
+        fetch,
+        `#${inviteFragment(inv.d)}`,
+        () => {}
+      );
       const { root, views } = await mountReader(deps, relicId);
       expect(views).toEqual([]);
       expect(stateOf(root)).toBe(stage);

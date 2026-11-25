@@ -15,7 +15,6 @@ import {
   type GrantLookupJSON,
   type GrantLookupResultJSON,
   identityFingerprint,
-  type InviteJSON,
   inviteFragment,
   inviteIdOf,
   type PartyJSON,
@@ -129,7 +128,12 @@ export async function lookupShares(
         await verifiedPartyKeys(entry.party);
         const target = await grantTargetFor(entry.party);
         if (entry.standing === 'grantee') {
-          return { kind: admitted.has(entry.party.identity.identity_id) ? 'reader' : 'unverified', email };
+          return {
+            kind: admitted.has(entry.party.identity.identity_id)
+              ? 'reader'
+              : 'unverified',
+            email,
+          };
         }
         return {
           kind: entry.standing === 'invited' ? 'invited' : 'registered',
@@ -181,14 +185,28 @@ export async function shareBatch(
     batch.grants.length + batch.invites.length > SHARE_PREFILL_MAX ||
     !Number.isFinite(batch.relicExpiresAt) ||
     batch.relicExpiresAt <= now ||
-    batch.invites.some(({ days }) => !Number.isInteger(days) || days < INVITE_DAYS_MIN || days > INVITE_DAYS_MAX)
-  ) throw new Error('invalid share batch');
+    batch.invites.some(
+      ({ days }) =>
+        !Number.isInteger(days) ||
+        days < INVITE_DAYS_MIN ||
+        days > INVITE_DAYS_MAX
+    )
+  )
+    throw new Error('invalid share batch');
   const versions = [...batch.versions].sort((a, b) => a - b);
   const grantees = await Promise.all(
     batch.grants.map(async (grant) => {
       const keys = await verifiedPartyKeys(grant.party);
-      if (grant.fingerprint !== await identityFingerprint(grant.party.identity.identity_id, grant.party.email)) {
-        throw new VerificationRefusedError('The fingerprint changed. Nothing was sent.');
+      if (
+        grant.fingerprint !==
+        (await identityFingerprint(
+          grant.party.identity.identity_id,
+          grant.party.email
+        ))
+      ) {
+        throw new VerificationRefusedError(
+          'The fingerprint changed. Nothing was sent.'
+        );
       }
       return { grant, keys };
     })
@@ -200,11 +218,7 @@ export async function shareBatch(
         invite,
         pair,
         inviteId: await inviteIdOf(pair.publicKey),
-        expiresAt: inviteExpiresAt(
-          now,
-          invite.days,
-          batch.relicExpiresAt
-        ),
+        expiresAt: inviteExpiresAt(now, invite.days, batch.relicExpiresAt),
       };
     })
   );
@@ -249,8 +263,7 @@ export async function shareBatch(
       tapped.identity
     );
     if (
-      fetched.keyJson.owner.identity.identity_id !==
-      tapped.identity.identityId
+      fetched.keyJson.owner.identity.identity_id !== tapped.identity.identityId
     ) {
       throw new VerificationRefusedError(
         'A version of this relik belongs to another owner, so nothing was shared. Nothing was sent.'

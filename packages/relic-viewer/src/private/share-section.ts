@@ -7,7 +7,10 @@
  */
 
 import { composeInviteEmail, shareMailtoUrl } from '@relic/format';
-import { formatFingerprint, type PrivateAccessJSON } from '@relic/format/private';
+import {
+  formatFingerprint,
+  type PrivateAccessJSON,
+} from '@relic/format/private';
 import { copyText } from '../popover.ts';
 import type { ViewerDeps } from '../viewer.ts';
 import { describeVersions, formatUtcDay } from './access-log.ts';
@@ -69,7 +72,9 @@ export interface ShareSection {
   fill(emails: readonly string[]): void;
 }
 
-const isRegistered = (row: ShareRow): row is Extract<ShareRow, { party: unknown }> =>
+const isRegistered = (
+  row: ShareRow
+): row is Extract<ShareRow, { party: unknown }> =>
   row.kind === 'registered' || row.kind === 'invited';
 
 /** Matches a typed address against the rows already listed, without case. */
@@ -132,11 +137,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     h(
       'div',
       { class: 'lifetime-row' },
-      h(
-        'label',
-        { for: 'lt-days' },
-        'New invitations stay open for'
-      ),
+      h('label', { for: 'lt-days' }, 'New invitations stay open for'),
       lifetimeInput,
       h('span', {}, 'days')
     ),
@@ -210,11 +211,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
       'div',
       { class: 'share-foot' },
       summary,
-      h(
-        'div',
-        {},
-        shareButton
-      ),
+      h('div', {}, shareButton),
       h(
         'p',
         { class: 'passkey-note' },
@@ -222,7 +219,6 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
       )
     )
   );
-
 
   function selectedGrants(): GrantTarget[] {
     return rows.flatMap((draft) =>
@@ -244,21 +240,31 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     const grants = selectedGrants().length;
     const invites = selectedInvites().length;
     const lifetime = parseLifetime(lifetimeText);
-    lifetimeInput.setAttribute('aria-invalid', 'error' in lifetime ? 'true' : 'false');
+    lifetimeInput.setAttribute(
+      'aria-invalid',
+      'error' in lifetime ? 'true' : 'false'
+    );
     setChildren(lifetimeError, 'error' in lifetime ? lifetime.error : '');
-    lifetimeBlock.hidden = !rows.some((draft) => draft.row.kind === 'unregistered');
+    lifetimeBlock.hidden = !rows.some(
+      (draft) => draft.row.kind === 'unregistered'
+    );
     if (grants === 0 && invites === 0) {
       setChildren(summary, 'Add an address, or check a row, to share.');
     } else {
       const parts: string[] = [];
       if (grants > 0) {
-        parts.push(`shares with ${grants} ${grants === 1 ? 'person' : 'people'}`);
+        parts.push(
+          `shares with ${grants} ${grants === 1 ? 'person' : 'people'}`
+        );
       }
       if (invites > 0) parts.push(`invites ${invites}`);
       setChildren(summary, `One passkey tap ${parts.join(' and ')}.`);
     }
     shareButton.disabled =
-      busy || grants + invites === 0 || 'error' in lifetime || versions.size === 0;
+      busy ||
+      grants + invites === 0 ||
+      'error' in lifetime ||
+      versions.size === 0;
   }
 
   function rowFor(draft: ShareDraft, index: number): HTMLElement {
@@ -282,8 +288,18 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
         'li',
         { 'data-share-row': true, 'data-share-state': 'reader' },
         h('span', { class: 'row-dot' }),
-        h('div', { class: 'row-main' }, h('strong', {}, row.email), h('span', { class: 'row-meta' }, 'Already a reader. Nothing to do.')),
-        h('div', { class: 'row-end' }, h('span', { class: 'row-kind' }, 'Reader'), remove)
+        h(
+          'div',
+          { class: 'row-main' },
+          h('strong', {}, row.email),
+          h('span', { class: 'row-meta' }, 'Already a reader. Nothing to do.')
+        ),
+        h(
+          'div',
+          { class: 'row-end' },
+          h('span', { class: 'row-kind' }, 'Reader'),
+          remove
+        )
       );
     }
     if (row.kind === 'self') {
@@ -291,7 +307,12 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
         'li',
         { 'data-share-row': true, 'data-share-state': 'self' },
         h('span', { class: 'row-dot' }),
-        h('div', { class: 'row-main' }, h('strong', {}, row.email), h('span', { class: 'row-meta' }, "That's you")),
+        h(
+          'div',
+          { class: 'row-main' },
+          h('strong', {}, row.email),
+          h('span', { class: 'row-meta' }, "That's you")
+        ),
         h('div', { class: 'row-end' }, remove)
       );
     }
@@ -300,7 +321,12 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
         'li',
         { 'data-share-row': true, 'data-share-state': 'unverified' },
         h('span', { class: 'row-dot' }),
-        h('div', { class: 'row-main' }, h('strong', {}, row.email), h('span', { class: 'row-meta is-oxide' }, 'Reload and try again.')),
+        h(
+          'div',
+          { class: 'row-main' },
+          h('strong', {}, row.email),
+          h('span', { class: 'row-meta is-oxide' }, 'Reload and try again.')
+        ),
         h('div', { class: 'row-end' }, remove)
       );
     }
@@ -336,7 +362,11 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
         h(
           'div',
           { class: 'row-end' },
-          h('span', { class: invited ? 'row-kind is-patina' : 'row-kind is-patina' }, invited ? 'Accepted' : 'Key'),
+          h(
+            'span',
+            { class: invited ? 'row-kind is-patina' : 'row-kind is-patina' },
+            invited ? 'Accepted' : 'Key'
+          ),
           remove
         ),
         h(
@@ -347,13 +377,10 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
       );
     }
     // unregistered: an address with no key yet
-    const open = row.invites.reduce<number | undefined>(
-      (latest, invite) => {
-        const at = Date.parse(invite.expires_at);
-        return latest === undefined || at > latest ? at : latest;
-      },
-      undefined
-    );
+    const open = row.invites.reduce<number | undefined>((latest, invite) => {
+      const at = Date.parse(invite.expires_at);
+      return latest === undefined || at > latest ? at : latest;
+    }, undefined);
     const check = h('input', {
       type: 'checkbox',
       class: 'row-check',
@@ -375,7 +402,9 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
           paintSummary();
         },
       },
-      ...Array.from({ length: INVITE_DAYS_MAX }, (_, i) => dayOption(i + 1, draft.days))
+      ...Array.from({ length: INVITE_DAYS_MAX }, (_, i) =>
+        dayOption(i + 1, draft.days)
+      )
     );
     const copy =
       open === undefined
@@ -397,15 +426,25 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
         h('span', { class: 'row-kind is-oxide' }, 'Invite'),
         remove
       ),
-      h('div', { class: 'row-extra' }, h('label', { class: 'days' }, 'Open for ', days))
+      h(
+        'div',
+        { class: 'row-extra' },
+        h('label', { class: 'days' }, 'Open for ', days)
+      )
     );
   }
 
   function paintRows(): void {
     if (rows.length === 0) {
-      setChildren(rowsHost, h('li', { class: 'panel-empty' }, 'No addresses yet.'));
+      setChildren(
+        rowsHost,
+        h('li', { class: 'panel-empty' }, 'No addresses yet.')
+      );
     } else {
-      setChildren(rowsHost, ...rows.map((draft, index) => rowFor(draft, index)));
+      setChildren(
+        rowsHost,
+        ...rows.map((draft, index) => rowFor(draft, index))
+      );
     }
     paintSummary();
   }
@@ -582,7 +621,10 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
       .filter((part) => part !== '');
     const unique: string[] = [];
     for (const email of typed) {
-      if (!listed(rows, email) && !unique.some((seen) => seen.toLowerCase() === email.toLowerCase())) {
+      if (
+        !listed(rows, email) &&
+        !unique.some((seen) => seen.toLowerCase() === email.toLowerCase())
+      ) {
         unique.push(email);
       }
     }
@@ -598,11 +640,12 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
       for (const row of found) {
         rows.push({
           row,
-          on: row.kind === 'registered' || row.kind === 'invited'
-            ? true
-            : row.kind === 'unregistered'
-              ? !row.invites.length
-              : false,
+          on:
+            row.kind === 'registered' || row.kind === 'invited'
+              ? true
+              : row.kind === 'unregistered'
+                ? !row.invites.length
+                : false,
           days: Number(lifetimeText) || INVITE_DAYS_DEFAULT,
         });
       }
@@ -645,7 +688,9 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
       linksGone = false;
       const parts: string[] = [];
       if (grants.length > 0) {
-        parts.push(`Shared directly with ${grants.length} ${grants.length === 1 ? 'person' : 'people'}. Relik emailed them.`);
+        parts.push(
+          `Shared directly with ${grants.length} ${grants.length === 1 ? 'person' : 'people'}. Relik emailed them.`
+        );
       }
       if (made.length > 0) {
         parts.push(`Invited ${made.length}. Send each link yourself.`);
@@ -678,7 +723,8 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     lifetimeText = (lifetimeInput as HTMLInputElement).value;
     const lifetime = parseLifetime(lifetimeText);
     if ('days' in lifetime) {
-      for (const draft of rows) if (draft.row.kind === 'unregistered') draft.days = lifetime.days;
+      for (const draft of rows)
+        if (draft.row.kind === 'unregistered') draft.days = lifetime.days;
       paintRows();
     } else paintSummary();
   });
@@ -707,7 +753,9 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
         versions = new Set(grantable);
         seeded = true;
       } else {
-        versions = new Set([...versions].filter((version) => grantable.includes(version)));
+        versions = new Set(
+          [...versions].filter((version) => grantable.includes(version))
+        );
       }
       if (grantable.includes(currentVersion)) versions.add(currentVersion);
       paintVersions();
@@ -719,5 +767,3 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     },
   };
 }
-
-

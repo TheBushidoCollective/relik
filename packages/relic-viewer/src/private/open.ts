@@ -353,7 +353,11 @@ export async function verifyVersionKey(
   relicId: string,
   version: number,
   identity: UnlockedIdentity,
-  invite?: { readonly inviteId: string; readonly recipient: HpkeRecipient; readonly ownerId: string }
+  invite?: {
+    readonly inviteId: string;
+    readonly recipient: HpkeRecipient;
+    readonly ownerId: string;
+  }
 ): Promise<VerifiedKey> {
   const keyJson = parseKey(
     await postJson(
@@ -371,7 +375,8 @@ export async function verifyVersionKey(
   if ((await identityIdOf(ownerKem, ownerSig)) !== ownerId) {
     throw new SealMismatchError('owner_keys');
   }
-  if (invite !== undefined && invite.ownerId !== ownerId) throw new SealMismatchError('invite_owner');
+  if (invite !== undefined && invite.ownerId !== ownerId)
+    throw new SealMismatchError('invite_owner');
 
   const pinned = pinnedOwnerFor(relicId);
   if (pinned !== undefined && pinned.identityId !== ownerId) {
@@ -408,7 +413,8 @@ export async function verifyVersionKey(
   // version and the recipient, so unwrapping it proves that the holder of the
   // version key addressed it. The seal is not consulted for membership: a
   // grant made after a version was sealed writes its wrap without re-sealing.
-  const myKeyId = invite === undefined ? hex(identity.kemKeyId) : invite.inviteId;
+  const myKeyId =
+    invite === undefined ? hex(identity.kemKeyId) : invite.inviteId;
   if (keyJson.wrap.recipient_key_id !== myKeyId) {
     throw new RecipientMissingError('recipient');
   }
@@ -474,9 +480,19 @@ export async function fetchAndDecryptVersion(
   relicId: string,
   version: number,
   identity: UnlockedIdentity,
-  invite?: { readonly inviteId: string; readonly recipient: HpkeRecipient; readonly ownerId: string }
+  invite?: {
+    readonly inviteId: string;
+    readonly recipient: HpkeRecipient;
+    readonly ownerId: string;
+  }
 ): Promise<OpenedVersion> {
-  const verified = await verifyVersionKey(deps, relicId, version, identity, invite);
+  const verified = await verifyVersionKey(
+    deps,
+    relicId,
+    version,
+    identity,
+    invite
+  );
   const minted = await mint(relicId, deps, version, invite?.inviteId);
   if ('dead' in minted) throw new VersionUnavailableError(minted.dead.code);
   const signed: MintResponse = minted.mint;
