@@ -184,6 +184,15 @@ export async function privateAccessView(
       standing.role === 'recovery'
         ? settingsView(row)
         : null,
+    signing:
+      standing.role === 'owner' ||
+      standing.role === 'grantee' ||
+      standing.role === 'recovery'
+        ? {
+            open_version: row.signingOpen?.version ?? null,
+            locked_versions: row.lockedVersions ?? [],
+          }
+        : null,
     me: {
       role: standing.role,
       identity: me === undefined ? null : identityPublic(me),

@@ -63,6 +63,7 @@ import {
 } from './mail.ts';
 import { newOccurrenceId, ProblemError, problemResponse } from './problems.ts';
 import { settingsView } from './settings.ts';
+import { createSigningRequest } from './signing.ts';
 import { RateLimiter, rateLimitKey } from './ratelimit.ts';
 import { MemoryStorage, type ObjectStorage } from './storage.ts';
 import {
@@ -676,6 +677,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
         return guarded(() => listDecisions(second, request, ip, now));
       }
       return new Response('Method not allowed', { status: 405 });
+    }
+
+    if (
+      first === 'relics' &&
+      second !== undefined &&
+      third === 'signing' &&
+      fourth === 'requests' &&
+      rest[4] === undefined &&
+      request.method === 'POST'
+    ) {
+      return guarded(() => postSigningRequest(second, request, ip, now));
     }
 
     // Passkeys:
@@ -2615,6 +2627,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
         version,
         current_version: row.version,
         settings: settingsView(row),
+        signing: {
+          open_version: row.signingOpen?.version ?? null,
+          locked_versions: row.lockedVersions ?? [],
+        },
       },
       { headers: { 'referrer-policy': 'no-referrer' } }
     );
@@ -4845,6 +4861,59 @@ export function createApp(options: AppOptions = {}): RelicApp {
       throw new ProblemError('invalid_passkey', { passkey_check: 'shape' });
     }
     return (parsed as Record<string, unknown>)['challenge'] as string;
+  }
+
+  async function postSigningRequest(
+    rawId: string,
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    if (config.killSwitchEngaged)
+      throw new ProblemError('service_paused', { retry_after_seconds: 300 });
+    const verdict = limiter.check(
+      rateLimitKey('signing-write', ip),
+      config.signingRateLimit,
+      now
+    );
+    if (!verdict.allowed)
+      throw new ProblemError('signing_rate_limited', {
+        retry_after_seconds: verdict.retryAfterSeconds,
+      });
+    let relicId: string;
+    try {
+      relicId = parseRelicId(rawId);
+    } catch {
+      throw new ProblemError('invalid_relic_id');
+    }
+    if ((await store.getTombstone(relicId)) !== undefined)
+      throw new ProblemError('relic_removed', { relic_id: relicId });
+    const row = await store.getRelic(relicId);
+    if (row === undefined)
+      throw new ProblemError('relic_not_found', { relic_id: relicId });
+    const parsed = await readBoundedJson(request, 'invalid_signing_request');
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new ProblemError('invalid_signing_request', {
+        signing_check: 'shape',
+      });
+    const body = parsed as Record<string, unknown>;
+    if (
+      !('publish_token' in body) &&
+      !/^application\/json(?:\s*;|$)/i.test(
+        request.headers.get('content-type') ?? ''
+      )
+    )
+      throw new ProblemError('invalid_signing_request', {
+        signing_check: 'shape',
+      });
+    const result = await createSigningRequest(
+      privateEnv(now),
+      row,
+      await sessionOf(request, now),
+      body,
+      digestOnRecord
+    );
+    return Response.json(result, { status: 201 });
   }
 
   async function changeSettings(

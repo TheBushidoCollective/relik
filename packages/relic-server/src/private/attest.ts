@@ -20,6 +20,10 @@ import {
   statementBytes,
   verifyStatement,
 } from '@relic/format/private';
+import {
+  verifyWebauthnAssertion,
+  WebauthnAssertionError,
+} from '@relic/format/signing';
 import { verifyAssertion, WebauthnError } from '../webauthn.ts';
 import { ProblemError } from '../problems.ts';
 import type { PasskeyRecord, StoredAttestation } from '../store.ts';
@@ -328,6 +332,42 @@ export async function verifyAttestation(
 
   if (input.passkeys === undefined) {
     throw new ProblemError('passkey_required');
+  }
+  if (
+    input.purpose === 'signing_request' ||
+    input.purpose === 'signing_cancel' ||
+    input.purpose === 'sign'
+  ) {
+    const credentialId = bundle.credential['id'];
+    const credential = input.passkeys.credentials.find(
+      (c) => c.credentialId === credentialId
+    );
+    if (credential === undefined) {
+      throw new ProblemError('passkey_verification_failed', {
+        passkey_check: 'credential',
+      });
+    }
+    try {
+      const origin = new URL(env.config.serviceOrigin);
+      await verifyWebauthnAssertion(bundle.credential, {
+        challenge,
+        origin: origin.origin,
+        rpId: origin.hostname,
+        publicKeyJwk: credential.publicKeyJwk,
+        alg: credential.alg,
+        credentialId: credential.credentialId,
+      });
+    } catch (error) {
+      if (error instanceof WebauthnAssertionError) {
+        throw new ProblemError(
+          error.kind === 'malformed'
+            ? 'invalid_passkey'
+            : 'passkey_verification_failed',
+          { passkey_check: error.check }
+        );
+      }
+      throw error;
+    }
   }
   const assertion = await env.assertPasskey(
     input.passkeys,
