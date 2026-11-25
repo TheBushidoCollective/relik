@@ -590,7 +590,10 @@ export function inviteNoticeMail(p: {
   };
 }
 
-export function inviteClaimedMail(p: { readonly address: string; readonly accessUrl: string }): OutboundMail {
+export function inviteClaimedMail(p: {
+  readonly address: string;
+  readonly accessUrl: string;
+}): OutboundMail {
   const paragraphs = [
     `${p.address} accepted your invitation to a relik on Relik. They can open the versions you invited them to.`,
     `To let them open later versions too, confirm in Access: ${p.accessUrl}`,

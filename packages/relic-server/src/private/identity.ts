@@ -674,7 +674,13 @@ export async function ownedAndShared(
     if (row === undefined || owner === undefined) continue;
     shared.push({
       relic_id: row.id,
-      readable_versions: await readableVersions(env, row, record.kemKeyId, record, owner),
+      readable_versions: await readableVersions(
+        env,
+        row,
+        record.kemKeyId,
+        record,
+        owner
+      ),
       expires_at: row.expiresAt === undefined ? null : iso(row.expiresAt),
       owner: partyJson(owner),
     });

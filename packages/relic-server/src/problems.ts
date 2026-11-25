@@ -107,6 +107,7 @@ export type ProblemCode =
   | 'private_access_denied'
   | 'private_policy_violation'
   | 'identity_required'
+  | 'identity_changed'
   | 'identity_exists'
   | 'invalid_identity'
   | 'invalid_statement'
@@ -208,6 +209,7 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   private_access_denied: 403,
   private_policy_violation: 400,
   identity_required: 409,
+  identity_changed: 409,
   identity_exists: 409,
   invalid_identity: 400,
   invalid_statement: 400,
@@ -314,6 +316,7 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   private_access_denied: 'You do not have access to this relik',
   private_policy_violation: 'Private reliks do not allow that',
   identity_required: 'Set up a private-share key first',
+  identity_changed: 'The private-share identity changed',
   identity_exists: 'This address already has a private-share key',
   invalid_identity: 'Invalid private-share key payload',
   invalid_statement: 'Invalid signed statement',

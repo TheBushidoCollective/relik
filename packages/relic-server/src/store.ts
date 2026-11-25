@@ -2293,7 +2293,9 @@ export class MemoryStore implements RelicStore {
   }
 
   async listInviteClaims(relicId: string): Promise<readonly InviteClaimRow[]> {
-    return [...this.inviteClaims.values()].filter((claim) => claim.relicId === relicId);
+    return [...this.inviteClaims.values()].filter(
+      (claim) => claim.relicId === relicId
+    );
   }
 
   async updateInviteClaim(

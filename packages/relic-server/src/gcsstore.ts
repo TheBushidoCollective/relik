@@ -2302,7 +2302,9 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       )?.value;
     },
 
-    async listInviteClaims(relicId: string): Promise<readonly InviteClaimRow[]> {
+    async listInviteClaims(
+      relicId: string
+    ): Promise<readonly InviteClaimRow[]> {
       return list<InviteClaimRow>(`${key('invite-claim', relicId)}/`);
     },
 
@@ -2319,7 +2321,10 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       );
     },
 
-    async deleteInviteClaim(relicId: string, identityId: string): Promise<void> {
+    async deleteInviteClaim(
+      relicId: string,
+      identityId: string
+    ): Promise<void> {
       await remove(key('invite-claim', relicId, `${identityId}.json`));
     },
 

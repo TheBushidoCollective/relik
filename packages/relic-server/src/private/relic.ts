@@ -665,10 +665,14 @@ export async function applyGrants(
       const keys = await recipientKeys(env, row, owner, {
         exceptGrantee: p.grantee.identityId,
       });
-      const claim = await env.store.getInviteClaim(row.id, p.grantee.identityId);
+      const claim = await env.store.getInviteClaim(
+        row.id,
+        p.grantee.identityId
+      );
       keptElsewhere.set(
         p.grantee.kemKeyId,
-        keys.includes(p.grantee.kemKeyId) || (claim !== undefined && claim.revokedAt === undefined)
+        keys.includes(p.grantee.kemKeyId) ||
+          (claim !== undefined && claim.revokedAt === undefined)
       );
     }
     for (const wrap of writtenWraps) {
@@ -930,62 +934,113 @@ export function inviteJson(
   };
 }
 
-async function ownerInviteJson(env: PrivateEnv, row: InviteRow): Promise<InviteJSON> {
+async function ownerInviteJson(
+  env: PrivateEnv,
+  row: InviteRow
+): Promise<InviteJSON> {
   const signed = row.attestation.statements.find(
-    (item) => item.kind === 'invite' && item.statement['invite_public_key'] === row.invitePublicKey
+    (item) =>
+      item.kind === 'invite' &&
+      item.statement['invite_public_key'] === row.invitePublicKey
   );
-  const claimant = row.claimantIdentityId === undefined
-    ? undefined
-    : await env.store.getIdentity(row.claimantIdentityId);
-  const grant = row.claimantIdentityId === undefined
-    ? undefined
-    : await env.store.getGrant(row.relicId, row.claimantIdentityId);
+  const claimant =
+    row.claimantIdentityId === undefined
+      ? undefined
+      : await env.store.getIdentity(row.claimantIdentityId);
+  const grant =
+    row.claimantIdentityId === undefined
+      ? undefined
+      : await env.store.getGrant(row.relicId, row.claimantIdentityId);
   return {
-    ...inviteJson(row, signed?.statement ?? {}, signed?.identitySignature ?? ''),
-    status: row.status === 'open' && row.expiresAt <= env.now
-      ? 'expired'
-      : row.status === 'claimed' && grant !== undefined && grant.revokedAt === undefined
-        ? 'confirmed'
-        : row.status,
+    ...inviteJson(
+      row,
+      signed?.statement ?? {},
+      signed?.identitySignature ?? ''
+    ),
+    status:
+      row.status === 'open' && row.expiresAt <= env.now
+        ? 'expired'
+        : row.status === 'claimed' &&
+            grant !== undefined &&
+            grant.revokedAt === undefined
+          ? 'confirmed'
+          : row.status,
     claimed_by: claimant === undefined ? null : partyJson(claimant),
     claimed_at: row.claimedAt === undefined ? null : iso(row.claimedAt),
   };
 }
 
-export async function listInvitations(env: PrivateEnv, email: string, relicId: string): Promise<InviteJSON[]> {
+export async function listInvitations(
+  env: PrivateEnv,
+  email: string,
+  relicId: string
+): Promise<InviteJSON[]> {
   const { row } = await ownedPrivate(env, email, relicId);
-  return Promise.all((await env.store.listInvites(row.id)).map((invite) => ownerInviteJson(env, invite)));
+  return Promise.all(
+    (await env.store.listInvites(row.id)).map((invite) =>
+      ownerInviteJson(env, invite)
+    )
+  );
 }
 
-export async function revokeInvitation(env: PrivateEnv, email: string, relicId: string, inviteId: string): Promise<InviteJSON> {
+export async function revokeInvitation(
+  env: PrivateEnv,
+  email: string,
+  relicId: string,
+  inviteId: string
+): Promise<InviteJSON> {
   const { row, owner } = await ownedPrivate(env, email, relicId);
   const invite = await env.store.getInvite(row.id, inviteId);
   if (invite === undefined) throw new ProblemError('invite_not_found');
   if (invite.status !== 'revoked' && invite.claimantIdentityId !== undefined) {
     const grant = await env.store.getGrant(row.id, invite.claimantIdentityId);
-    if (grant !== undefined && grant.revokedAt === undefined) throw new ProblemError('grant_exists');
+    if (grant !== undefined && grant.revokedAt === undefined)
+      throw new ProblemError('grant_exists');
   }
-  const revoked = invite.status === 'revoked' ? invite : await env.store.updateInvite(row.id, inviteId, (current) => {
-    if (current.status !== invite.status || current.claimantIdentityId !== invite.claimantIdentityId) {
-      throw new ProblemError('invite_claimed');
-    }
-    return { ...current, status: 'revoked', wraps: [], revokedAt: env.now };
-  });
+  const revoked =
+    invite.status === 'revoked'
+      ? invite
+      : await env.store.updateInvite(row.id, inviteId, (current) => {
+          if (
+            current.status !== invite.status ||
+            current.claimantIdentityId !== invite.claimantIdentityId
+          ) {
+            throw new ProblemError('invite_claimed');
+          }
+          return {
+            ...current,
+            status: 'revoked',
+            wraps: [],
+            revokedAt: env.now,
+          };
+        });
   if (revoked === undefined) throw new ProblemError('invite_not_found');
   if (revoked.claimantIdentityId !== undefined) {
     const claimant = await env.store.getIdentity(revoked.claimantIdentityId);
-    await env.store.updateInviteClaim(row.id, revoked.claimantIdentityId, (claim) => ({
-      ...claim, revokedAt: env.now,
-    }));
-    if (claimant !== undefined && !(await recipientKeys(env, row, owner)).includes(claimant.kemKeyId)) {
-      await env.store.deleteWraps(row.id, { recipientKeyId: claimant.kemKeyId });
+    await env.store.updateInviteClaim(
+      row.id,
+      revoked.claimantIdentityId,
+      (claim) => ({
+        ...claim,
+        revokedAt: env.now,
+      })
+    );
+    if (
+      claimant !== undefined &&
+      !(await recipientKeys(env, row, owner)).includes(claimant.kemKeyId)
+    ) {
+      await env.store.deleteWraps(row.id, {
+        recipientKeyId: claimant.kemKeyId,
+      });
     }
   }
   if (invite.status !== 'revoked') {
     await logAccess(env, owner.identityId, row.id, 'revoke', {
       actorIdentityId: owner.identityId,
       subjectEmail: revoked.invitedEmail,
-      ...(revoked.claimantIdentityId === undefined ? {} : { subjectIdentityId: revoked.claimantIdentityId }),
+      ...(revoked.claimantIdentityId === undefined
+        ? {}
+        : { subjectIdentityId: revoked.claimantIdentityId }),
     });
   }
   return ownerInviteJson(env, revoked);
@@ -1691,12 +1746,17 @@ export async function deleteRelic(
   if (updated === undefined) throw new ProblemError('relic_removed');
   for (const invite of await env.store.listInvites(row.id)) {
     await env.store.updateInvite(row.id, invite.inviteId, (current) => {
-      const versions = current.versions.filter((version) => !list.includes(version));
+      const versions = current.versions.filter(
+        (version) => !list.includes(version)
+      );
       return {
         ...current,
         versions,
         wraps: current.wraps.filter((wrap) => !list.includes(wrap.version)),
-        status: current.status === 'open' && versions.length === 0 ? 'revoked' : current.status,
+        status:
+          current.status === 'open' && versions.length === 0
+            ? 'revoked'
+            : current.status,
       };
     });
   }
@@ -1898,16 +1958,30 @@ export async function deliverInviteKey(
 
 /** A claim is authorized only after the invitation CAS and claim finalization. */
 export async function claimInvitation(
-  env: PrivateEnv, relicId: string, email: string, inviteId: string, body: Record<string, unknown>
-): Promise<{ status: 'claimed' | 'already_reader'; versions?: readonly number[] }> {
-  if (typeof body['statement'] !== 'object' || body['statement'] === null ||
-      typeof body['identity_signature'] !== 'string' || !Array.isArray(body['wraps'])) refuseStatement('shape');
+  env: PrivateEnv,
+  relicId: string,
+  email: string,
+  inviteId: string,
+  body: Record<string, unknown>
+): Promise<{
+  status: 'claimed' | 'already_reader';
+  versions?: readonly number[];
+}> {
+  if (
+    typeof body['statement'] !== 'object' ||
+    body['statement'] === null ||
+    typeof body['identity_signature'] !== 'string' ||
+    !Array.isArray(body['wraps'])
+  )
+    refuseStatement('shape');
   const row = privateRow(await liveRelic(env, relicId));
   const owner = await ownerRecord(env, row);
   let invite = await env.store.getInvite(row.id, inviteId);
-  if (invite === undefined || invite.invitedEmail !== normalizeEmail(email)) throw new ProblemError('invite_not_found');
+  if (invite === undefined || invite.invitedEmail !== normalizeEmail(email))
+    throw new ProblemError('invite_not_found');
   if (invite.status === 'revoked') throw new ProblemError('invite_revoked');
-  if (invite.status === 'open' && invite.expiresAt <= env.now) throw new ProblemError('invite_expired');
+  if (invite.status === 'open' && invite.expiresAt <= env.now)
+    throw new ProblemError('invite_expired');
   const identity = await currentIdentity(env, email);
   if (identity === undefined) throw new ProblemError('identity_required');
   let statement: StatementMap['invite_claim'];
@@ -1917,76 +1991,182 @@ export async function claimInvitation(
     if (error instanceof InvalidStatementError) refuseStatement(error.check);
     throw error;
   }
-  if (statement.claimant_identity_id !== identity.identityId || statement.invite_id !== inviteId ||
-      JSON.stringify(statement.versions) !== JSON.stringify(invite.versions)) refuseStatement('claim');
+  if (
+    statement.claimant_identity_id !== identity.identityId ||
+    statement.invite_id !== inviteId ||
+    JSON.stringify(statement.versions) !== JSON.stringify(invite.versions)
+  )
+    refuseStatement('claim');
   if (statement.relic_id !== row.id) refuseStatement('relic');
-  if (Math.abs(env.now - statement.at) > env.config.passkeyChallengeTtlSeconds * 1000) refuseStatement('stale');
-  if (!(await verifyStatement(decodeBase64url(identity.sigPublicKey),
-    statementBytes('invite_claim', statement), body['identity_signature'] as string))) refuseStatement('signature');
+  if (
+    Math.abs(env.now - statement.at) >
+    env.config.passkeyChallengeTtlSeconds * 1000
+  )
+    refuseStatement('stale');
+  if (
+    !(await verifyStatement(
+      decodeBase64url(identity.sigPublicKey),
+      statementBytes('invite_claim', statement),
+      body['identity_signature'] as string
+    ))
+  )
+    refuseStatement('signature');
   const grant = await env.store.getGrant(row.id, identity.identityId);
-  if (invite.status === 'claimed' && invite.claimantIdentityId !== identity.identityId) throw new ProblemError('invite_claimed');
-  if (invite.status === 'open' && grant !== undefined && grant.revokedAt === undefined) {
+  if (
+    invite.status === 'claimed' &&
+    invite.claimantIdentityId !== identity.identityId
+  )
+    throw new ProblemError('invite_claimed');
+  if (
+    invite.status === 'open' &&
+    grant !== undefined &&
+    grant.revokedAt === undefined
+  ) {
     await env.store.updateInvite(row.id, inviteId, (current) => {
       if (current.status !== 'open') throw new ProblemError('invite_claimed');
-      return { ...current, status: 'claimed', claimantIdentityId: identity.identityId, claimedAt: env.now, wraps: [] };
+      return {
+        ...current,
+        status: 'claimed',
+        claimantIdentityId: identity.identityId,
+        claimedAt: env.now,
+        wraps: [],
+      };
     });
     await logAccess(env, owner.identityId, row.id, 'claim', {
-      actorIdentityId: identity.identityId, actorEmail: identity.email,
-      subjectIdentityId: identity.identityId, subjectEmail: identity.email,
+      actorIdentityId: identity.identityId,
+      actorEmail: identity.email,
+      subjectIdentityId: identity.identityId,
+      subjectEmail: identity.email,
     });
     return { status: 'already_reader' };
   }
-  if (invite.status === 'claimed' && grant !== undefined && grant.revokedAt === undefined) return { status: 'already_reader' };
+  if (
+    invite.status === 'claimed' &&
+    grant !== undefined &&
+    grant.revokedAt === undefined
+  )
+    return { status: 'already_reader' };
   const existing = await env.store.getInviteClaim(row.id, identity.identityId);
-  if (existing !== undefined && (!existing.inviteIds.includes(inviteId) || existing.revokedAt !== undefined))
+  if (
+    existing !== undefined &&
+    (!existing.inviteIds.includes(inviteId) || existing.revokedAt !== undefined)
+  )
     throw new ProblemError('invite_claimed', { reason: 'claim_exists' });
-  if (invite.status === 'claimed' && existing === undefined) throw new ProblemError('invite_claimed');
-  if (invite.status === 'claimed' && existing?.state === 'committed') return { status: 'claimed', versions: invite.versions };
+  if (invite.status === 'claimed' && existing === undefined)
+    throw new ProblemError('invite_claimed');
+  if (invite.status === 'claimed' && existing?.state === 'committed')
+    return { status: 'claimed', versions: invite.versions };
   const wraps = (body['wraps'] as unknown[]).map(parseWrapItem);
-  if (wraps.length !== invite.versions.length || new Set(wraps.map((w) => w.version)).size !== wraps.length ||
-      wraps.some((w) => w.recipientKeyId !== identity.kemKeyId || !invite!.versions.includes(w.version) ||
-        (w.relicId !== undefined && w.relicId !== row.id))) throw new ProblemError('invalid_wrap');
-  for (const wrap of wraps) await env.store.putWrap({ ...wrap, relicId: row.id, createdAt: env.now, source: 'claim' });
+  if (
+    wraps.length !== invite.versions.length ||
+    new Set(wraps.map((w) => w.version)).size !== wraps.length ||
+    wraps.some(
+      (w) =>
+        w.recipientKeyId !== identity.kemKeyId ||
+        !invite!.versions.includes(w.version) ||
+        (w.relicId !== undefined && w.relicId !== row.id)
+    )
+  )
+    throw new ProblemError('invalid_wrap');
+  for (const wrap of wraps)
+    await env.store.putWrap({
+      ...wrap,
+      relicId: row.id,
+      createdAt: env.now,
+      source: 'claim',
+    });
   if (existing === undefined) {
     await env.store.putInviteClaim({
-      relicId: row.id, identityId: identity.identityId, ownerIdentityId: owner.identityId,
-      inviteIds: [inviteId], versions: [...invite.versions], claimedAt: env.now, state: 'pending',
-      claim: { statement: statement as unknown as Record<string, unknown>, identitySignature: body['identity_signature'] as string },
+      relicId: row.id,
+      identityId: identity.identityId,
+      ownerIdentityId: owner.identityId,
+      inviteIds: [inviteId],
+      versions: [...invite.versions],
+      claimedAt: env.now,
+      state: 'pending',
+      claim: {
+        statement: statement as unknown as Record<string, unknown>,
+        identitySignature: body['identity_signature'] as string,
+      },
     });
   }
   const pending = await env.store.getInviteClaim(row.id, identity.identityId);
-  if (pending === undefined || !pending.inviteIds.includes(inviteId) || pending.revokedAt !== undefined)
+  if (
+    pending === undefined ||
+    !pending.inviteIds.includes(inviteId) ||
+    pending.revokedAt !== undefined
+  )
     throw new ProblemError('invite_claimed', { reason: 'claim_exists' });
   if (invite.status === 'open') {
     try {
-      const updated = await env.store.updateInvite(row.id, inviteId, (current) => {
-        if (current.status !== 'open' || current.expiresAt <= env.now) throw new ProblemError('invite_claimed');
-        return { ...current, status: 'claimed', claimantIdentityId: identity.identityId, claimedAt: env.now, wraps: [] };
-      });
+      const updated = await env.store.updateInvite(
+        row.id,
+        inviteId,
+        (current) => {
+          if (current.status !== 'open' || current.expiresAt <= env.now)
+            throw new ProblemError('invite_claimed');
+          return {
+            ...current,
+            status: 'claimed',
+            claimantIdentityId: identity.identityId,
+            claimedAt: env.now,
+            wraps: [],
+          };
+        }
+      );
       if (updated === undefined) throw new ProblemError('invite_not_found');
       invite = updated;
     } catch (error) {
       const current = await env.store.getInvite(row.id, inviteId);
-      if (current?.status !== 'claimed' || current.claimantIdentityId !== identity.identityId) throw error;
+      if (
+        current?.status !== 'claimed' ||
+        current.claimantIdentityId !== identity.identityId
+      )
+        throw error;
       invite = current;
     }
   }
+  if ((await currentIdentity(env, email))?.identityId !== identity.identityId) {
+    await env.store.updateInviteClaim(
+      row.id,
+      identity.identityId,
+      (current) => ({
+        ...current,
+        revokedAt: env.now,
+      })
+    );
+    throw new ProblemError('identity_changed');
+  }
   let newlyCommitted = false;
-  const committed = await env.store.updateInviteClaim(row.id, identity.identityId, (current) => {
-    if (current.revokedAt !== undefined || !current.inviteIds.includes(inviteId)) throw new ProblemError('invite_revoked');
-    newlyCommitted = current.state === 'pending';
-    return { ...current, state: 'committed' };
-  });
+  const committed = await env.store.updateInviteClaim(
+    row.id,
+    identity.identityId,
+    (current) => {
+      if (
+        current.revokedAt !== undefined ||
+        !current.inviteIds.includes(inviteId)
+      )
+        throw new ProblemError('invite_revoked');
+      newlyCommitted = current.state === 'pending';
+      return { ...current, state: 'committed' };
+    }
+  );
   if (committed === undefined) throw new ProblemError('invite_revoked');
   if (!newlyCommitted) return { status: 'claimed', versions: invite.versions };
   await logAccess(env, owner.identityId, row.id, 'claim', {
-    actorIdentityId: identity.identityId, actorEmail: identity.email,
-    subjectIdentityId: identity.identityId, subjectEmail: identity.email,
+    actorIdentityId: identity.identityId,
+    actorEmail: identity.email,
+    subjectIdentityId: identity.identityId,
+    subjectEmail: identity.email,
   });
   try {
-    await env.sendMail(owner.email, inviteClaimedMail({
-      address: identity.email, accessUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}?access=invites`,
-    }));
+    await env.sendMail(
+      owner.email,
+      inviteClaimedMail({
+        address: identity.email,
+        accessUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}?access=invites`,
+      })
+    );
   } catch {
     console.error('relic: invitation claim notice failed');
   }

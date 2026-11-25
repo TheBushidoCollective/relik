@@ -333,6 +333,7 @@ The private-share routes in section 10, and the checks behind them, return the c
 | `private_access_denied` | 403 | You do not have access to this relik |
 | `private_policy_violation` | 400 | Private reliks do not allow that |
 | `identity_required` | 409 | Set up a private-share key first |
+| `identity_changed` | 409 | The private-share identity changed |
 | `identity_exists` | 409 | This address already has a private-share key |
 | `invalid_identity` | 400 | Invalid private-share key payload |
 | `invalid_statement` | 400 | Invalid signed statement |
@@ -341,6 +342,12 @@ The private-share routes in section 10, and the checks behind them, return the c
 | `owner_exists` | 409 | This relik already has an owner |
 | `fingerprint_mismatch` | 409 | The fingerprint does not match |
 | `grant_stale_version` | 409 | A newer version exists |
+| `grant_exists` | 409 | This person can already read this relik |
+| `invite_not_found` | 404 | No such invitation |
+| `invite_claimed` | 409 | This invitation was already used |
+| `invite_expired` | 410 | This invitation expired |
+| `invite_revoked` | 410 | This invitation was withdrawn |
+| `invite_limit_reached` | 409 | This relik has too many open invitations |
 | `recipients_changed` | 409 | Who can read this relik changed |
 | `version_conflict` | 409 | The relik changed while this was in progress |
 | `private_seal_required` | 409 | This version needs its seal |
@@ -769,8 +776,13 @@ Every new POST that relies on the session cookie requires `content-type: applica
 | `POST /api/relics/{id}/versions/{v}/upload-grant` | owner session | | 200 a new signed upload grant for version `v`, only for the current unsealed version (`uploadFor`) | 409 `version_conflict`, 403 `owner_required`, 401 `sign_in_required` |
 | `GET /api/relics/{id}/requests` | owner session | | 200 `{requests:[{requester: PartyJSON, requested_at, status, statement, identity_signature}]}` | 403 `owner_required` |
 | `POST /api/relics/{id}/requests/{identityId}/decline` | owner session | `{}` | 200 | 403, 404 `request_not_found` |
-| `POST /api/relics/{id}/grants` | owner session | `{attestation, wraps: WrapJSON[]}` | 201 `{grant: GrantJSON}` | 409 `fingerprint_mismatch`, 409 `grant_stale_version` (+`current_version`), 400 `invalid_wrap`, 403 |
+| `POST /api/relics/{id}/grants` | owner session | `{attestation, wraps: WrapJSON[]}` with mixed grant and invite statements | 201 `{grant, grants, invites}` | 409 `grant_exists`, `fingerprint_mismatch`, `grant_stale_version`, `identity_exists`, `invite_limit_reached`; 400 `invalid_statement`, `invalid_wrap`; 403 `owner_required`; 429 |
 | `GET /api/relics/{id}/grants` | owner session | | 200 `{grants: GrantJSON[]}` | 403 |
+| `POST /api/relics/{id}/grants/lookup` | owner session | `{emails: string[]}` | 200 `{results}` with party, standing and open invitations | 401, 403 `owner_required`, 400 `invalid_identity`, 429 |
+| `GET /api/relics/{id}/invites` | owner session | | 200 `{invites}` with open, claimed, confirmed, expired or revoked status | 401, 403 `owner_required` |
+| `POST /api/relics/{id}/invites/{inviteId}/revoke` | owner session | `{}` | 200 `{invite}`; repeats return 200 | 401, 403 `owner_required`, 404 `invite_not_found`, 409 `grant_exists` |
+| `POST /api/relics/{id}/invites/{inviteId}/open` | invited address session | `{}` | 200 invitation status and owner-signed statement | 401, 404 `invite_not_found`, 429 |
+| `POST /api/relics/{id}/invites/{inviteId}/claim` | invited address session | `{statement, identity_signature, wraps}` | 201 `{status:'claimed', versions}`; 200 `{status:'already_reader'}` | 401, 404 `invite_not_found`, 409 `identity_required` or `invite_claimed`, 410 `invite_expired` or `invite_revoked`, 400 `invalid_statement` or `invalid_wrap`, 429 |
 | `POST /api/relics/{id}/revocations` | owner session | `{attestation, renderer_class, declared_size_bytes, declared_ciphertext_bytes}` | 200 `{revoked_identity_id, republish:{version, upload_url, upload_method, upload_headers, upload_expires_at}, access_epoch, owner_epoch}` | 409 `version_conflict`, 404 (grant), 403 |
 | `POST /api/relics/{id}/recipients` | `{publish_token}` or owner session | | 200 `{access_epoch, owner_epoch, current_version, sealed_version, owner: PartyJSON, devices, grants: GrantJSON[] (active), recovery: RecoveryJSON \| null}` | 403 `invalid_publish_token` |
 | `POST /api/relics/{id}/versions/{v}/key` | session, or `{publish_token, recipient_key_id}` | | 200 `KeyJSON` (logs `wrap_fetch`) | 401, 403 `private_access_denied`, 409 `relic_not_yet_published` (unsealed), 410 `relic_expired` / `relic_removed` / `version_deleted` |
@@ -841,6 +853,14 @@ Device revocation and recovery replacement delete that key's wraps across every 
 
 **Grant** (`POST /api/relics/{id}/grants`). The server verifies the attestation and the owner, and that the grantee identity is current. The typed fingerprint must equal the grantee's fingerprint, else `fingerprint_mismatch`. Every version in the grant must be sealed and not deleted. The wraps must cover exactly those versions for the grantee's key. The server then writes the wraps and the grant, and runs an `updateRelic` that requires `sealedVersion` to be among the granted versions and increments `accessEpoch`. If that fails, it deletes what it wrote and refuses with `grant_stale_version` and `current_version`. Last, it marks the request granted, mails the grantee `accessGrantedMail`, and logs a `grant` event.
 
+The owner can grant registered addresses and invite addresses without an identity in one attested batch. A repeated live grant refuses the batch with `grant_exists`. A revoked reader can be shared with again. Invitation wraps stay in the invitation row and do not enter the recipient set. The invitation link carries a temporary key that the owner sends, while Relik sends a notice without the link.
+
+An invitation is bound to the signed-in address and its listed sealed versions. Opening it, fetching its wrap, minting and claiming share the per-IP invitation budget. Key and mint requests for a wrong address or invitation return `private_access_denied`. An invitation key fetch writes an access event but no delivered receipt.
+
+Claiming requires the invited address's current identity, a fresh `invite_claim` statement signed by that identity and one wrap per invited version. Claim wraps are create-only and a claim row is written as `pending`. The invitation is then changed from open to claimed by compare-and-swap, and the claim row is finalized as `committed`. Pending and revoked rows grant no access. A retry for the same identity and versions finalizes an interrupted claim. A revoke between the swap and finalization wins. One claim row exists per relik and identity; a second invitation is refused with `invite_claimed` and `reason: 'claim_exists'`. The owner can share directly instead. A confirmed claimant is a grantee and is removed through reader revocation, not invitation cancellation.
+
+Failed claim attempts can leave claim wraps behind. Those wraps grant access only when a committed, unrevoked claim covers the version, or a live grant explicitly covers a claim wrap's version. Other grant and seal wraps retain their normal grant rules, including later sealed versions. Revocation and relik or version deletion sweep the applicable wraps. Claim rows and claim wraps carry the relik expiry; invitation rows carry the invitation expiry and are excluded from relik lifetime extensions. The bucket lifecycle deletes expired objects one day after their custom time; soft-delete retention still applies.
+
 **Revocation** (`POST /api/relics/{id}/revocations`). One attestation carries both a `revocation` statement and a `republish` statement. `previous_version` must equal both `row.sealedVersion` and `row.version`, else `version_conflict`. The server records the revocation on the grant and deletes the grantee's wraps for every version. In one `updateRelic` it increments `accessEpoch` and opens the next version the way a republish does, with its notice pending. It signs the upload, logs a `revoke` event, and returns the upload grant with both epochs. The browser then uploads the rekeyed content and completes it with a seal signed by the owner's identity.
 
 Revocation stops serving the revoked identity at once: its wraps are deleted, so it cannot fetch a key for any version. A reader keeps whatever it already opened, and the warning the owner sees before the rekey says so.
@@ -851,7 +871,7 @@ An address that has lost every passkey can replace its identity with `POST /api/
 
 ### 10.6 Access log
 
-Each owner has an access log of these events: `request`, `grant`, `revoke`, `wrap_fetch` (a key fetch) and `delete`. Each event carries the owner, the relik, the time, the kind, the version where there is one, the acting identity or device, and the subject identity where there is one. The owner reads it through `GET /api/identity/access-log`, oldest first, optionally filtered by `relic_id`.
+Each owner has an access log of `request`, `grant`, `share`, `invite`, `claim`, `revoke`, `wrap_fetch` and `delete` events. Invitation events include the subject address, and claim events also include the claimant identity. The owner reads the log through `GET /api/identity/access-log`, oldest first, optionally filtered by `relic_id`.
 
 Retention is set per owner. `POST /api/identity/settings` sets `access_log_retention_days` to a value from `accessLogRetentionMinDays` (30) to `accessLogRetentionMaxDays` (3650). The default, `accessLogRetentionDefaultDays`, is 2190 days, which is six years. That default follows the six-year period in [45 CFR 164.316(b)(2)(i)](https://www.law.cornell.edu/cfr/text/45/164.316) for the documentation that section covers. It is a default, not a claim that Relik is subject to that section.
 
@@ -872,12 +892,18 @@ Each event is written with a `retainUntil`, set from the owner's setting when th
 | `deviceEnrollmentTtlSeconds` | 900 | A device enrollment, until it expires. |
 | `privatePendingRequestsMax` | 50 | Pending access requests on one relik. |
 | `privateBackfillMaxWraps` | 2000 | Wraps in one `POST /api/identity/backfill`. |
+| `privateShareMaxPerCall` | 20 | Grants and invitations in one batch. |
+| `privateInvitesMaxOpen` | 50 | Open invitations on one relik. |
+| `inviteDefaultDays`, `inviteMinDays`, `inviteMaxDays` | 7, 1, 30 | Invitation lifetime, capped by relik expiry. |
 
 Rate limits, each over a window of 3600 seconds:
 
 - `privateRateLimit`: 60 per IP, for the private routes.
 - `deviceEnrollmentRateLimit`: 10 per IP, for device enrollment.
 - `identityLookupRateLimit`: 30 per session address, for identity lookups.
+- `identityLookupIpRateLimit`: 120 addresses per IP; lookup and invitation creation share this budget.
+- `directShareRateLimit`: 60 per owner identity, charged for invitations and direct grants.
+- `inviteRateLimit`: 240 per IP, shared by invitation open, key, mint and claim.
 
 A refusal is `429` with `retry_after_seconds` (1.5). The private routes use `private_rate_limited` (1.17).
 
@@ -910,6 +936,8 @@ These are limits the build keeps by design or defers. Each is stated where it ap
 - **PS2-08, key squatting.** KEM keys are first-come claims. Registration and device enrollment do not prove possession of the KEM private key. A discoverable key can be squatted, which is a denial of service. A pending device enrollment's KEM key is visible to anyone who holds the enrollment id.
 - **PS2-10, owner bind by a leaked token.** A leaked publish token lets its holder bind a passkey identity as owner of a public relik that has no owner. That is the same power the token already gives: republish and delete.
 - **Recovery lookup.** A signed-in identity learns whether an address has an identity, and receives its public keys. The lookup is rate-limited per viewer.
+- **Direct shares and invitations.** Lookup reveals whether an address has an identity to a signed-in identity holder. Budgets are per service instance. Access notices bypass notification settings and name the owner; claim notices name the invited address to the owner. Until an invitation is claimed, anyone holding both its link and access to its mailbox can open its listed versions. A claim outlives the invitation and gives access only to its listed versions until the owner grants later versions. The service cannot recover an invitation link's key, and a reader can retain content already opened.
+- **Identity replacement during claim.** The claimant's current identity is checked again before the claim is finalized. If it changed, the pending claim is revoked and the invitation remains consumed. The owner must share directly or invite again. Identity replacement can still race the final check because the identity and claim occupy separate rows.
 - **Loopback exception.** A page served from localhost may request the `localhost` relying-party id at top level. This applies to development only.
 - **Same-user threat model.** Secure Enclave keys have no access control beyond the process that holds them. Version keys sit in a 0600 `publish-state.json`. A process running as the same user can read them. The harness environment is not isolated from an operator's `RELIC_DEVICE_KEYS` setting (PS2-11).
 - **Revocation sweep ordering.** A revocation sweeps wraps before it sets the revoked mark. The ordering is inert in practice: a key fetch refuses a revoked standing, and the publish path refuses keys that are not current.

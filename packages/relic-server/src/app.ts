@@ -1297,19 +1297,50 @@ export function createApp(options: AppOptions = {}): RelicApp {
         }
         if (third === 'invites' && fourth === undefined && get) {
           if (session === undefined) return refuse('sign_in_required');
-          return Response.json({ invites: await listInvitations(env, normalizeEmail(session.email), relicId) });
+          return Response.json({
+            invites: await listInvitations(
+              env,
+              normalizeEmail(session.email),
+              relicId
+            ),
+          });
         }
-        if (third === 'invites' && fourth !== undefined && fifth === 'revoke' && post) {
+        if (
+          third === 'invites' &&
+          fourth !== undefined &&
+          fifth === 'revoke' &&
+          post
+        ) {
           if (session === undefined) return refuse('sign_in_required');
           await privateBody(request, 'invalid_statement');
-          return Response.json({ invite: await revokeInvitation(env, normalizeEmail(session.email), relicId, fourth) });
+          return Response.json({
+            invite: await revokeInvitation(
+              env,
+              normalizeEmail(session.email),
+              relicId,
+              fourth
+            ),
+          });
         }
-        if (third === 'invites' && fourth !== undefined && fifth === 'claim' && post) {
+        if (
+          third === 'invites' &&
+          fourth !== undefined &&
+          fifth === 'claim' &&
+          post
+        ) {
           if (session === undefined) return refuse('sign_in_required');
           env.limit('invite', ip, config.inviteRateLimit);
           const body = await privateBody(request, 'invalid_statement');
-          const result = await claimInvitation(env, relicId, normalizeEmail(session.email), fourth, body);
-          return Response.json(result, { status: result.status === 'claimed' ? 201 : 200 });
+          const result = await claimInvitation(
+            env,
+            relicId,
+            normalizeEmail(session.email),
+            fourth,
+            body
+          );
+          return Response.json(result, {
+            status: result.status === 'claimed' ? 201 : 200,
+          });
         }
         if (
           third === 'invites' &&
