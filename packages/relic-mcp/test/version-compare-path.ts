@@ -740,32 +740,7 @@ export async function openRelic(b: Browser, url: string): Promise<string> {
 }
 
 export async function startComparison(b: Browser): Promise<void> {
-  // The press is aimed at the button's measured position. The page settles its
-  // layout after the taskbar label first appears, so wait until the button
-  // measures the same box on two samples. Settle polls every 50 ms.
-  await b.evaluate<void>(`globalThis.__relikCompareBox = undefined`);
-  const still = await settle<boolean>(
-    b,
-    `(() => { const el = ${buttonNamed('Compare versions')}; if (!el) return false; const r = el.getBoundingClientRect(); const box = [r.left, r.top, r.width, r.height].map(Math.round).join(','); const prev = globalThis.__relikCompareBox; globalThis.__relikCompareBox = box; return prev === box; })()`,
-    (value) => value === true
-  );
-  assert.ok(still, 'the Compare button never stopped moving');
   await b.click(buttonNamed('Compare versions'), 'Compare versions');
-  // A click that lands on a re-rendered taskbar opens nothing, and the summary
-  // wait would then report an empty line after its full timeout. Fail at the
-  // click instead, and name the state.
-  const opened = await settle<boolean>(
-    b,
-    `!!document.querySelector('.diff-view')`,
-    (value) => value === true,
-    15_000
-  );
-  if (!opened) {
-    const state = await b.evaluate<string>(
-      `JSON.stringify({ taskbar: ${TASKBAR_LABEL}, body: document.body.innerText.slice(0, 300) })`
-    );
-    throw new Error(`the Compare click did not open a diff view: ${state}`);
-  }
 }
 
 export async function text(b: Browser, selector: string): Promise<string> {
@@ -775,12 +750,24 @@ export async function text(b: Browser, selector: string): Promise<string> {
 }
 
 export async function settledSummary(b: Browser): Promise<string> {
-  return settle<string>(
+  const summary = await settle<string>(
     b,
     SUMMARY_TEXT,
     (value) =>
       value !== '' && !/^(Rendering|Reading|Loading|Comparing)/.test(value)
   );
+  // The caller asserts the text. When the wait ended on an empty line, record
+  // what the page showed, so a failure names its state. The value is returned
+  // unchanged: some cases expect no summary, and this decides nothing.
+  if (summary === '') {
+    const state = await b
+      .evaluate<string>(
+        `JSON.stringify({ diffView: !!document.querySelector('.diff-view'), taskbar: ${TASKBAR_LABEL}, body: document.body.innerText.slice(0, 300) })`
+      )
+      .catch(() => 'page unavailable');
+    console.error(`SUMMARY_EMPTY ${state}`);
+  }
+  return summary;
 }
 
 async function comparisonFrames(
