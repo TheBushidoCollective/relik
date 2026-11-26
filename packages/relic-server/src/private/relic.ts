@@ -629,7 +629,12 @@ export async function applyGrants(
   const grantWraps = wraps.filter(
     (wrap) => !inviteKeys.has(wrap.recipientKeyId)
   );
-  const grantVersions = [...new Set(planned.flatMap((p) => p.versions))];
+  const batchVersions = [
+    ...new Set([
+      ...planned.flatMap((p) => p.versions),
+      ...plannedInvites.flatMap((p) => p.versions),
+    ]),
+  ];
   const created: string[] = [];
   const createdInvites: string[] = [];
   const replaced: { granteeId: string; prior: GrantRow }[] = [];
@@ -680,7 +685,7 @@ export async function applyGrants(
       }
     }
     if (gone) return new ProblemError('relic_removed', { relic_id: row.id });
-    const deleted = grantVersions.find(
+    const deleted = batchVersions.find(
       (version) => current !== undefined && isDeleted(current, version)
     );
     return deleted === undefined
@@ -809,7 +814,7 @@ export async function applyGrants(
         if (p.prior?.revokedAt !== undefined) fences[p.grantee.email] = fence;
       }
       const committed = await env.store.updateRelic(row.id, (cur) => {
-        const deleted = grantVersions.find((version) =>
+        const deleted = batchVersions.find((version) =>
           isDeleted(cur, version)
         );
         if (deleted !== undefined) {
