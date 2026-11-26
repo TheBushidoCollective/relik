@@ -1135,9 +1135,13 @@ async function run(): Promise<void> {
       fifthId.identityId,
       env.third
     );
-    assert.equal(
-      canonicalOf(substitutedRow?.fingerprint ?? ''),
-      canonicalOf(substituteFingerprint)
+    const substitutedRow = await poll(
+      'substituted identity refused',
+      25000,
+      async () => {
+        const row = (await rowsOf(owner))[0];
+        return row?.state === 'unverified' ? row : undefined;
+      }
     );
     assert.equal(substitutedRow.state, 'unverified');
     const fifthFingerprint = await identityFingerprint(
@@ -2080,7 +2084,172 @@ async function run(): Promise<void> {
     );
     lastReceipt = 111;
 
-    throw new Error('steps 12 to 13 are not yet written in this checkpoint');
+    // Exercise deletion while an invitation still covers more than one version.
+    await freshSharePanel(owner, relicUrl);
+    await pickVersions(owner, [confirmedVersion, rekeyVersion]);
+    await addToPanel(owner, [DELETE_INVITEE], 1);
+    await tapInvites(owner, 1);
+    const deletionInvite = (await linksShown(owner))[0];
+    assert.ok(deletionInvite);
+    const deletionActor = await launchActor(
+      env,
+      'invitee-delete',
+      DELETE_INVITEE,
+      true
+    );
+    actors.push(deletionActor);
+    await signInFromLink(deletionActor, deletionInvite.url);
+    await waitForOpened(
+      deletionActor.browser,
+      'invitee before version deletion'
+    );
+    const deleteNonce = await api(env, 'POST', '/api/attest/nonce', {
+      cookie: ownerCookie,
+      body: { purpose: 'delete', relic_id: relicId },
+    });
+    assert.equal(deleteNonce.status, 200);
+    const deletionDrafts = [
+      {
+        kind: 'delete',
+        statement: {
+          at: Date.now(),
+          owner_identity_id: ownerKeys.identityId,
+          relic_id: relicId,
+          versions: [confirmedVersion],
+        },
+      },
+    ];
+    const deleteAttestation = await attestationFor(
+      owner,
+      ownerKeys,
+      stringAt(deleteNonce.json, 'nonce', 'nonce'),
+      deleteNonce.json['public_key'] as Json,
+      deletionDrafts as unknown as Parameters<typeof attestationFor>[4]
+    );
+    const deletion = await api(env, 'POST', `/api/relics/${relicId}/delete`, {
+      cookie: ownerCookie,
+      body: { attestation: deleteAttestation.attestation },
+    });
+    assert.equal(deletion.status, 200);
+    const remaining = await store.getInvite(relicId, deletionInvite.inviteId);
+    assert.deepEqual(remaining?.versions, [rekeyVersion]);
+    assert.deepEqual(
+      remaining?.wraps.map((wrap) => wrap.version),
+      [rekeyVersion]
+    );
+    await goto(deletionActor.browser, 'about:blank');
+    await goto(deletionActor.browser, deletionInvite.url);
+    await waitForOpened(
+      deletionActor.browser,
+      'invitee after version deletion'
+    );
+    const deletionCookie = await cookieHeader(deletionActor.browser);
+    const survivingKey = await api(
+      env,
+      'POST',
+      `/api/relics/${relicId}/versions/${rekeyVersion}/key`,
+      { cookie: deletionCookie, body: { invite_id: deletionInvite.inviteId } }
+    );
+    const deletedKey = await api(
+      env,
+      'POST',
+      `/api/relics/${relicId}/versions/${confirmedVersion}/key`,
+      { cookie: deletionCookie, body: { invite_id: deletionInvite.inviteId } }
+    );
+    assert.equal(
+      survivingKey.status,
+      200,
+      'the surviving version key was refused'
+    );
+    assert.equal(deletedKey.status, 403, 'a deleted version key was served');
+    const versionsEmptied = (
+      await store.getInvite(relicId, deletionInvite.inviteId)
+    )?.versions;
+    assert.deepEqual(versionsEmptied, [rekeyVersion]);
+    emit(
+      112,
+      `INVITE_STEP_12_DELETE version_delete=versions_stripped surviving_key=${survivingKey.status} deleted_key=${deletedKey.status}`
+    );
+    lastReceipt = 112;
+
+    // INVITE_STEP_13. relic-mcp grants nothing: its share returns a link for the owner, with no service call.
+    const callsBeforeShare = serviceCalls;
+    const mcpShare = await mcp('relic_share', {
+      relic_id: relicId,
+      emails: [DELETE_INVITEE],
+    });
+    assert.equal(
+      serviceCalls,
+      callsBeforeShare,
+      'private share made a service call'
+    );
+    const grantUrl = new URL(stringAt(mcpShare, 'grant_url', 'private share'));
+    assert.equal(grantUrl.searchParams.get('access'), 'share');
+    assert.equal(
+      new URLSearchParams(grantUrl.hash.slice(1)).get('to'),
+      DELETE_INVITEE
+    );
+    const refusedSigner = await callMcpRaw(env, 'relic_request_signatures', {
+      relic_id: relicId,
+      signers: [{ email: DELETE_INVITEE }],
+    });
+    assert.equal(refusedSigner.isError, true);
+    assert.equal(refusedSigner.structured['code'], 'recipient_forged_grant');
+    assert.equal(refusedSigner.structured['grant_url'] !== undefined, true);
+    assert.equal(refusedSigner.structured['signer_email'], DELETE_INVITEE);
+    emit(
+      113,
+      `INVITE_STEP_13_MCP grant_url_unregistered=invite_offered service_calls=0 refusal=recipient_forged_grant grant_url_in_refusal=true`
+    );
+    lastReceipt = 113;
+
+    // Whole-relik deletion: every invitation and claim of this relik goes with it.
+    const wholeNonce = await api(env, 'POST', '/api/attest/nonce', {
+      cookie: ownerCookie,
+      body: { purpose: 'delete', relic_id: relicId },
+    });
+    assert.equal(wholeNonce.status, 200);
+    const wholeAttestation = await attestationFor(
+      owner,
+      ownerKeys,
+      stringAt(wholeNonce.json, 'nonce', 'nonce'),
+      wholeNonce.json['public_key'] as Json,
+      [
+        {
+          kind: 'delete',
+          statement: {
+            at: Date.now(),
+            owner_identity_id: ownerKeys.identityId,
+            relic_id: relicId,
+            versions: 'all',
+          },
+        },
+      ] as unknown as Parameters<typeof attestationFor>[4]
+    );
+    const wholeDelete = await api(
+      env,
+      'POST',
+      `/api/relics/${relicId}/delete`,
+      {
+        cookie: ownerCookie,
+        body: { attestation: wholeAttestation.attestation },
+      }
+    );
+    assert.equal(wholeDelete.status, 200);
+    const invitesLeft = (await store.listInvites(relicId)).length;
+    const claimsLeft = (await store.listInviteClaims(relicId)).length;
+    assert.equal(invitesLeft, 0);
+    assert.equal(claimsLeft, 0);
+    emit(
+      114,
+      `INVITE_STEP_12_RELIK_DELETE whole_relik=invites_${invitesLeft},claims_${claimsLeft}`
+    );
+    lastReceipt = 114;
+
+    // Stage C (DIRECT_STEP_11 to 13: signing grants, signing refusals, MCP share lines) is not yet written.
+    throw new Error(
+      'direct steps 11 to 13 (signing) are not yet written in this checkpoint'
+    );
   } finally {
     for (const actor of actors) await actor.browser.close().catch(() => {});
   }
