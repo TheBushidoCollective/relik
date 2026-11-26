@@ -741,6 +741,21 @@ export async function openRelic(b: Browser, url: string): Promise<string> {
 
 export async function startComparison(b: Browser): Promise<void> {
   await b.click(buttonNamed('Compare versions'), 'Compare versions');
+  // A click that lands on a re-rendered taskbar opens nothing, and the summary
+  // wait would then report an empty line after its full timeout. Fail at the
+  // click instead, and name the state.
+  const opened = await settle<boolean>(
+    b,
+    `!!document.querySelector('.diff-view')`,
+    (value) => value === true,
+    15_000
+  );
+  if (!opened) {
+    const state = await b.evaluate<string>(
+      `JSON.stringify({ taskbar: ${TASKBAR_LABEL}, body: document.body.innerText.slice(0, 300) })`
+    );
+    throw new Error(`the Compare click did not open a diff view: ${state}`);
+  }
 }
 
 export async function text(b: Browser, selector: string): Promise<string> {
