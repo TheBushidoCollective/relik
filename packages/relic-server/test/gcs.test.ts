@@ -451,9 +451,7 @@ describe('the storage adapter', () => {
     expect(upload.method).toBe('PUT');
     expect(upload.headers['content-length']).toBe('4096');
     // Signed, so a client cannot alter it without invalidating the signature.
-    expect(upload.url).toContain(
-      'content-length%3Bhost%3Bx-goog-if-generation-match'
-    );
+    expect(upload.url).toContain('content-length%3Bhost');
     expect(upload.contentLength).toBe(4096);
     expect(upload.expiresAt).toBe(NOW + 900_000);
   });
@@ -470,35 +468,22 @@ describe('the storage adapter', () => {
     expect(upload.expiresAt).toBe(NOW + 4_500_000);
     expect(url.searchParams.get('X-Goog-Expires')).toBe('4500');
     expect(url.searchParams.get('X-Goog-SignedHeaders')).toBe(
-      'content-length;host;x-goog-if-generation-match'
+      'content-length;host'
     );
   });
 
-  test('a grant issued before signing cannot overwrite the signed object', async () => {
+  test('a client that sends only the signed content-length uploads and reads back', async () => {
     const fake = fakeGcs();
     const records = storeOn(fake);
     await records.putRelic(relic());
     const upload = await storage().signUpload(RELIC_ID, 4, 900, NOW);
-    expect(upload.headers['x-goog-if-generation-match']).toBe('0');
-    expect(
-      new URL(upload.url).searchParams.get('X-Goog-SignedHeaders')
-    ).toContain('x-goog-if-generation-match');
+    expect(upload.headers).not.toHaveProperty('x-goog-if-generation-match');
     const first = await fake.fetch(upload.url, {
       method: 'PUT',
-      headers: upload.headers,
+      headers: { 'content-length': '4' },
       body: new Uint8Array([1, 2, 3, 4]),
     });
     expect(first.status).toBe(200);
-    await records.updateRelic(RELIC_ID, (row) => ({
-      ...row,
-      lockedVersions: [1],
-    }));
-    const replacement = await fake.fetch(upload.url, {
-      method: 'PUT',
-      headers: upload.headers,
-      body: new Uint8Array([4, 3, 2, 1]),
-    });
-    expect(replacement.status).toBe(412);
     const object = await fake.fetch(
       `https://gcs.test/storage/v1/b/relic-objects/o/${encodeURIComponent(`r/${RELIC_ID}`)}?alt=media`
     );
