@@ -567,9 +567,7 @@ test('GCS PUT signs the private lifecycle header and exact length', async () => 
     new Date(expiresAt).toISOString()
   );
   const signed = new URL(upload.url).searchParams.get('X-Goog-SignedHeaders');
-  expect(signed).toBe(
-    'content-length;host;x-goog-custom-time;x-goog-if-generation-match'
-  );
+  expect(signed).toBe('content-length;host;x-goog-custom-time');
 });
 
 test('relik reservation is create-only in memory and GCS', async () => {
