@@ -500,6 +500,163 @@ describe('invitation creation (plan 3.3 B)', () => {
     ).toEqual(['ada@example.com', 'grace@example.com']);
   });
 
+  test.each([
+    'none',
+    'before invitation write',
+    'before epoch commit',
+  ] as const)(
+    'a mixed batch with different version scopes handles deletion: %s',
+    async (window) => {
+      const owner = await person('owner@example.com');
+      await registerIdentity(owner);
+      const { versionKey } = await sealedPrivateRelic(owner);
+      const reader = await person('reader@example.com');
+      await registerIdentity(reader);
+      const invitee = await person('ada@example.com');
+
+      // Mirror the existing two-version fixture: both versions are sealed,
+      // but only the invitation covers the older one.
+      const seal = (await store.getSeal(RELIC_ID, 1))!;
+      await store.putSeal({ ...seal, version: 2 });
+      await store.updateRelic(RELIC_ID, (row) => ({
+        ...row,
+        version: 2,
+        sealedVersion: 2,
+      }));
+      const invite = await inviteFor(owner, invitee.email, [1, 2]);
+      const inviteId = await inviteIdOf(invite.pair.publicKey);
+      const grant = await grantStatementFor(owner, reader, [2]);
+      const batch = {
+        attestation: await attest(owner, 'grant', RELIC_ID, [
+          grant,
+          invite.statement,
+        ]),
+        wraps: [
+          await wrap(reader.keys!.kemPublicKey, versionKey, 2),
+          await wrap(invite.pair.publicKey, versionKey, 1),
+          await wrap(invite.pair.publicKey, versionKey, 2),
+        ],
+      };
+      const deletionState: { status?: number } = {};
+      if (window !== 'none') {
+        // The grant assertion is signed first and is verified before delete.
+        const deletion = await attest(owner, 'delete', RELIC_ID, [
+          {
+            kind: 'delete',
+            statement: {
+              at: now,
+              owner_identity_id: owner.identityId,
+              relic_id: RELIC_ID,
+              versions: [1],
+            },
+          },
+        ]);
+        const removeVersion = async () => {
+          const response = await send(
+            `/api/relics/${RELIC_ID}/delete`,
+            post({ attestation: deletion }, owner.cookie)
+          );
+          deletionState.status = response.status;
+        };
+        if (window === 'before invitation write') {
+          const putInvite = store.putInvite.bind(store);
+          store.putInvite = async (row) => {
+            store.putInvite = putInvite;
+            await removeVersion();
+            return putInvite(row);
+          };
+        } else {
+          const updateRelic = store.updateRelic.bind(store);
+          store.updateRelic = async (...args) => {
+            store.updateRelic = updateRelic;
+            await removeVersion();
+            return updateRelic(...args);
+          };
+        }
+      }
+
+      const response = await send(
+        `/api/relics/${RELIC_ID}/grants`,
+        post(batch, owner.cookie)
+      );
+      if (window !== 'none') {
+        expect(deletionState.status).toBe(200);
+        expect((await store.getRelic(RELIC_ID))?.deletedVersions).toContain(1);
+        expect(response.status).toBe(410);
+        expect(response.body['code']).toBe('version_deleted');
+        expect(await store.getInvite(RELIC_ID, inviteId)).toBeUndefined();
+        expect(
+          await store.getGrant(RELIC_ID, reader.identityId!)
+        ).toBeUndefined();
+        const readerKey = (await store.getIdentity(reader.identityId!))!
+          .kemKeyId;
+        expect(await store.getWrap(RELIC_ID, 2, readerKey)).toBeDefined();
+        return;
+      }
+
+      expect(response.status).toBe(201);
+      expect(await store.getGrant(RELIC_ID, reader.identityId!)).toBeDefined();
+      const savedInvite = await store.getInvite(RELIC_ID, inviteId);
+      expect(savedInvite?.versions).toEqual([1, 2]);
+      expect(savedInvite?.wraps.map((item) => item.version)).toEqual([1, 2]);
+      const opened = await send(
+        `/api/relics/${RELIC_ID}/invites/${inviteId}/open`,
+        post({}, invitee.cookie)
+      );
+      expect(opened.status).toBe(200);
+      expect(opened.body['versions']).toEqual([1, 2]);
+      for (const version of [1, 2]) {
+        const fetched = await send(
+          `/api/relics/${RELIC_ID}/versions/${version}/key`,
+          post({ invite_id: inviteId }, invitee.cookie)
+        );
+        expect(fetched.status).toBe(200);
+        const stored = fetched.body['wrap'] as { enc: string; ct: string };
+        const openedKey = await unwrapVersionKey({
+          recipient: await inviteRecipient(
+            invite.pair.d,
+            invite.pair.publicKey
+          ),
+          relicId: RELIC_ID,
+          version,
+          enc: stored.enc,
+          ct: stored.ct,
+        });
+        expect(Buffer.from(openedKey)).toEqual(Buffer.from(versionKey));
+      }
+
+      await registerIdentity(invitee);
+      const statement = {
+        at: now,
+        claimant_identity_id: invitee.identityId!,
+        invite_id: inviteId,
+        relic_id: RELIC_ID,
+        versions: [1, 2],
+      };
+      const claimed = await send(
+        `/api/relics/${RELIC_ID}/invites/${inviteId}/claim`,
+        post(
+          {
+            statement,
+            identity_signature: await signStatement(
+              signer(invitee.keys!),
+              statementBytes('invite_claim', statement)
+            ),
+            wraps: [
+              await wrap(invitee.keys!.kemPublicKey, versionKey, 1),
+              await wrap(invitee.keys!.kemPublicKey, versionKey, 2),
+            ],
+          },
+          invitee.cookie
+        )
+      );
+      expect(claimed.status).toBe(201);
+      expect((await store.getInvite(RELIC_ID, inviteId))?.status).toBe(
+        'claimed'
+      );
+    }
+  );
+
   test('an invitation to an address that already has an identity is refused with identity_exists, after the lookup budget is charged', async () => {
     app = build({ identityLookupRateLimit: { limit: 1, windowSeconds: 3600 } });
     const owner = await person('owner@example.com');

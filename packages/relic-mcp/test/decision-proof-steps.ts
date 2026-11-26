@@ -308,10 +308,10 @@ export async function launchProofBrowser(
     };
 
     const ex = res.exceptionDetails;
-    assert.ok(
-      !ex,
-      `page evaluate failed: ${ex?.text ?? ex?.exception?.description ?? JSON.stringify(res)}`
-    );
+    const reason = [ex?.text, ex?.exception?.description]
+      .filter((part) => part)
+      .join(' ');
+    assert.ok(!ex, `page evaluate failed: ${reason || JSON.stringify(res)}`);
     return res.result?.value as T;
   };
 

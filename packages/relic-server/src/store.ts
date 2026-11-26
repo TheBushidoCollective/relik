@@ -1054,13 +1054,15 @@ export interface RelicStore {
     filter: { readonly version?: number; readonly recipientKeyId?: string }
   ): Promise<number>;
   /**
-   * Replaces the wrap at this row's name when `matches` holds for the wrap
-   * there now. Create-only writes use `putWrap`.
+   * Creates the wrap if absent, replaces it when `replaceIf` holds, and keeps
+   * it otherwise. A concurrent write or delete is judged again. GCS reads the
+   * relik's erasure time for each write. A missing relik row is refused.
+   * Create-only writes use `putWrap`.
    */
-  replaceWrapIf(
+  ensureWrap(
     row: WrapRow,
-    matches: (current: WrapRow) => boolean
-  ): Promise<boolean>;
+    replaceIf: (current: WrapRow) => boolean
+  ): Promise<'created' | 'replaced' | 'kept'>;
   /**
    * Deletes the wrap at this name when `matches` holds for it. A concurrent
    * write makes the delete judge the wrap again, so a wrap is removed only
@@ -2200,19 +2202,22 @@ export class MemoryStore implements RelicStore {
     return removed;
   }
 
-  async replaceWrapIf(
+  async ensureWrap(
     row: WrapRow,
-    matches: (current: WrapRow) => boolean
-  ): Promise<boolean> {
+    replaceIf: (current: WrapRow) => boolean
+  ): Promise<'created' | 'replaced' | 'kept'> {
+    if (!this.relics.has(row.relicId)) {
+      throw new ProblemError('relic_removed', { relic_id: row.relicId });
+    }
     const k = compositeKey(
       row.relicId,
       String(row.version),
       row.recipientKeyId
     );
     const current = this.wraps.get(k);
-    if (current === undefined || !matches(current)) return false;
+    if (current !== undefined && !replaceIf(current)) return 'kept';
     this.wraps.set(k, row);
-    return true;
+    return current === undefined ? 'created' : 'replaced';
   }
 
   async deleteWrapIf(

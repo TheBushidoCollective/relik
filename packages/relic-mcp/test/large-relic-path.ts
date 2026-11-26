@@ -537,7 +537,7 @@ try {
   const calibrated = await browser.memoryNegativeControl(calibration);
   await browser.closePage(calibration);
   console.log(
-    `LARGE_MEMORY_NEG_OK allocation_bytes=${512 * MIB} detected_growth=${calibrated.allocation.footprint} ${memoryControlReceipt('allocation', calibrated.allocation)} ${memoryControlReceipt('retained', calibrated.retained)} ${memoryControlReceipt('churn', calibrated.churn)} measurement=${memoryMeasurement()} browser_process_storage=not_gated transient_renderer_peak=not_gated`
+    `LARGE_MEMORY_NEG_OK allocation_bytes=${512 * MIB} detected_growth=${calibrated.allocation.footprint} ${memoryControlReceipt('allocation', calibrated.allocation)} ${memoryControlReceipt('release', calibrated.release)} release_rounds=${calibrated.releaseRounds} ${memoryControlReceipt('retained', calibrated.retained)} ${memoryControlReceipt('churn', calibrated.churn)} measurement=${memoryMeasurement()} browser_process_storage=not_gated transient_renderer_peak=not_gated`
   );
   const canceled = await browser.page(media.url);
   await browser.waitFor(

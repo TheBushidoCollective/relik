@@ -2430,17 +2430,17 @@ describe('conditional wrap primitives', () => {
       await store.putRelic(privateRelic());
       await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
       expect(
-        await store.replaceWrapIf(
+        await store.ensureWrap(
           { ...wrap(RECIPIENT_A, 1), enc: 'later', epoch: 3 },
           (current) => (current.epoch ?? 0) < 1
         )
-      ).toBe(false);
+      ).toBe('kept');
       expect(
-        await store.replaceWrapIf(
+        await store.ensureWrap(
           { ...wrap(RECIPIENT_A, 1), enc: 'later', epoch: 3 },
           (current) => (current.epoch ?? 0) < 3
         )
-      ).toBe(true);
+      ).toBe('replaced');
       expect(
         await store.deleteWrapIf(
           RELIC_ID,
@@ -2473,11 +2473,11 @@ describe('conditional wrap primitives', () => {
       `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`,
       async () => {
         expect(
-          await store.replaceWrapIf(
+          await store.ensureWrap(
             { ...wrap(RECIPIENT_A, 1), enc: 'later', epoch: 3 },
             (current) => (current.epoch ?? 0) < 3
           )
-        ).toBe(true);
+        ).toBe('replaced');
       }
     );
     expect(
@@ -2489,5 +2489,171 @@ describe('conditional wrap primitives', () => {
       )
     ).toBe(false);
     expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.enc).toBe('later');
+  });
+
+  test('a lifetime extension during a create conflict reaches the replacement', async () => {
+    const fake = fakeGcs();
+    const store = storeOn(fake);
+    await store.putRelic(privateRelic());
+    const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+    await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
+    const later = NOW + 60 * DAY;
+    fake.afterNextCreateConflict(name, async () => {
+      await store.extendPrivateLifetime(RELIC_ID, later);
+      await store.updateRelic(RELIC_ID, (row) => ({
+        ...row,
+        expiresAt: later,
+        privateErasureAt: later,
+      }));
+      await store.extendPrivateLifetime(RELIC_ID, later);
+    });
+
+    expect(
+      await store.ensureWrap(
+        { ...wrap(RECIPIENT_A, 1), enc: 'new', epoch: 2 },
+        (current) => (current.epoch ?? 0) < 2
+      )
+    ).toBe('replaced');
+    expect(fake.objects.get(name)?.customTime).toBe(
+      new Date(later).toISOString()
+    );
+  });
+
+  test('a retry refuses to recreate a wrap after the relik row is gone', async () => {
+    const fake = fakeGcs();
+    const store = storeOn(fake);
+    await store.putRelic(privateRelic());
+    const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+    await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
+    let removed = false;
+    fake.afterNextCreateConflict(name, async () => {
+      await store.deleteWraps(RELIC_ID, {});
+      await store.deleteRelicRow(RELIC_ID);
+      removed = true;
+    });
+
+    await expect(
+      store.ensureWrap(
+        { ...wrap(RECIPIENT_A, 1), epoch: 2 },
+        (current) => (current.epoch ?? 0) < 2
+      )
+    ).rejects.toMatchObject({ code: 'relic_removed' });
+    expect(removed).toBe(true);
+    expect(fake.objects.has(name)).toBe(false);
+  });
+
+  test.each([
+    'after a refused create',
+    'after reading the old generation',
+  ] as const)('recreates a wrap deleted %s', async (window) => {
+    const fake = fakeGcs();
+    const store = storeOn(fake);
+    await store.putRelic(privateRelic());
+    const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+    const old = { ...wrap(RECIPIENT_A, 1), epoch: 1 };
+    const next = { ...old, enc: 'new', epoch: 2 };
+    await store.putWrap(old);
+    let deleted = false;
+    const sweep = async () => {
+      deleted = await store.deleteWrapIf(
+        RELIC_ID,
+        1,
+        RECIPIENT_A,
+        (current) => (current.epoch ?? 0) <= 1
+      );
+    };
+    if (window === 'after a refused create') {
+      fake.afterNextCreateConflict(name, sweep);
+    } else {
+      fake.beforeNextReplace(name, sweep);
+    }
+
+    expect(
+      await store.ensureWrap(next, (current) => (current.epoch ?? 0) < 2)
+    ).toBe('created');
+    expect(deleted).toBe(true);
+    expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toEqual(next);
+    expect(fake.objects.get(name)?.customTime).toBe(
+      new Date(NOW + 30 * DAY).toISOString()
+    );
+  });
+
+  test.each([1, 2, 3])(
+    'judges a competing create at epoch %i before writing',
+    async (epoch) => {
+      const fake = fakeGcs();
+      const store = storeOn(fake);
+      await store.putRelic(privateRelic());
+      const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+      const competing = { ...wrap(RECIPIENT_A, 1), enc: 'competing', epoch };
+      const next = { ...wrap(RECIPIENT_A, 1), enc: 'new', epoch: 2 };
+      let created = false;
+      fake.beforeNextUpload(name, async () => {
+        created = await store.putWrap(competing);
+      });
+
+      expect(
+        await store.ensureWrap(next, (current) => (current.epoch ?? 0) < 2)
+      ).toBe(epoch < 2 ? 'replaced' : 'kept');
+      expect(created).toBe(true);
+      expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toEqual(
+        epoch < 2 ? next : competing
+      );
+      expect(fake.objects.get(name)?.customTime).toBe(
+        new Date(NOW + 30 * DAY).toISOString()
+      );
+    }
+  );
+
+  test.each([1, 2, 3])(
+    'judges a competing replacement at epoch %i after losing its write',
+    async (epoch) => {
+      const fake = fakeGcs();
+      const store = storeOn(fake);
+      await store.putRelic(privateRelic());
+      const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+      await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 0 });
+      const competing = { ...wrap(RECIPIENT_A, 1), enc: 'competing', epoch };
+      const next = { ...wrap(RECIPIENT_A, 1), enc: 'new', epoch: 2 };
+      let replaced = false;
+      fake.beforeNextReplace(name, async () => {
+        replaced =
+          (await store.ensureWrap(competing, () => true)) === 'replaced';
+      });
+
+      expect(
+        await store.ensureWrap(next, (current) => (current.epoch ?? 0) < 2)
+      ).toBe(epoch < 2 ? 'replaced' : 'kept');
+      expect(replaced).toBe(true);
+      expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toEqual(
+        epoch < 2 ? next : competing
+      );
+      expect(fake.objects.get(name)?.customTime).toBe(
+        new Date(NOW + 30 * DAY).toISOString()
+      );
+    }
+  );
+
+  test('ensureWrap bounds retries when every write loses its race', async () => {
+    const fake = fakeGcs();
+    const store = storeOn(fake, 3);
+    await store.putRelic(privateRelic());
+    const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+    await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
+    fake.requests.length = 0;
+    fake.contendOn(name, -1);
+
+    await expect(
+      store.ensureWrap(
+        { ...wrap(RECIPIENT_A, 1), enc: 'new', epoch: 2 },
+        (current) => (current.epoch ?? 0) < 2
+      )
+    ).rejects.toThrow('gcs wrap lost 3 compare-and-swap races');
+    expect(
+      fake.requests.filter((request) =>
+        new URL(request.url).pathname.startsWith('/upload/')
+      )
+    ).toHaveLength(4);
+    expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.epoch).toBe(1);
   });
 });

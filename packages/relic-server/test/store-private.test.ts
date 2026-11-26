@@ -259,6 +259,35 @@ for (const backend of backends) {
         expect(await store.getWrap(RELIC_ID, 3, RECIPIENT_A)).toBeUndefined();
       });
 
+      test('ensureWrap creates, replaces older wraps and keeps current or newer wraps', async () => {
+        const store = backend.make();
+        await store.putRelic(privateRelic());
+        const legacy = { ...wrap(RECIPIENT_A, 1), enc: 'legacy' };
+        const current = { ...legacy, enc: 'current', epoch: 2 };
+        const newer = { ...legacy, enc: 'newer', epoch: 3 };
+        const olderThan = (epoch: number) => (row: typeof legacy) =>
+          (row.epoch ?? 0) < epoch;
+
+        expect(await store.ensureWrap(legacy, olderThan(0))).toBe('created');
+        expect(await store.ensureWrap(current, olderThan(2))).toBe('replaced');
+        expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toEqual(current);
+        expect(
+          await store.ensureWrap({ ...current, enc: 'different' }, olderThan(2))
+        ).toBe('kept');
+        expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toEqual(current);
+        expect(await store.ensureWrap(newer, olderThan(3))).toBe('replaced');
+        expect(await store.ensureWrap(current, olderThan(2))).toBe('kept');
+        expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toEqual(newer);
+      });
+
+      test('ensureWrap refuses to write without a relik row', async () => {
+        const store = backend.make();
+        await expect(
+          store.ensureWrap(wrap(RECIPIENT_A, 1), () => true)
+        ).rejects.toMatchObject({ code: 'relic_removed' });
+        expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toBeUndefined();
+      });
+
       test('deleteWraps by recipient removes that recipient in every version and nobody else', async () => {
         const store = backend.make();
         await store.putWrap(wrap(RECIPIENT_A, 1));
