@@ -677,15 +677,13 @@ export async function applyGrants(
         source: 'grant',
         epoch: commitEpoch,
       };
-      // A wrap an earlier epoch wrote is stale, and a sweep of that epoch's
-      // revocation may take it, so it is replaced. A wrap already at this epoch
-      // is kept; it opens the same version key.
-      if (!(await env.store.putWrap(record))) {
-        await env.store.replaceWrapIf(
-          record,
-          (current) => (current.epoch ?? 0) < commitEpoch
-        );
-      }
+      // An earlier wrap is stale and its sweep can delete it at any moment.
+      // Replace it or create the new wrap if the sweep got there first. A wrap
+      // already at this epoch is kept; it opens the same version key.
+      await env.store.ensureWrap(
+        record,
+        (current) => (current.epoch ?? 0) < commitEpoch
+      );
     }
 
     for (const p of planned) {

@@ -224,6 +224,7 @@ Returns 200 `GrantLookupJSON`. No access-log event, and no log line contains an 
 7. **Wraps.** The set of `(version, recipient_key_id)` pairs must equal exactly the union of grant versions times grantee KEM key and invitation versions times invite id, with no duplicates and at most `privateBackfillMaxWraps` items. Otherwise `400 invalid_wrap`.
 8. **Writes.**
    - Create grant wraps at the proposed commit epoch and write grant rows, then create invitation rows with their wraps embedded. `putWrap` is create-only; `replaceWrapIf` replaces an existing wrap only if its epoch is older, using a generation check.
+     The wrap primitive in this historical plan is superseded by `ensureWrap`, as described in `docs/spec/service.md` section 10.4.
    - If the batch has grants, compare the relik epoch with the starting epoch and advance it in one update. A regrant writes the address fence in that same update. On failure, created invitation rows are deleted and grant rows are rolled back only while their attestation nonce still matches. Wrap objects are not deleted by rollback. A lost response can cause rollback even when the epoch commit landed, failing closed.
    - A batch of invitations only changes no epoch. Each invitation records the access epoch observed by the call; later authorization checks apply the current address fence.
 

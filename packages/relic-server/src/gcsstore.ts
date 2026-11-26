@@ -2124,14 +2124,14 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     },
 
     /**
-     * Replaces the wrap at this row's name when `matches` holds for the wrap
-     * there now. The write is conditional on the generation read, so a write
-     * that lands in between is judged again.
+     * Creates an absent wrap or replaces the wrap judged by `replaceIf`.
+     * Every write is conditional, so a concurrent create or delete is judged
+     * again before another write.
      */
-    async replaceWrapIf(
+    async ensureWrap(
       row: WrapRow,
-      matches: (current: WrapRow) => boolean
-    ): Promise<boolean> {
+      replaceIf: (current: WrapRow) => boolean
+    ): Promise<'created' | 'replaced' | 'kept'> {
       const name = key(
         'wrap',
         row.relicId,
@@ -2139,10 +2139,17 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         `${row.recipientKeyId}.json`
       );
       const customTime = await privateCustomTime(row.relicId);
+      if (await put(name, row, '0', customTime)) return 'created';
       for (let attempt = 0; attempt < casAttempts; attempt++) {
         const current = await get<WrapRow>(name);
-        if (current === undefined || !matches(current.value)) return false;
-        if (await put(name, row, current.generation, customTime)) return true;
+        if (current === undefined) {
+          if (await put(name, row, '0', customTime)) return 'created';
+          continue;
+        }
+        if (!replaceIf(current.value)) return 'kept';
+        if (await put(name, row, current.generation, customTime)) {
+          return 'replaced';
+        }
       }
       throw new Error(`gcs wrap lost ${casAttempts} compare-and-swap races`);
     },
