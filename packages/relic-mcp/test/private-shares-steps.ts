@@ -646,7 +646,7 @@ async function viewerSignIn(
   );
   await poll(`${actor.name} code form`, 15000, async () => {
     const shown = await actor.browser.evaluate<boolean>(
-      `!document.querySelector('#signin-code-form')?.hidden`
+      `(() => { const form = document.querySelector('#signin-code-form'); return form !== null && !form.hidden; })()`
     );
     return shown ? true : undefined;
   });

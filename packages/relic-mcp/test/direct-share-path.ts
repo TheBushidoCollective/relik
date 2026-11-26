@@ -616,6 +616,7 @@ async function setPresence(actor: Actor, enabled: boolean): Promise<void> {
 
 /** Email-code sign-in from an invitation link. Relik sends the code to the invited address. */
 async function signInFromLink(actor: Actor, link: string): Promise<void> {
+  await setPresence(actor, false);
   await goto(actor.browser, link);
   await waitForState(
     actor.browser,
@@ -625,9 +626,11 @@ async function signInFromLink(actor: Actor, link: string): Promise<void> {
   await codeSignInOnPage(actor);
 }
 
-/** The code steps of the invitation sign-in, on the page that already shows the form. */
+/**
+ * The code steps of invitation sign-in. Callers must disable presence before
+ * navigating to the invitation or clicking Keep access, which starts passkey sign-in.
+ */
 async function codeSignInOnPage(actor: Actor): Promise<void> {
-  await setPresence(actor, false);
   const since = env.mailbox.mark();
   await setField(actor.browser, '#signin-email', actor.email);
   await actor.browser.evaluate<void>(
@@ -639,13 +642,22 @@ async function codeSignInOnPage(actor: Actor): Promise<void> {
     (m) => m.code !== undefined,
     `${actor.name} invitation code`
   );
-  await poll(`${actor.name} code form`, 15000, async () =>
+  await poll(`${actor.name} invitation code form`, 15000, async () =>
     (await actor.browser.evaluate<boolean>(
-      `!document.querySelector('#signin-code-form')?.hidden`
+      `(() => { const form = document.querySelector('#signin-code-form'); return form !== null && !form.hidden; })()`
     ))
       ? true
       : undefined
-  );
+  ).catch(async (error: unknown) => {
+    const page = await actor.browser
+      .evaluate<string>(
+        `JSON.stringify({state: document.querySelector('#relic-private')?.getAttribute('data-private-state') ?? null, passkey: document.querySelector('#signin-passkey-host')?.getAttribute('data-state') ?? null, text: document.body.innerText.slice(0, 500)})`
+      )
+      .catch(() => 'page unavailable');
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; page=${page}`
+    );
+  });
   await setField(actor.browser, '#signin-code', mail.code ?? '');
   await actor.browser.evaluate<void>(
     `document.querySelector('#signin-code-form').requestSubmit()`
@@ -2303,7 +2315,9 @@ async function run(): Promise<void> {
         ? true
         : undefined
     );
-    // Keep access asks for a fresh code, because this page has no sign-in of its own (plan 4.2, 5.2).
+    // Keep access asks for a fresh code (plan 4.2, 5.2). Disable presence
+    // before the click, which starts the conditional passkey request.
+    await setPresence(fifthInvitee, false);
     await click(fifthInvitee.browser, '[data-action="invite-keep"]');
     await poll('keep access asks for a fresh code', 25000, async () =>
       (await fifthInvitee.browser.evaluate<boolean>(
@@ -2368,6 +2382,7 @@ async function run(): Promise<void> {
         ? true
         : undefined
     );
+    await setPresence(sixthInvitee, false);
     await click(sixthInvitee.browser, '[data-action="invite-keep"]');
     await poll('sixth keep asks for a fresh code', 25000, async () =>
       (await sixthInvitee.browser.evaluate<boolean>(
