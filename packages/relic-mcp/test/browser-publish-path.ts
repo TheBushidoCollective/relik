@@ -635,13 +635,17 @@ try {
   );
   await sendDrag('dragOver', claimed.x, claimed.y, claimedPath);
   await sendDrag('drop', claimed.x, claimed.y, claimedPath);
-  await Bun.sleep(300);
-  assert.ok(
-    (await browser.evaluate<string[]>(`window.__got`)).includes(
-      'relic-got-file'
-    ),
-    'the relik did not receive its own drop'
-  );
+  // The relik's message crosses postMessage asynchronously. A fixed sleep was
+  // too short on loaded runners (main's deploy failed here three times), so
+  // poll for the message up to a bound instead.
+  let received = false;
+  for (let attempt = 0; attempt < 50 && !received; attempt++) {
+    received = await browser.evaluate<boolean>(
+      `window.__got.includes('relic-got-file')`
+    );
+    if (!received) await Bun.sleep(100);
+  }
+  assert.ok(received, 'the relik did not receive its own drop');
   assert.equal(
     await browser.evaluate<boolean>(
       `!document.querySelector('dialog.pub-dialog')`
