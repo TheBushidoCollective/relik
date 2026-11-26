@@ -46,6 +46,7 @@ import {
   type CapturedMail,
   type PrivateShareEnv,
   attestationFor,
+  callMcpRaw,
   api,
   canonicalOf,
   click,
@@ -96,6 +97,7 @@ const mails: CapturedMail[] = [];
 const defects: string[] = [];
 /** Every request body the service received, for the fragment and key assertions. */
 const requestBodies: string[] = [];
+let serviceCalls = 0;
 /** Invitation claims as the browser sent them, for the single-use replay in step 5. */
 const claimCalls: Array<{ path: string; body: Json; status: number }> = [];
 const grantStatuses: number[] = [];
@@ -129,7 +131,7 @@ const serviceOrigin = `http://localhost:${service.port}`;
 const storage = new MemoryStorage(`${serviceOrigin}/__storage`);
 
 const appOptions = {
-  config: { serviceOrigin },
+  config: { serviceOrigin, authRateLimit: { limit: 100, windowSeconds: 3600 } },
   store,
   storage,
   now: clock,
@@ -157,6 +159,7 @@ let budgetProbe = false;
 let nextApp = 0;
 
 handler = async (request: Request): Promise<Response> => {
+  serviceCalls++;
   const url = new URL(request.url);
   if (
     url.pathname.startsWith('/__storage/upload/') &&
@@ -304,6 +307,7 @@ const INVITEE_THREE = 'invitee-three+direct-share@example.test';
 const INVITEE_FOUR = 'invitee-four+direct-share@example.test';
 const INVITEE_FIVE = 'invitee-five+direct-share@example.test';
 const INVITEE_SIX = 'invitee-six+direct-share@example.test';
+const DELETE_INVITEE = 'invitee-delete+direct-share@example.test';
 
 type Json = Record<string, unknown>;
 
@@ -1127,7 +1131,6 @@ async function run(): Promise<void> {
     await goto(owner.browser, `${relicUrl}?access=share`);
     await owner.browser.waitForSelector('[data-share-section]', 25000);
     await addToPanel(owner, [env.third], 1);
-    const substitutedRow = (await rowsOf(owner))[0];
     const substituteFingerprint = await identityFingerprint(
       fifthId.identityId,
       env.third
@@ -1136,6 +1139,7 @@ async function run(): Promise<void> {
       canonicalOf(substitutedRow?.fingerprint ?? ''),
       canonicalOf(substituteFingerprint)
     );
+    assert.equal(substitutedRow.state, 'unverified');
     const fifthFingerprint = await identityFingerprint(
       fifthId.identityId,
       FIFTH
@@ -1194,7 +1198,7 @@ async function run(): Promise<void> {
       await store.updateIdentity(fifthId.identityId, () => originalFifth);
     }
     console.log(
-      'DIRECT_STEP_9_REFUSALS self=400_grantee wrong_fingerprint=409 substituted_lookup=ui_shows_substitute substituted_api=400_grantee substitute_wraps=0 retired_identity=400_grantee'
+      'DIRECT_STEP_9_REFUSALS self=400_grantee wrong_fingerprint=409 substituted_lookup=ui_rejects_unverified substituted_api=400_grantee substitute_wraps=0 retired_identity=400_grantee'
     );
     lastReceipt = 9;
 
@@ -1476,7 +1480,6 @@ async function run(): Promise<void> {
     const logBeforeKeep = (await logOf(ownerCookie, relicId)).length;
     const mailKeep = mailbox.mark();
     claimTapProbe = () => signCountTotal(invitee.browser);
-    await inPage(invitee.browser, pageCreatePasskey, { prf: true });
     await click(invitee.browser, '[data-action="invite-keep"]');
     await poll('claim recorded', 25000, async () =>
       (await store.getInvite(relicId, inviteOne))?.status === 'claimed'
