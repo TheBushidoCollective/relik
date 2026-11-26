@@ -740,6 +740,16 @@ export async function openRelic(b: Browser, url: string): Promise<string> {
 }
 
 export async function startComparison(b: Browser): Promise<void> {
+  // The press is aimed at the button's measured position. The page settles its
+  // layout after the taskbar label first appears, so wait until the button
+  // measures the same box on two samples. Settle polls every 50 ms.
+  await b.evaluate<void>(`globalThis.__relikCompareBox = undefined`);
+  const still = await settle<boolean>(
+    b,
+    `(() => { const el = ${buttonNamed('Compare versions')}; if (!el) return false; const r = el.getBoundingClientRect(); const box = [r.left, r.top, r.width, r.height].map(Math.round).join(','); const prev = globalThis.__relikCompareBox; globalThis.__relikCompareBox = box; return prev === box; })()`,
+    (value) => value === true
+  );
+  assert.ok(still, 'the Compare button never stopped moving');
   await b.click(buttonNamed('Compare versions'), 'Compare versions');
   // A click that lands on a re-rendered taskbar opens nothing, and the summary
   // wait would then report an empty line after its full timeout. Fail at the
