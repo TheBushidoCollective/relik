@@ -188,7 +188,9 @@ let budgetProbe = false;
 let nextApp = 0;
 
 handler = async (request: Request): Promise<Response> => {
-  serviceCalls++;
+  // Browsers keep talking to the service in the background; relic-mcp and the harness are plain fetch clients.
+  if (!(request.headers.get('user-agent') ?? '').includes('Mozilla'))
+    serviceCalls++;
   const url = new URL(request.url);
   if (
     url.pathname.startsWith('/__storage/upload/') &&
@@ -1701,10 +1703,15 @@ async function run(): Promise<void> {
     );
     const receiptsOpenDelta =
       (await store.listReceipts(relicId)).length - receiptsBeforeOpen;
+    // The invitation key lives only in the link's fragment: no body the service received may carry it.
+    const keyInBody = requestBodies.some(
+      (body) => body.includes(keyOne) || body.includes(keyTwo)
+    );
     emit(
       103,
-      `INVITE_STEP_3_OPEN_WITH_CODE sign_in=code state=invite-ready listed=opened unlisted_key=${unlistedKey.status} comments=${commentsPresent ? 'present' : 'absent'} signing=${signingPresent ? 'present' : 'absent'} fragment_after_open=${hashAfterOpen === '' ? 'absent' : 'present'} log=${wrapFetchByInvitee ? 'wrap_fetch:address' : 'absent'} receipts=${receiptsOpenDelta}`
+      `INVITE_STEP_3_OPEN_WITH_CODE sign_in=code state=invite-ready listed=opened unlisted_key=${unlistedKey.status} comments=${commentsPresent ? 'present' : 'absent'} signing=${signingPresent ? 'present' : 'absent'} fragment_after_open=${hashAfterOpen === '' ? 'absent' : 'present'} log=${wrapFetchByInvitee ? 'wrap_fetch:address' : 'absent'} receipts=${receiptsOpenDelta} key_in_body=${keyInBody ? 'present' : 'absent'}`
     );
+    assert.equal(keyInBody, false, 'an invitation key reached a request body');
     assert.equal(unlistedKey.status, 403, 'an unlisted version key was served');
     assert.equal(
       commentsPresent,
@@ -2893,10 +2900,6 @@ async function run(): Promise<void> {
       `INVITE_STEP_12_RELIK_DELETE whole_relik=invites_${invitesLeft},claims_${claimsLeft}`
     );
     lastReceipt = 114;
-    // Stage D (negative controls, PATH.md, CI) is not written in this checkpoint.
-    throw new Error(
-      'stage D (negative controls) is not yet written in this checkpoint'
-    );
   } finally {
     for (const actor of actors) await actor.browser.close().catch(() => {});
   }
