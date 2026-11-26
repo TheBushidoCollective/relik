@@ -165,8 +165,8 @@ All of these live in `store.ts` and both store implementations.
 
 - **`AccessEvent`** adds the kinds `share`, `invite` and `claim`, and an optional `subjectEmail`.
 - **`GrantRow`** adds an optional `grantStatement` (D1a).
-- **`WrapRow.source`** is `'seal' | 'grant' | 'backfill'`. Claims never write `m/wrap/`.
-- **`RelicRow`** stores `inviteRevokedBeforeEpoch`, a map from normalized address to the access epoch committed by that address's latest grant revocation.
+- **`WrapRow.source`** is `'seal' | 'grant' | 'backfill'`. Grant wraps carry the proposed commit `epoch`. Claims never write `m/wrap/`.
+- **`RelicRow`** stores `accessFence`, a map from normalized address to `{epoch, nonce}`, committed with the access epoch on revocation or regrant.
 - **`InviteRow`:**
 
 ```ts
@@ -223,10 +223,9 @@ Returns 200 `GrantLookupJSON`. No access-log event, and no log line contains an 
    - Invitations: `409 identity_exists` plus `email` when the address now has an identity.
 7. **Wraps.** The set of `(version, recipient_key_id)` pairs must equal exactly the union of grant versions times grantee KEM key and invitation versions times invite id, with no duplicates and at most `privateBackfillMaxWraps` items. Otherwise `400 invalid_wrap`.
 8. **Writes.**
-   - Grant wraps and rows; then create-only invitation rows with their wraps embedded.
-   - Then, if the batch has grants, one epoch compare-and-swap. If it fails: `409 grant_stale_version`; invitation rows created by the call are deleted and grant rows are rolled back only while their attestation nonce still matches. Wrap objects are not deleted by rollback.
-   - A batch of invitations only changes no epoch.
-   - Each invitation records the access epoch observed by the call. The server rereads the relik after writing invitations and returns `410 invite_revoked` with batch rollback if a concurrent cutoff fences one.
+   - Create grant wraps at the proposed commit epoch and write grant rows, then create invitation rows with their wraps embedded. `putWrap` is create-only; `replaceWrapIf` replaces an existing wrap only if its epoch is older, using a generation check.
+   - If the batch has grants, compare the relik epoch with the starting epoch and advance it in one update. A regrant writes the address fence in that same update. On failure, created invitation rows are deleted and grant rows are rolled back only while their attestation nonce still matches. Wrap objects are not deleted by rollback. A lost response can cause rollback even when the epoch commit landed, failing closed.
+   - A batch of invitations only changes no epoch. Each invitation records the access epoch observed by the call; later authorization checks apply the current address fence.
 
 Returns 201 `GrantsJSON`. After success:
 
@@ -452,8 +451,8 @@ The Access button count is pending requests plus accepted invitations.
 5. **The owner's own address** shows "That's you" and is refused.
 6. **The recovery holder can be shared with.**
 7. **Writes and races.**
-   - Validate everything, then write owner-supplied wraps and rows. A batch with grants then advances the epoch; a batch with invitations rereads the relik to check the address cutoff.
-   - On failure, delete created invitation rows and roll back grant rows only while their attestation nonce still belongs to this call. Never delete wrap objects on a failure path.
+   - Validate everything, then write owner-supplied wraps and rows. Grant wraps use the proposed epoch; create-only writes and conditional replacement protect a newer wrap. A batch with grants advances the epoch and fences regranted addresses in the same compare-and-swap.
+   - On failure, delete created invitation rows and roll back grant rows only while their attestation nonce still belongs to this call. Never delete wrap objects on a failure path. A lost commit response also takes this rollback path even if the commit landed.
    - A stored wrap is served only when the current grant or other role covers that version, regardless of its source. Partial grants do not create coverage gaps on versions they do not cover.
 8. **Enumeration.** The answer is the owner's by design. Every refusal before the read is independent of which addresses are registered, and budgets are charged per address.
 
@@ -502,7 +501,7 @@ Every miss returns the same refusal (H, I).
 
 **What happens to an invitation in each case:**
 
-- **Revoke.** Cancelling or removing an accepted invitee marks the invitation revoked and clears both wrap arrays. Revoking a confirmed claimant marks the grant, then commits the new epoch, version and per-address invitation cutoff on the relik row. Cleanup of older matching invitations and ordinary wraps is best effort. After that commit, the cutoff denies older claims whether or not cleanup succeeds, and a later grant to the same identity does not revive them.
+- **Revoke.** Cancelling or removing an accepted invitee marks the invitation revoked and clears both wrap arrays. Revoking a confirmed claimant marks the grant, then commits the new epoch, version and per-address `{epoch, nonce}` fence on the relik row. A failed or lost commit response is resolved by reading the fence nonce; an unchanged epoch allows the nonce-owned mark to be restored. Cleanup of older matching invitations and ordinary wraps is best effort. Conditional wrap deletion covers epochs at or before the revocation commit, so a newer replacement survives. A later regrant writes its own fence and does not revive older claims.
 - **Rekey because a different reader was revoked** (D16). Open invitations keep their listed, older versions. No invitation covers the new version.
 - **Republish.** An invitation never covers versions sealed after it. A claimant gets later versions only after confirmation.
 - **Version deletion** removes those versions and both temporary and claimant wraps from each invitation. An open invitation left with no versions becomes `revoked`.
@@ -772,7 +771,8 @@ Both use `+tag` addresses and finish with a hard delete. Until they run, product
 15. **Until the owner confirms,** a claimed invitation is absent from "Shared with you" and receives no later versions.
 16. **A lost link cannot be shown again.** The owner cancels and invites again.
 17. **Reloading the invitation page loses the key.** The invitee reopens the link from the email.
-18. **Revocation crash window, open.** A revocation marks the grant before the relik update that commits the invitation cutoff. A process that stops between the two leaves the grant revoked with no cutoff recorded for that address, so that address's invitations stay unfenced. A later grant to that identity would make the older claims usable again for their listed versions. This document does not settle the remedy. `service.md` section 10.9 carries the same item.
+18. **Revocation crash windows.** A crash after marking the grant and before committing the fence leaves the grant revoked and older invitations unfenced. A later regrant commits a fence that keeps those older claims from reviving. A crash after the revocation commit and before the wrap sweep leaves ordinary wraps in storage; they serve nothing under the revoked grant until regrant, version deletion or relik deletion.
+19. **Lost grant commit response.** The grant rollback runs even if the epoch commit landed, so rows owned by the call are removed or restored and created invitation rows are removed. This fails closed.
 
 ## 13. Documentation changes (S5)
 

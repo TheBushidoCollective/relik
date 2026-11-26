@@ -272,13 +272,13 @@ A private relic adds the objects below. Each is a JSON document at the path show
 
 | Object | Content |
 |---|---|
-| `m/relic/{relicId}.json` | `RelicRow`, including `accessEpoch` and the per-address `inviteRevokedBeforeEpoch` map |
+| `m/relic/{relicId}.json` | `RelicRow`, including `accessEpoch` and the per-address `accessFence` map of `{epoch, nonce}` |
 | `m/identity/{identityId}.json` | `IdentityRecord` |
 | `m/identity-address/{sha256Hex(normalizedEmail)}.json` | `{identityId, email, updatedAt}`; create-only, compare-and-swap on replace |
 | `m/device/{deviceId}.json` | `DeviceRecord` |
 | `m/device-owner/{ownerIdentityId}/{deviceId}.json` | `{deviceId, at}` |
 | `m/challenge/device-enrollment/{enrollmentId}.json` | `DeviceEnrollmentRow`, under the existing transient prefix with a one-day lifecycle; the app refuses after `expiresAt` |
-| `m/wrap/{relicId}/{version}/{recipientKeyId}.json` | `WrapRow` |
+| `m/wrap/{relicId}/{version}/{recipientKeyId}.json` | `WrapRow`, with an optional access epoch |
 | `m/seal/{relicId}/{version}.json` | `SealRow` |
 | `m/grant/{relicId}/{granteeIdentityId}.json` | `GrantRow` |
 | `m/grant-by-grantee/{granteeIdentityId}/{relicId}.json` | `{relicId, at}` |
@@ -292,7 +292,9 @@ Within the contract, a `customTime` is set on access-log objects (section 7.5) a
 
 The direct-share contract (`docs/plans/direct-share/plan.md`, section 4.3) adds two object families for invitations. An open invitation row's `customTime` is its invitation expiry, already capped by relik expiry. Once claimed, the row and its embedded claim wraps carry the relik expiry, as does the claim index. Rewrites and extensions never decrease `customTime`. Section 7.7 gives the lifetime and deletion rules for each family.
 
-Grant revocation commits the new access epoch and the normalized address's invitation cutoff together on the relik row. An invitation is fenced when its `createdAccessEpoch` is less than that cutoff; an absent creation epoch counts as zero, and an absent address cutoff fences nothing. Regranting does not remove the cutoff. The claim index remains a lookup hint: the invitation row and the current relik cutoff must both authorize its use.
+Grant revocation commits the new access epoch and the normalized address's `accessFence` together on the relik row. Each fence holds the commit epoch and attestation nonce. An invitation is fenced when its `createdAccessEpoch` is less than the fence epoch; an absent creation epoch counts as zero, and an absent address fence fences nothing. Regranting a revoked identity writes a new fence in its epoch commit, keeping older claims fenced. The claim index remains a lookup hint: the invitation row and the current relik fence must both authorize its use.
+
+Grant wraps carry their proposed commit epoch. `putWrap` creates only; `replaceWrapIf` replaces an older wrap with a generation-checked write. Sweeps use generation-checked `deleteWrapIf` and delete only wraps at or before their captured epoch. A missing wrap epoch counts as zero. A changed generation is read and judged again.
 
 Shortening a relic's lifetime ends access at the new expiry at once. It does not move the erasure time of objects already written. The sweeps for invitations and claims are in section 7.7.
 
@@ -370,7 +372,7 @@ The bucket rule includes both invitation families. Each family participates in t
 | `m/access/` (`invite`, `claim`, `share` events) | retention | existing | n/a | survive | n/a | n/a | n/a | retention |
 | Sign-in codes and sessions | existing transient | existing | n/a | n/a | n/a | n/a | n/a | existing |
 
-Grant revocation can leave cleanup undone after the relic cutoff commits. Stale invitation statuses, claim wraps, index entries or ordinary wraps can then remain in live storage. The cutoff and the standing checks still prevent fenced claims from authorizing a read. Restoring an earlier generation of the relic row from soft delete would also remove any cutoff committed after it, because the cutoff is stored on that row.
+Grant revocation can leave cleanup undone after the relik fence commits. Stale invitation statuses, claim wraps, index entries or ordinary wraps can then remain in live storage. The fence and standing checks still prevent fenced claims from authorizing a read; ordinary wraps left by a crash before the sweep serve nothing under the revoked grant until regrant, version deletion or relik deletion. A lost grant commit response can instead roll back its rows after the epoch commit landed, failing closed. Restoring an earlier generation of the relik row from soft delete would also remove any fence committed after it, because the fence is stored on that row.
 
 Two families keep no rows: invitation notices (email only) and limiter counters (memory). Soft-delete retention applies to every erasure, as it does today, so an erased invitation or claim stays restorable for that retention.
 
