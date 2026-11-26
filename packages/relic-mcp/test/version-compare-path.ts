@@ -750,12 +750,24 @@ export async function text(b: Browser, selector: string): Promise<string> {
 }
 
 export async function settledSummary(b: Browser): Promise<string> {
-  return settle<string>(
+  const summary = await settle<string>(
     b,
     SUMMARY_TEXT,
     (value) =>
       value !== '' && !/^(Rendering|Reading|Loading|Comparing)/.test(value)
   );
+  // The caller asserts the text. When the wait ended on an empty line, record
+  // what the page showed, so a failure names its state. The value is returned
+  // unchanged: some cases expect no summary, and this decides nothing.
+  if (summary === '') {
+    const state = await b
+      .evaluate<string>(
+        `JSON.stringify({ diffView: !!document.querySelector('.diff-view'), taskbar: ${TASKBAR_LABEL}, body: document.body.innerText.slice(0, 300) })`
+      )
+      .catch(() => 'page unavailable');
+    console.error(`SUMMARY_EMPTY ${state}`);
+  }
+  return summary;
 }
 
 async function comparisonFrames(
