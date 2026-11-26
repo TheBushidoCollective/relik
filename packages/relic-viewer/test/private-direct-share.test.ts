@@ -79,12 +79,24 @@ describe('direct share lookup', () => {
 test('lookup refuses forged owner and mismatched identity address', async () => {
   const keys = await generateIdentityKeys();
   const id = await identityIdOf(keys.kemPublicKey, keys.sigPublicKey);
-  const identity = { identity_id: id, email: 'other@example.test', kem_public_key: encodeBase64url(keys.kemPublicKey), sig_public_key: encodeBase64url(keys.sigPublicKey), created_at: '2026-11-01T00:00:00Z', retired_at: null };
+  const identity = {
+    identity_id: id,
+    email: 'other@example.test',
+    kem_public_key: encodeBase64url(keys.kemPublicKey),
+    sig_public_key: encodeBase64url(keys.sigPublicKey),
+    created_at: '2026-11-01T00:00:00Z',
+    retired_at: null,
+  };
   const email = 'a@example.test';
   const party = { email, identity };
   for (const standing of ['owner', null]) {
-    const deps = fake({ results: [{ email, party, standing, invites: [] }] }, []);
-    expect(await lookupShares(deps, 'abc', [email], new Set(), 'b'.repeat(64))).toEqual([{ kind: 'unverified', email }]);
+    const deps = fake(
+      { results: [{ email, party, standing, invites: [] }] },
+      []
+    );
+    expect(
+      await lookupShares(deps, 'abc', [email], new Set(), 'b'.repeat(64))
+    ).toEqual([{ kind: 'unverified', email }]);
   }
 });
 

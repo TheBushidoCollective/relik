@@ -372,15 +372,23 @@ export function openSigningComposer(input: {
     if (send.dataset['confirmed'] !== 'true') {
       send.disabled = true;
       const generation = reviewGeneration;
-      void (input.private ? resolveSigners(
-        {
-          deps: input.deps,
-          relicId: input.relicId,
-          grants: input.grants,
-          ...(input.owner === undefined ? {} : { owner: input.owner }),
-        },
-        names
-      ) : Promise.resolve({ kind: 'ready' as const, signers: names.map((email) => ({ email, identity_id: null })), grants: [] }))
+      void (
+        input.private
+          ? resolveSigners(
+              {
+                deps: input.deps,
+                relicId: input.relicId,
+                grants: input.grants,
+                ...(input.owner === undefined ? {} : { owner: input.owner }),
+              },
+              names
+            )
+          : Promise.resolve({
+              kind: 'ready' as const,
+              signers: names.map((email) => ({ email, identity_id: null })),
+              grants: [],
+            })
+      )
         .then((next) => {
           send.disabled = false;
           if (generation !== reviewGeneration) return;
@@ -401,10 +409,24 @@ export function openSigningComposer(input: {
       return;
     }
     if (resolved === undefined) return;
+    if (
+      names.length !== resolved.signers.length ||
+      names.some((email, index) => email !== resolved!.signers[index]?.email)
+    ) {
+      invalidateReview();
+      notice.textContent = 'The signer list changed. Review it again.';
+      return;
+    }
     const { signers, grants } = resolved;
     notice.textContent =
       "Each signer confirms with a passkey on their own device. Relik records which passkey approved which version, and when. It doesn't verify anyone's identity.";
     send.disabled = true;
+    for (const email of emails) email.disabled = true;
+    add.disabled = true;
+    const removeButtons = [
+      ...rows.querySelectorAll<HTMLButtonElement>('button'),
+    ];
+    for (const button of removeButtons) button.disabled = true;
     void (async () => {
       const requestId = encodeBase64url(
         crypto.getRandomValues(new Uint8Array(16))
@@ -532,6 +554,9 @@ export function openSigningComposer(input: {
       notice.textContent =
         error instanceof Error ? error.message : 'Could not send the request.';
       send.disabled = false;
+      for (const email of emails) email.disabled = false;
+      add.disabled = false;
+      for (const button of removeButtons) button.disabled = false;
     });
   });
   appendSigner();

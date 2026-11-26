@@ -81,6 +81,7 @@ interface PanelData {
   readonly grants: readonly GrantJSON[];
   /** The grantee identities this browser's floor admits: a grant the owner revoked is not one. */
   readonly admitted: ReadonlySet<string>;
+  readonly ownerId: string | undefined;
   readonly devices: readonly {
     readonly label: string;
     readonly revoked_at: string | null;
@@ -327,6 +328,7 @@ export function openAccessPanel(
     const state = await privateKeysOf(ctx.deps).loadIdentityState(ctx.deps);
     return {
       access,
+      ownerId: state.identity?.identity_id,
       requests: requests.requests.filter(
         (request) => request.status === 'pending'
       ),
@@ -706,7 +708,11 @@ export function openAccessPanel(
   async function refresh(message: string, keepNotice = false): Promise<void> {
     try {
       const data = await load();
-      share.update({ access: data.access, admitted: data.admitted });
+      share.update({
+        access: data.access,
+        admitted: data.admitted,
+        ownerId: data.ownerId,
+      });
       if (ctx.mode !== 'focused') {
         void invitations
           .update(data.access)

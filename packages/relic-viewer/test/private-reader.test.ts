@@ -2854,7 +2854,10 @@ describe('the invitee reads an address-bound invitation', () => {
     const relicId = freshRelicId();
     const inv = await invitationFor(relicId, 'open', [1, 2]);
     const { fetch } = inviteeService(inv, relicId, { signedIn: true });
-    const { views } = await mountReader(inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}), relicId);
+    const { views } = await mountReader(
+      inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}),
+      relicId
+    );
     expect(views).toHaveLength(1);
     expect(views[0]?.version).toBe(1);
   });
@@ -2864,7 +2867,10 @@ describe('the invitee reads an address-bound invitation', () => {
     const inv = await invitationFor(relicId);
     inv.open['expires_at'] = new Date(NOW + 60 * 86_400_000).toISOString();
     const { fetch } = inviteeService(inv, relicId, { signedIn: true });
-    const { root, views } = await mountReader(inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}), relicId);
+    const { root, views } = await mountReader(
+      inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}),
+      relicId
+    );
     expect(views).toHaveLength(0);
     expect(stateOf(root)).toBe('invite-damaged');
   });
@@ -2879,31 +2885,77 @@ describe('the invitee reads an address-bound invitation', () => {
     const route = `/api/relics/${relicId}/invites/${inv.inviteId}`;
     const { fetch, seen } = service({
       ...inv.world.routes,
-      'GET /api/auth/session': () => json({ email: signedIn ? READER_EMAIL : null }),
+      'GET /api/auth/session': () =>
+        json({ email: signedIn ? READER_EMAIL : null }),
       'POST /api/auth/request': () => new Response(null, { status: 202 }),
-      'POST /api/auth/code': () => { signedIn = true; return json({ email: READER_EMAIL }); },
+      'POST /api/auth/code': () => {
+        signedIn = true;
+        return json({ email: READER_EMAIL });
+      },
       'GET /api/identity': () => json({ identity: null, passkeys: [] }),
-      'POST /api/attest/nonce': () => created ? json(nonceResponse(inv.world.readerPasskey.rawId)) : json({ code: 'passkey_required' }, 409),
+      'POST /api/attest/nonce': () =>
+        created
+          ? json(nonceResponse(inv.world.readerPasskey.rawId))
+          : json({ code: 'passkey_required' }, 409),
       'POST /api/auth/passkeys/options': () => json(creationOptions()),
-      'POST /api/auth/passkeys': () => { created = true; return json({ credential_id: 'created' }, 201); },
+      'POST /api/auth/passkeys': () => {
+        created = true;
+        return json({ credential_id: 'created' }, 201);
+      },
       'POST /api/identity': (body) => {
-        const registration = body as { attestation: { statements: { statement: { sig_public_key: string } }[] } };
-        registeredKey = registration.attestation.statements[0]!.statement.sig_public_key;
+        const registration = body as {
+          attestation: {
+            statements: { statement: { sig_public_key: string } }[];
+          };
+        };
+        registeredKey =
+          registration.attestation.statements[0]!.statement.sig_public_key;
         return json({ identity: {} }, 201);
       },
       [`POST ${route}/open`]: () => json(inv.open),
       [`POST ${route}/claim`]: () => json({ status: 'claimed' }, 201),
     });
-    const deps = { ...inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}), credentials: authenticator(() => { assertions++; return assertion(inv.world.readerPasskey.rawId, inv.world.readerPasskey.prf); }) };
+    const deps = {
+      ...inviteeDeps(
+        inv,
+        relicId,
+        fetch,
+        `#${inviteFragment(inv.d)}`,
+        () => {}
+      ),
+      credentials: authenticator(() => {
+        assertions++;
+        return assertion(
+          inv.world.readerPasskey.rawId,
+          inv.world.readerPasskey.prf
+        );
+      }),
+    };
     const { root, views } = await mountReader(deps, relicId);
     await signInByCode(root);
     await until(() => views.length === 1, 'invitation ready');
-    press(root, '[data-action=\"invite-keep\"]');
-    await until(() => stateOf(root) === 'invite-claimed', 'claim after first passkey');
+    press(root, '[data-action="invite-keep"]');
+    await until(
+      () => stateOf(root) === 'invite-claimed',
+      'claim after first passkey'
+    );
     const claim = seen.find((item) => item.route === `POST ${route}/claim`);
     if (!claim) throw new Error('missing claim');
-    const body = JSON.parse(claim.text) as { statement: Record<string, unknown>; identity_signature: string; wraps: unknown[] };
-    expect(await verifyStatement(decodeBase64url(registeredKey), statementBytes('invite_claim', parseStatement('invite_claim', body.statement)), body.identity_signature)).toBe(true);
+    const body = JSON.parse(claim.text) as {
+      statement: Record<string, unknown>;
+      identity_signature: string;
+      wraps: unknown[];
+    };
+    expect(
+      await verifyStatement(
+        decodeBase64url(registeredKey),
+        statementBytes(
+          'invite_claim',
+          parseStatement('invite_claim', body.statement)
+        ),
+        body.identity_signature
+      )
+    ).toBe(true);
     expect(body.wraps).toHaveLength(1);
     expect(assertions).toBe(1);
   });
@@ -2913,7 +2965,10 @@ describe('the invitee reads an address-bound invitation', () => {
     const inv = await invitationFor(relicId, 'claimed');
     inv.open['claimed_by_identity_id'] = inv.world.readerId;
     const { fetch } = inviteeService(inv, relicId, { signedIn: true });
-    const { root } = await mountReader(inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}), relicId);
+    const { root } = await mountReader(
+      inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}),
+      relicId
+    );
     expect(stateOf(root)).toBe('unlock');
   });
   test('Keep access claims the listed version with a signed invite_claim re-wrapped to the reader', async () => {
@@ -2974,20 +3029,34 @@ describe('the invitee reads an address-bound invitation', () => {
     const service = inviteeService(inv, relicId, { signedIn: false });
     const held = Promise.withResolvers<Response>();
     let claims = 0;
-    const fetch = Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
-      if (String(input).endsWith('/claim')) { claims++; return held.promise; }
-      return service.fetch(input, init);
-    }, { preconnect: () => {} }) as typeof globalThis.fetch;
-    const mounted = await mountReader(inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}), relicId);
+    const fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/claim')) {
+          claims++;
+          return held.promise;
+        }
+        return service.fetch(input, init);
+      },
+      { preconnect: () => {} }
+    ) as typeof globalThis.fetch;
+    const mounted = await mountReader(
+      inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}),
+      relicId
+    );
     await signInByCode(mounted.root);
     await until(() => mounted.views.length === 1, 'invite ready');
-    press(mounted.root, '[data-action=\"invite-keep\"]');
+    press(mounted.root, '[data-action="invite-keep"]');
     await until(() => claims === 1, 'first claim');
     mounted.reRender();
-    expect(mounted.root.querySelector('[data-action=\"invite-keep\"]')?.disabled).toBe(true);
-    press(mounted.root, '[data-action=\"invite-keep\"]');
+    expect(
+      mounted.root.querySelector('[data-action="invite-keep"]')?.disabled
+    ).toBe(true);
+    press(mounted.root, '[data-action="invite-keep"]');
     held.resolve(json({ status: 'claimed' }, 201));
-    await until(() => stateOf(mounted.root) === 'invite-claimed', 'claim complete');
+    await until(
+      () => stateOf(mounted.root) === 'invite-claimed',
+      'claim complete'
+    );
     expect(claims).toBe(1);
   });
 

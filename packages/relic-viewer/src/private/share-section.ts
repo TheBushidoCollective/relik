@@ -51,6 +51,7 @@ interface SentLink {
 export interface ShareSectionData {
   readonly access: PrivateAccessJSON;
   readonly admitted: ReadonlySet<string>;
+  readonly ownerId: string | undefined;
 }
 
 export interface ShareSectionOptions {
@@ -637,7 +638,13 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     addButton.disabled = true;
     setChildren(addError, '');
     try {
-      const found = await lookupShares(deps, relicId, unique, admitted, ownerId);
+      const found = await lookupShares(
+        deps,
+        relicId,
+        unique,
+        admitted,
+        ownerId
+      );
       for (const row of found) {
         rows.push({
           row,
@@ -743,7 +750,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     links: linksHost,
     update(data) {
       admitted = data.admitted;
-      ownerId = data.access.owner?.identity.identity_id;
+      ownerId = data.ownerId;
       expiresAt = Date.parse(data.access.expires_at);
       currentVersion = data.access.sealed_version ?? 0;
       grantable = [];

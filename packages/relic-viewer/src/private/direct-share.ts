@@ -123,13 +123,22 @@ export async function lookupShares(
         return { kind: 'unregistered', email, invites: entry.invites };
       }
       try {
-        if (normalizeEmail(entry.party.email) !== normalizeEmail(email) ||
-            normalizeEmail(entry.party.identity.email) !== normalizeEmail(email)) {
+        if (
+          normalizeEmail(entry.party.email) !== normalizeEmail(email) ||
+          normalizeEmail(entry.party.identity.email) !== normalizeEmail(email)
+        ) {
           throw new Error('party address mismatch');
         }
         await verifiedPartyKeys(entry.party);
         if (entry.standing === 'owner') {
-          return { kind: ownerId !== undefined && entry.party.identity.identity_id === ownerId ? 'self' : 'unverified', email };
+          return {
+            kind:
+              ownerId !== undefined &&
+              entry.party.identity.identity_id === ownerId
+                ? 'self'
+                : 'unverified',
+            email,
+          };
         }
         const target = await grantTargetFor(entry.party);
         if (entry.standing === 'grantee') {

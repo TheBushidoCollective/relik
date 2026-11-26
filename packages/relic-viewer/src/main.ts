@@ -11725,7 +11725,10 @@ export function renderReady(
     signingOpen = undefined;
     disposeComparison = undefined;
     decisionPanel?.close();
-    if (viewToShow.viewOnly !== true && (viewToShow !== activeView || decisionTally === undefined)) {
+    if (
+      viewToShow.viewOnly !== true &&
+      (viewToShow !== activeView || decisionTally === undefined)
+    ) {
       refreshDecisionTally(viewToShow);
     }
     if (pinnedView !== viewToShow.version) {
@@ -11739,7 +11742,10 @@ export function renderReady(
     let setFolderCounts:
       | ((counts: ReadonlyMap<string, number>) => void)
       | undefined;
-    if (viewToShow.viewOnly !== true && (viewToShow.route !== 'download' || viewToShow.folder)) {
+    if (
+      viewToShow.viewOnly !== true &&
+      (viewToShow.route !== 'download' || viewToShow.folder)
+    ) {
       thread = buildThread(
         viewToShow,
         relicId,
