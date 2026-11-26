@@ -2494,41 +2494,38 @@ describe('conditional wrap primitives', () => {
   test.each([
     'after a refused create',
     'after reading the old generation',
-  ] as const)(
-    'recreates a wrap deleted %s',
-    async (window) => {
-      const fake = fakeGcs();
-      const store = storeOn(fake);
-      await store.putRelic(privateRelic());
-      const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
-      const old = { ...wrap(RECIPIENT_A, 1), epoch: 1 };
-      const next = { ...old, enc: 'new', epoch: 2 };
-      await store.putWrap(old);
-      let deleted = false;
-      const sweep = async () => {
-        deleted = await store.deleteWrapIf(
-          RELIC_ID,
-          1,
-          RECIPIENT_A,
-          (current) => (current.epoch ?? 0) <= 1
-        );
-      };
-      if (window === 'after a refused create') {
-        fake.afterNextCreateConflict(name, sweep);
-      } else {
-        fake.beforeNextReplace(name, sweep);
-      }
-
-      expect(
-        await store.ensureWrap(next, (current) => (current.epoch ?? 0) < 2)
-      ).toBe('created');
-      expect(deleted).toBe(true);
-      expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toEqual(next);
-      expect(fake.objects.get(name)?.customTime).toBe(
-        new Date(NOW + 30 * DAY).toISOString()
+  ] as const)('recreates a wrap deleted %s', async (window) => {
+    const fake = fakeGcs();
+    const store = storeOn(fake);
+    await store.putRelic(privateRelic());
+    const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+    const old = { ...wrap(RECIPIENT_A, 1), epoch: 1 };
+    const next = { ...old, enc: 'new', epoch: 2 };
+    await store.putWrap(old);
+    let deleted = false;
+    const sweep = async () => {
+      deleted = await store.deleteWrapIf(
+        RELIC_ID,
+        1,
+        RECIPIENT_A,
+        (current) => (current.epoch ?? 0) <= 1
       );
+    };
+    if (window === 'after a refused create') {
+      fake.afterNextCreateConflict(name, sweep);
+    } else {
+      fake.beforeNextReplace(name, sweep);
     }
-  );
+
+    expect(
+      await store.ensureWrap(next, (current) => (current.epoch ?? 0) < 2)
+    ).toBe('created');
+    expect(deleted).toBe(true);
+    expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toEqual(next);
+    expect(fake.objects.get(name)?.customTime).toBe(
+      new Date(NOW + 30 * DAY).toISOString()
+    );
+  });
 
   test.each([1, 2, 3])(
     'judges a competing create at epoch %i before writing',
@@ -2602,8 +2599,8 @@ describe('conditional wrap primitives', () => {
       )
     ).rejects.toThrow('gcs wrap lost 3 compare-and-swap races');
     expect(
-      fake.requests.filter(
-        (request) => new URL(request.url).pathname.startsWith('/upload/')
+      fake.requests.filter((request) =>
+        new URL(request.url).pathname.startsWith('/upload/')
       )
     ).toHaveLength(4);
     expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.epoch).toBe(1);
