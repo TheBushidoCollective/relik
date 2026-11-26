@@ -700,7 +700,7 @@ interface OwnerKeys {
 }
 
 type Draft = {
-  readonly kind: 'identity_register' | 'grant' | 'device_cert';
+  readonly kind: 'identity_register' | 'grant' | 'device_cert' | 'invite';
   readonly statement: Json;
 };
 

@@ -22,6 +22,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   decodeBase64url,
+  encodeBase64url,
+  generateInviteKeyPair,
   inviteRecipient,
   parseInviteFragment,
   unwrapVersionKey,
@@ -42,8 +44,8 @@ import {
   FILE_NAME,
   type Actor,
   type CapturedMail,
-  type OwnerKeys,
   type PrivateShareEnv,
+  attestationFor,
   api,
   canonicalOf,
   click,
@@ -150,7 +152,7 @@ const appOptions = {
 };
 const apps = [createApp(appOptions), createApp(appOptions)];
 /** Answers only the budget probes, so the main apps' budgets stay intact. */
-const budgetApp = createApp(appOptions);
+let budgetApp = createApp(appOptions);
 let budgetProbe = false;
 let nextApp = 0;
 
@@ -278,6 +280,7 @@ const INVITEE_TWO = 'invitee-two+direct-share@example.test';
 const INVITEE_THREE = 'invitee-three+direct-share@example.test';
 const INVITEE_FOUR = 'invitee-four+direct-share@example.test';
 const INVITEE_FIVE = 'invitee-five+direct-share@example.test';
+const INVITEE_SIX = 'invitee-six+direct-share@example.test';
 
 type Json = Record<string, unknown>;
 
@@ -481,6 +484,11 @@ async function setPresence(actor: Actor, enabled: boolean): Promise<void> {
 async function signInFromLink(actor: Actor, link: string): Promise<void> {
   await goto(actor.browser, link);
   await waitForState(actor.browser, ['invite-signin'], `${actor.name} invitation sign-in`);
+  await codeSignInOnPage(actor);
+}
+
+/** The code steps of the invitation sign-in, on the page that already shows the form. */
+async function codeSignInOnPage(actor: Actor): Promise<void> {
   await setPresence(actor, false);
   const since = env.mailbox.mark();
   await setField(actor.browser, '#signin-email', actor.email);
@@ -501,13 +509,7 @@ async function signInFromLink(actor: Actor, link: string): Promise<void> {
   await setPresence(actor, true);
 }
 
-/** The reader's state after a page load: the ready view replaces the private host. */
 async function readerStateAfterLoad(actor: Actor, url: string): Promise<string> {
-  await goto(actor.browser, url);
-  await Bun.sleep(1500);
-  return (await currentState(actor.browser)) ?? 'ready';
-}
-
 async function run(): Promise<void> {
   const owner = await launchActor(env, 'owner', env.owner, true);
   const reader = await launchActor(env, 'reader', env.reader, true);
