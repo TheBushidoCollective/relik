@@ -20,7 +20,11 @@ import { keylessLink } from '../copy-link.ts';
 import { icon, PrivateApiError, privateApi } from './fingerprint-input.ts';
 import { renderPrivateDashboard } from './dashboard-private.ts';
 import { openAccessPanel } from './owner-panel.ts';
-import { formatUtcDay, versionsPhrase } from './access-log.ts';
+import {
+  describeVersions,
+  formatUtcDay,
+  versionsPhrase,
+} from './access-log.ts';
 import {
   claimInvitation,
   inviteVersionKey,
@@ -192,7 +196,7 @@ const STAGES_HTML = `
     <p class="card-meta" data-signed-in></p>
     <p class="fp-caption" id="fp-claimed-caption">Your fingerprint</p>
     <p class="fingerprint" data-fingerprint="invitee" aria-labelledby="fp-claimed-caption"></p>
-    <p class="fp-instruction">You'll keep access to <span data-invite-versions></span>. When <span data-invite-owner></span> confirms, you'll also get later versions.</p>
+    <p class="fp-instruction">You'll keep access to <span data-invite-versions-noun>versions</span> <span data-invite-versions></span>. When <span data-invite-owner></span> confirms, you'll also get later versions.</p>
     <div class="card-actions"><button type="button" class="action primary" data-action="invite-open">Open the relik</button></div>
   </div>
 </div>
@@ -776,7 +780,7 @@ class PrivateReader {
     stage: ReaderStage,
     owner: string,
     date?: string,
-    versions?: string
+    versions?: readonly number[]
   ): void {
     for (const element of this.host.querySelectorAll('[data-invite-owner]')) {
       // An owner Relik could not name opens one card's sentence and sits inside the rest.
@@ -790,10 +794,17 @@ class PrivateReader {
     for (const element of this.host.querySelectorAll('[data-invite-date]')) {
       element.textContent = date === undefined ? '' : formatUtcDay(date);
     }
+    // The hook holds the bare list; the noun beside it agrees with its length.
     for (const element of this.host.querySelectorAll(
       '[data-invite-versions]'
     )) {
-      element.textContent = versions ?? '';
+      element.textContent =
+        versions === undefined ? '' : describeVersions(versions);
+    }
+    for (const element of this.host.querySelectorAll(
+      '[data-invite-versions-noun]'
+    )) {
+      element.textContent = versions?.length === 1 ? 'version' : 'versions';
     }
     for (const element of this.host.querySelectorAll('[data-invite-address]')) {
       element.textContent = this.email ?? '';
@@ -984,12 +995,7 @@ class PrivateReader {
           )
         );
       }
-      this.inviteStage(
-        'invite-claimed',
-        open.owner.email,
-        undefined,
-        versionsPhrase(listed)
-      );
+      this.inviteStage('invite-claimed', open.owner.email, undefined, listed);
     } catch (error) {
       if (error instanceof PrivateApiError && error.code === 'invite_claimed') {
         this.inviteStage('invite-used', invitation.open.owner.email);
