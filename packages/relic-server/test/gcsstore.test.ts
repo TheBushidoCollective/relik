@@ -2338,3 +2338,51 @@ describe('gcsStore private-share objects', () => {
     });
   });
 });
+
+test('a claimed invitation receives the relik lifetime and keeps it after revocation', async () => {
+  const gcs = fakeGcs();
+  const store = gcsStore({
+    bucket: 'relics',
+    prefix: 'tenant/m',
+    getAccessToken: async () => 'token',
+    host: 'https://gcs.test',
+    fetch: gcs.fetch,
+  });
+  await store.putRelic(privateRelic());
+  const inviteId = 'a'.repeat(64);
+  await store.putInvite({
+    relicId: RELIC_ID,
+    inviteId,
+    ownerIdentityId: OWNER_ID,
+    invitedEmail: 'ada@example.com',
+    invitePublicKey: 'public',
+    versions: [1],
+    expiresAt: NOW + DAY,
+    createdAt: NOW,
+    status: 'open',
+    wraps: [],
+    attestation: attestation(),
+  });
+  const path = `tenant/m/invite/${RELIC_ID}/${inviteId}.json`;
+  await store.updateInvite(RELIC_ID, inviteId, (invite) => ({
+    ...invite,
+    status: 'claimed',
+    claimedAt: NOW,
+    claimantIdentityId: GRANTEE_ID,
+  }));
+  expect(gcs.objects.get(path)?.customTime).toBe(
+    new Date(NOW + 30 * DAY).toISOString()
+  );
+  await store.updateInvite(RELIC_ID, inviteId, (invite) => ({
+    ...invite,
+    status: 'revoked',
+    revokedAt: NOW,
+  }));
+  expect(gcs.objects.get(path)?.customTime).toBe(
+    new Date(NOW + 30 * DAY).toISOString()
+  );
+  await store.extendPrivateLifetime(RELIC_ID, NOW + 40 * DAY);
+  expect(gcs.objects.get(path)?.customTime).toBe(
+    new Date(NOW + 40 * DAY).toISOString()
+  );
+});

@@ -723,6 +723,10 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         for (const name of await listObjectNames(`${key(kind, id)}/`))
           names.add(name);
       }
+      for (const invite of await list<InviteRow>(`${key('invite', id)}/`)) {
+        if (invite.claimedAt !== undefined)
+          names.add(key('invite', id, `${invite.inviteId}.json`));
+      }
       for (const kind of reverse) {
         for (const name of await listObjectNames(`${key(kind)}/`)) {
           if (name.endsWith(`/${id}.json`)) names.add(name);
@@ -2262,14 +2266,17 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       change: (r: InviteRow) => InviteRow
     ): Promise<InviteRow | undefined> {
       const name = key('invite', relicId, `${inviteId}.json`);
-      const current = await get<InviteRow>(name);
-      if (current === undefined) return undefined;
-      return mutateDoc(
-        name,
-        change,
-        new Date(current.value.expiresAt).toISOString(),
-        'invite'
-      );
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<InviteRow>(name);
+        if (current === undefined) return undefined;
+        const next = change(current.value);
+        const customTime =
+          next.claimedAt !== undefined || current.value.claimedAt !== undefined
+            ? await privateCustomTime(relicId)
+            : new Date(current.value.expiresAt).toISOString();
+        if (await put(name, next, current.generation, customTime)) return next;
+      }
+      throw new Error(`gcs invite lost ${casAttempts} compare-and-swap races`);
     },
 
     async deleteInvite(relicId: string, inviteId: string): Promise<void> {

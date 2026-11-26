@@ -741,6 +741,7 @@ export async function accessEventsFor(
       identity_id: e.actorIdentityId ?? null,
       device_id: e.actorDeviceId ?? null,
     },
+    subject_email: e.subjectEmail ?? null,
     subject_identity_id: e.subjectIdentityId ?? null,
   }));
 }

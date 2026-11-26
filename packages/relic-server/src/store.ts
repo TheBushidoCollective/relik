@@ -437,6 +437,7 @@ export interface InviteClaimRow {
   readonly identityId: string;
   readonly ownerIdentityId: string;
   readonly state: 'pending' | 'committed';
+  readonly invitation?: InviteRow;
   readonly inviteIds: readonly string[];
   readonly versions: readonly number[];
   readonly claimedAt: number;
