@@ -2968,6 +2968,29 @@ describe('the invitee reads an address-bound invitation', () => {
     ).toBe('1');
   });
 
+  test('Keep access remains single-flight after a reader redraw', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId);
+    const service = inviteeService(inv, relicId, { signedIn: false });
+    const held = Promise.withResolvers<Response>();
+    let claims = 0;
+    const fetch = Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/claim')) { claims++; return held.promise; }
+      return service.fetch(input, init);
+    }, { preconnect: () => {} }) as typeof globalThis.fetch;
+    const mounted = await mountReader(inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}), relicId);
+    await signInByCode(mounted.root);
+    await until(() => mounted.views.length === 1, 'invite ready');
+    press(mounted.root, '[data-action=\"invite-keep\"]');
+    await until(() => claims === 1, 'first claim');
+    mounted.reRender();
+    expect(mounted.root.querySelector('[data-action=\"invite-keep\"]')?.disabled).toBe(true);
+    press(mounted.root, '[data-action=\"invite-keep\"]');
+    held.resolve(json({ status: 'claimed' }, 201));
+    await until(() => stateOf(mounted.root) === 'invite-claimed', 'claim complete');
+    expect(claims).toBe(1);
+  });
+
   test('a sign-in older than fifteen minutes is asked again before Keep access, and nothing is claimed', async () => {
     const relicId = freshRelicId();
     const inv = await invitationFor(relicId);

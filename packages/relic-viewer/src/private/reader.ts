@@ -444,6 +444,8 @@ class PrivateReader {
   private panelHost: HTMLElement | undefined;
   private requestCount: HTMLElement | undefined;
   private detached = false;
+  private keepPending = false;
+  private keepButton: HTMLButtonElement | undefined;
   private sharePrefill: readonly string[] = [];
   private inviteRef:
     | { readonly inviteId: string; readonly d: Uint8Array | undefined }
@@ -840,6 +842,8 @@ class PrivateReader {
     keep.className = 'action primary';
     keep.setAttribute('data-action', 'invite-keep');
     keep.textContent = 'Keep access';
+    this.keepButton = keep;
+    keep.disabled = this.keepPending;
     keep.addEventListener('click', () => {
       void this.keepAccess(keep, invitation);
     });
@@ -858,6 +862,7 @@ class PrivateReader {
     button: HTMLButtonElement,
     invitation: VerifiedInvitation
   ): Promise<void> {
+    if (this.keepPending) return;
     const email = this.email;
     if (email === undefined) {
       this.showInviteSignIn();
@@ -874,6 +879,7 @@ class PrivateReader {
       );
       return;
     }
+    this.keepPending = true;
     const restore = waiting(button);
     try {
       const state = await privateKeysOf(this.mount.deps).loadIdentityState(
@@ -926,6 +932,8 @@ class PrivateReader {
       }
       this.failure(error);
     } finally {
+      this.keepPending = false;
+      if (this.keepButton !== undefined) this.keepButton.disabled = false;
       restore();
     }
   }
