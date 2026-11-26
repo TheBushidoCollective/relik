@@ -32,6 +32,7 @@ import {
   ServerRefusal,
 } from './publish.ts';
 import { bindOwner, privateVersionKey, verifyGrant } from './private.ts';
+import { grantUrl } from './share.ts';
 
 export interface RequestSignaturesInput {
   relicId: string;
@@ -175,7 +176,11 @@ export async function requestSignatures(
       if (grant === undefined)
         throw new PublishError(
           'recipient_forged_grant',
-          `Grant access to ${email} before requesting a signature.`
+          `${email} can't open this relik yet, so they can't be asked to sign. Grant access or invite them first: open grant_url in your browser and tap your passkey. An invited person can sign once they accept and you confirm.`,
+          {
+            signer_email: email,
+            grant_url: grantUrl(deps.relicOrigin, input.relicId, [email]),
+          }
         );
       return {
         email: grant.reader.email!,

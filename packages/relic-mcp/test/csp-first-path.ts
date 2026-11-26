@@ -1062,7 +1062,7 @@ async function drive(connection: CdpConnection, run: Run): Promise<Observed> {
               results: Record<string, unknown>[];
               done: boolean;
             });
-      if (probe !== null && probe.done) break;
+      if (probe?.done) break;
       await Bun.sleep(150);
     }
     await Bun.sleep(800);

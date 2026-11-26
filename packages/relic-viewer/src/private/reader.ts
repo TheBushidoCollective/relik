@@ -17,9 +17,24 @@ import { openContentStore } from '../content.ts';
 import { entryView, openFolderRelic } from '../folder-relic.ts';
 import { readSession, requestMagicLink } from '../comments.ts';
 import { keylessLink } from '../copy-link.ts';
-import { privateApi } from './fingerprint-input.ts';
+import { icon, PrivateApiError, privateApi } from './fingerprint-input.ts';
 import { renderPrivateDashboard } from './dashboard-private.ts';
 import { openAccessPanel } from './owner-panel.ts';
+import {
+  describeVersions,
+  formatUtcDay,
+  versionsPhrase,
+} from './access-log.ts';
+import {
+  claimInvitation,
+  inviteVersionKey,
+  openInvitation,
+  openInvitedVersion,
+  type VerifiedInvitation,
+} from './invite.ts';
+import { listInvites } from './invite-wire.ts';
+import { parseInviteFragment } from '@relic/format/private';
+import { parseShareFragment } from './direct-share.ts';
 import { mountPasskeySignIn } from '../passkey-sign-in.ts';
 import {
   normalizeSignInCode,
@@ -48,6 +63,7 @@ import {
   makeReplacementPasskey,
   retryIdentityAfterReplacement,
   setUpIdentity,
+  type SetupOutcome,
 } from './identity.ts';
 import {
   InvalidKeyResponseError,
@@ -105,7 +121,21 @@ type ReaderStage =
   | 'revoked'
   | 'denied'
   | 'owner-changed'
-  | 'seal-mismatch';
+  | 'seal-mismatch'
+  | 'invite-signin'
+  | 'invite-key-missing'
+  | 'invite-wrong-address'
+  | 'invite-claimed'
+  | 'invite-expired'
+  | 'invite-withdrawn'
+  | 'invite-used'
+  | 'invite-damaged';
+
+/** The invitation an invitee reads: its verified key serves the ready view. */
+interface InviteContext {
+  readonly invitation: VerifiedInvitation;
+  readonly currentVersion: number;
+}
 
 /** Static copy and markup from the approved mock, one stage per state. */
 const STAGES_HTML = `
@@ -119,8 +149,8 @@ const STAGES_HTML = `
     <div class="signin" id="signin-form">
       <form class="signin-form" id="signin-email-form">
         <label class="compose-field"><span>Email address</span><input class="compose-input" type="email" id="signin-email" autocomplete="email" placeholder="you@example.com" required></label>
-        <button type="submit" class="action primary">Request access</button>
-        <p class="card-fine">Relik emails you a code to confirm the address. Then the owner is asked.</p>
+        <button type="submit" class="action primary" id="signin-submit">Request access</button>
+        <p class="card-fine" id="signin-fine">Relik emails you a code to confirm the address. Then the owner is asked.</p>
       </form>
       <form class="signin-form" id="signin-code-form" hidden>
         <label class="compose-field"><span>Code from the email</span><input class="compose-input code-input" inputmode="numeric" autocomplete="one-time-code" id="signin-code" maxlength="6"></label>
@@ -141,6 +171,64 @@ const STAGES_HTML = `
     <h1 class="card-title" tabindex="-1">Review access request</h1>
     <p class="card-meta" data-signed-in></p>
     <div id="grant-focus"></div>
+  </div>
+</div>
+
+<div class="stage" data-for="invite-key-missing" hidden>
+  <div class="card is-refusal">
+    <h1 class="card-title" tabindex="-1">This invitation link is incomplete</h1>
+    <p class="card-body">This invitation link is incomplete. Open the link from the email again.</p>
+  </div>
+</div>
+
+<div class="stage" data-for="invite-wrong-address" hidden>
+  <div class="card is-refusal">
+    <h1 class="card-title" tabindex="-1">This invitation doesn't open here</h1>
+    <p class="card-meta" data-signed-in></p>
+    <p class="card-body">This invitation doesn't open for <span data-invite-address></span>. Sign in with the address it was sent to.</p>
+    <div class="card-actions"><button type="button" class="action primary" data-action="invite-signin-again">Sign in with another address</button></div>
+  </div>
+</div>
+
+<div class="stage" data-for="invite-claimed" hidden>
+  <div class="card">
+    <h1 class="card-title" tabindex="-1">You kept access</h1>
+    <p class="card-meta" data-signed-in></p>
+    <p class="fp-caption" id="fp-claimed-caption">Your fingerprint</p>
+    <p class="fingerprint" data-fingerprint="invitee" aria-labelledby="fp-claimed-caption"></p>
+    <p class="fp-instruction">You'll keep access to <span data-invite-versions-noun>versions</span> <span data-invite-versions></span>. When <span data-invite-owner></span> confirms, you'll also get later versions.</p>
+    <div class="card-actions"><button type="button" class="action primary" data-action="invite-open">Open the relik</button></div>
+  </div>
+</div>
+
+<div class="stage" data-for="invite-expired" hidden>
+  <div class="card is-refusal">
+    <h1 class="card-title" tabindex="-1">This invitation expired</h1>
+    <p class="card-meta" data-signed-in></p>
+    <p class="card-body">This invitation expired on <span data-invite-date></span>. Ask <span data-invite-owner></span> to send a new one.</p>
+    <div class="card-actions" data-invite-keyed hidden><button type="button" class="action primary" data-action="invite-request">Request access</button></div>
+    <p class="card-note" data-invite-keyed hidden>Shown because this address already has a private-share key.</p>
+  </div>
+</div>
+
+<div class="stage" data-for="invite-withdrawn" hidden>
+  <div class="card is-refusal">
+    <h1 class="card-title" tabindex="-1">This invitation was withdrawn</h1>
+    <p class="card-body"><span data-invite-owner="start"></span> withdrew this invitation.</p>
+  </div>
+</div>
+
+<div class="stage" data-for="invite-used" hidden>
+  <div class="card is-refusal">
+    <h1 class="card-title" tabindex="-1">This invitation was already used</h1>
+    <p class="card-body">Ask <span data-invite-owner></span> to share with you again if you need access.</p>
+  </div>
+</div>
+
+<div class="stage" data-for="invite-damaged" hidden>
+  <div class="card is-refusal">
+    <h1 class="card-title" tabindex="-1">This invitation link doesn't open</h1>
+    <p class="card-body">Ask <span data-invite-owner></span> to send it again.</p>
   </div>
 </div>
 
@@ -348,6 +436,14 @@ function isUnauthenticated(error: unknown): boolean {
   return error instanceof PrivateRequestError && error.status === 401;
 }
 
+/** Throws when a key is needed without an unlocked identity. */
+function requireIdentity(
+  identity: UnlockedIdentity | undefined
+): UnlockedIdentity {
+  if (identity === undefined) throw new NoIdentityError('identity_required');
+  return identity;
+}
+
 class PrivateReader {
   private readonly host: HTMLElement;
   private email: string | undefined;
@@ -358,6 +454,15 @@ class PrivateReader {
   private pendingVersion = 0;
   private panelHost: HTMLElement | undefined;
   private requestCount: HTMLElement | undefined;
+  private detached = false;
+  private keepPending = false;
+  private keepButton: HTMLButtonElement | undefined;
+  private sharePrefill: readonly string[] = [];
+  private inviteRef:
+    | { readonly inviteId: string; readonly d: Uint8Array | undefined }
+    | undefined;
+  private invitation: VerifiedInvitation | undefined;
+  private verifiedAt: number | undefined;
 
   constructor(private readonly mount: PrivateReaderMount) {
     this.host = document.createElement('section');
@@ -367,6 +472,19 @@ class PrivateReader {
   }
 
   async start(): Promise<void> {
+    const url = new URL(this.mount.deps.locationHref);
+    const inviteId = url.searchParams.get('invite');
+    if (inviteId !== null) {
+      // The invite key is read once out of the fragment, then the fragment is gone.
+      this.inviteRef = { inviteId, d: parseInviteFragment(url.hash.slice(1)) };
+      this.mount.deps.stripFragment?.();
+    } else if (
+      url.searchParams.get('access') === 'share' &&
+      url.hash.startsWith('#to=')
+    ) {
+      this.sharePrefill = parseShareFragment(url.hash);
+      this.mount.deps.stripFragment?.();
+    }
     document.body.replaceChildren(this.host);
     this.wire();
     await this.route();
@@ -377,6 +495,11 @@ class PrivateReader {
   }
 
   private show(stage: ReaderStage): void {
+    // The ready view replaced the page, so a stage shown after it puts the host back.
+    if (this.detached) {
+      this.detached = false;
+      document.body.replaceChildren(this.host);
+    }
     for (const note of this.host.querySelectorAll('.ceremony-note')) {
       note.remove();
     }
@@ -411,6 +534,13 @@ class PrivateReader {
     action('private-request', () => this.request());
     action('private-unlock', () => this.unlockAndOpen());
     action('private-unlock-requested', () => this.unlockRequested());
+    action('invite-open', () => this.route());
+    action('invite-request', () => this.request());
+    action('invite-signin-again', async () => {
+      this.email = undefined;
+      this.mountSignIn();
+      this.showInviteSignIn();
+    });
 
     required<HTMLButtonElement>(this.host, '#replace-not-now').addEventListener(
       'click',
@@ -466,6 +596,7 @@ class PrivateReader {
     );
     if (result.kind === 'verified') {
       this.signInNote('');
+      this.verifiedAt = nowMs(this.mount.deps);
       await this.route();
     } else if (result.kind === 'rate_limited') {
       this.signInNote(signInCodeRateLimitedCopy(result.retryAfterSeconds));
@@ -478,10 +609,15 @@ class PrivateReader {
 
   /** Decides which stage the reader is in, from the session and the service. */
   async route(): Promise<void> {
+    if (this.inviteRef !== undefined) {
+      await this.routeInvite();
+      return;
+    }
     const session = await readSession(this.mount.deps);
     if (session.kind !== 'verified') {
       this.email = undefined;
       this.mountSignIn();
+      this.signInCopy(false);
       this.show('signin');
       return;
     }
@@ -523,6 +659,7 @@ class PrivateReader {
         return;
       case 'owner':
       case 'grantee':
+      case 'invited':
       case 'recovery':
         this.show('unlock');
         this.prepareOwner();
@@ -535,6 +672,381 @@ class PrivateReader {
     }
   }
 
+  /** The invitee's path: sign in to the invited address, read it, then keep access. */
+  private async routeInvite(): Promise<void> {
+    const ref = this.inviteRef;
+    if (ref === undefined) return;
+    if (ref.d === undefined) {
+      this.show('invite-key-missing');
+      return;
+    }
+    const session = await readSession(this.mount.deps);
+    if (session.kind !== 'verified') {
+      this.email = undefined;
+      this.mountSignIn();
+      this.showInviteSignIn();
+      return;
+    }
+    this.email = session.email;
+    try {
+      const invitation = await openInvitation(
+        this.mount.deps,
+        this.mount.relicId,
+        ref.inviteId,
+        ref.d
+      );
+      this.invitation = invitation;
+      const { open } = invitation;
+      if (open.status === 'expired') {
+        await this.inviteExpired(open.owner.email, open.expires_at);
+      } else if (open.status === 'revoked') {
+        this.inviteStage('invite-withdrawn', open.owner.email);
+      } else if (open.status === 'claimed') {
+        const state = await privateKeysOf(this.mount.deps).loadIdentityState(
+          this.mount.deps
+        );
+        if (
+          state.identity !== null &&
+          state.identity.identity_id === open.claimed_by_identity_id
+        ) {
+          this.inviteRef = undefined;
+          this.invitation = undefined;
+          await this.route();
+          return;
+        }
+        this.inviteStage('invite-used', open.owner.email);
+      } else {
+        await this.showInviteReady(invitation);
+      }
+    } catch (error) {
+      this.inviteFailure(error);
+    }
+  }
+
+  /** Maps a failed invitation read onto the stage the invitee can act on. A wrong address and a bogus id get the same answer. */
+  private inviteFailure(error: unknown): void {
+    if (error instanceof PrivateApiError) {
+      if (error.status === 401) {
+        this.mountSignIn();
+        this.showInviteSignIn();
+        return;
+      }
+      if (error.status === 404) {
+        this.inviteStage('invite-wrong-address', '');
+        return;
+      }
+      if (error.code === 'invite_expired') {
+        void this.inviteExpired('');
+        return;
+      }
+      if (error.code === 'invite_revoked') {
+        this.inviteStage('invite-withdrawn', '');
+        return;
+      }
+      if (error.code === 'invite_claimed') {
+        this.inviteStage('invite-used', '');
+        return;
+      }
+    }
+    this.inviteStage('invite-damaged', '');
+  }
+
+  /**
+   * The expired card. Request access is offered only to an address that
+   * already has a private-share key (plan 3.8): without one there is nothing
+   * to sign the request with.
+   */
+  private async inviteExpired(owner: string, date?: string): Promise<void> {
+    let keyed = false;
+    try {
+      const state = await privateKeysOf(this.mount.deps).loadIdentityState(
+        this.mount.deps
+      );
+      keyed = state.identity !== null;
+    } catch {
+      // Unknown is treated as no key: the card then offers nothing it can't do.
+    }
+    const stage = this.stage('invite-expired');
+    for (const element of stage.querySelectorAll<HTMLElement>(
+      '[data-invite-keyed]'
+    )) {
+      element.hidden = !keyed;
+    }
+    this.inviteStage('invite-expired', owner, date);
+  }
+
+  /** Sets the owner, date and version copy on an invitee stage, then shows it. */
+  private inviteStage(
+    stage: ReaderStage,
+    owner: string,
+    date?: string,
+    versions?: readonly number[]
+  ): void {
+    for (const element of this.host.querySelectorAll('[data-invite-owner]')) {
+      // An owner Relik could not name opens one card's sentence and sits inside the rest.
+      element.textContent =
+        owner !== ''
+          ? owner
+          : element.getAttribute('data-invite-owner') === 'start'
+            ? 'The owner'
+            : 'the owner';
+    }
+    for (const element of this.host.querySelectorAll('[data-invite-date]')) {
+      element.textContent = date === undefined ? '' : formatUtcDay(date);
+    }
+    // The hook holds the bare list; the noun beside it agrees with its length.
+    for (const element of this.host.querySelectorAll(
+      '[data-invite-versions]'
+    )) {
+      element.textContent =
+        versions === undefined ? '' : describeVersions(versions);
+    }
+    for (const element of this.host.querySelectorAll(
+      '[data-invite-versions-noun]'
+    )) {
+      element.textContent = versions?.length === 1 ? 'version' : 'versions';
+    }
+    for (const element of this.host.querySelectorAll('[data-invite-address]')) {
+      element.textContent = this.email ?? '';
+    }
+    this.show(stage);
+  }
+
+  /** The sign-in stage with the invitation's copy, for an invitee who is not signed in. */
+  private showInviteSignIn(): void {
+    this.signInCopy(true);
+    this.show('signin');
+    this.host.setAttribute('data-private-state', 'invite-signin');
+  }
+
+  private signInCopy(invite: boolean): void {
+    const stage = this.stage('signin');
+    const title = stage.querySelector<HTMLElement>('.card-title');
+    const meta = stage.querySelector<HTMLElement>('.card-meta');
+    const body = stage.querySelector<HTMLElement>('.card-body p');
+    const submit = stage.querySelector<HTMLElement>('#signin-submit');
+    const fine = stage.querySelector<HTMLElement>('#signin-fine');
+    if (title) {
+      title.textContent = invite
+        ? "You're invited to a private relik"
+        : 'This relik is private';
+    }
+    // An invitee asks the owner for nothing here: the code only proves the address.
+    if (meta) meta.hidden = invite;
+    if (body) {
+      body.textContent = invite
+        ? 'This invitation opens only for the address it was sent to. Sign in with that address. Relik emails it a code.'
+        : 'Only people the owner lets in can open it. Enter your email address to ask the owner for access.';
+    }
+    if (submit) {
+      submit.textContent = invite ? 'Email me a code' : 'Request access';
+    }
+    if (fine) {
+      fine.textContent = invite
+        ? 'Use the code. If you use the link in that email instead, open this invitation again afterwards.'
+        : 'Relik emails you a code to confirm the address. Then the owner is asked.';
+    }
+  }
+
+  /** Opens the newest listed version and shows it with the invitation banner. */
+  private async showInviteReady(invitation: VerifiedInvitation): Promise<void> {
+    const { open } = invitation;
+    const sealed = open.sealed_version;
+    const listed = open.versions.filter(
+      (version) => sealed === null || version <= sealed
+    );
+    const target = Math.max(0, ...listed);
+    if (target === 0) {
+      this.inviteStage('invite-damaged', open.owner.email);
+      return;
+    }
+    const opened = await openInvitedVersion(
+      this.mount.deps,
+      invitation,
+      target
+    );
+    const invite: InviteContext = {
+      invitation,
+      currentVersion: sealed ?? target,
+    };
+    const newer = sealed !== null && sealed > target ? sealed : undefined;
+    this.mountReady(
+      await this.readyView(opened, target, undefined, invite),
+      (page) => this.decorateInvite(page, invitation, listed, newer)
+    );
+  }
+
+  /** The invitation banner above the file, with Keep access (mock `invite-ready`). */
+  private decorateInvite(
+    page: HTMLElement,
+    invitation: VerifiedInvitation,
+    listed: readonly number[],
+    newer: number | undefined
+  ): void {
+    const { open } = invitation;
+    const owner = open.owner.email;
+    const banner = document.createElement('section');
+    banner.className = 'invite-banner';
+    banner.setAttribute('data-invite-banner', '');
+    const text = document.createElement('p');
+    text.textContent = `${owner} invited you. You can open ${versionsPhrase(listed)} until ${formatUtcDay(open.expires_at)}.`;
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.className = 'action primary';
+    keep.setAttribute('data-action', 'invite-keep');
+    keep.textContent = 'Keep access';
+    this.keepButton = keep;
+    keep.disabled = this.keepPending;
+    keep.addEventListener('click', () => {
+      void this.keepAccess(keep, invitation);
+    });
+    banner.append(text, keep);
+    if (newer !== undefined) {
+      // A later version is reached through Keep access and the owner's confirm, not a new request.
+      const note = document.createElement('p');
+      note.className = 'note';
+      note.textContent = `Version ${newer} is newer than this invitation. Keep access, and once ${owner} confirms you, you'll get it too.`;
+      banner.append(note);
+    }
+    const bar = page.querySelector<HTMLElement>('.bar');
+    if (bar === null) page.prepend(banner);
+    else bar.after(banner);
+  }
+
+  /**
+   * Keep access: a fresh sign-in if the last one is older than 900 seconds, a
+   * passkey set up or unlocked, the invitation's keys moved to this identity,
+   * then the claim. Nothing is shown as kept until the claim is accepted.
+   */
+  private async keepAccess(
+    button: HTMLButtonElement,
+    invitation: VerifiedInvitation
+  ): Promise<void> {
+    if (this.keepPending) return;
+    const email = this.email;
+    if (email === undefined) {
+      this.showInviteSignIn();
+      return;
+    }
+    if (
+      this.verifiedAt === undefined ||
+      nowMs(this.mount.deps) - this.verifiedAt > 900_000
+    ) {
+      this.mountSignIn();
+      this.showInviteSignIn();
+      this.signInNote(
+        'Your sign-in is older than 15 minutes. Sign in again to keep access. Relik emails a new code.'
+      );
+      return;
+    }
+    this.keepPending = true;
+    const restore = waiting(button);
+    try {
+      const state = await privateKeysOf(this.mount.deps).loadIdentityState(
+        this.mount.deps
+      );
+      let identity: UnlockedIdentity;
+      if (state.identity === null) {
+        let outcome: SetupOutcome;
+        try {
+          outcome = await setUpIdentity(this.mount.deps, email);
+        } catch (error) {
+          if (
+            !(error instanceof PrivateRequestError) ||
+            error.code !== 'passkey_required'
+          )
+            throw error;
+          await makeReplacementPasskey(this.mount.deps);
+          outcome = await retryIdentityAfterReplacement(this.mount.deps, email);
+        }
+        if (outcome.kind === 'replace-offer') {
+          await makeReplacementPasskey(this.mount.deps);
+          outcome = await retryIdentityAfterReplacement(this.mount.deps, email);
+        }
+        if (outcome.kind !== 'ready') {
+          this.show('setup-refused');
+          return;
+        }
+        identity = outcome.identity;
+      } else {
+        identity = await privateKeysOf(this.mount.deps).unlock(
+          this.mount.deps,
+          state
+        );
+      }
+      this.identity = identity;
+      await claimInvitation(this.mount.deps, invitation, identity);
+      const { open } = invitation;
+      const sealed = open.sealed_version;
+      const listed = open.versions.filter(
+        (version) => sealed === null || version <= sealed
+      );
+      this.inviteRef = undefined;
+      this.invitation = undefined;
+      // The invitee reads this to the owner, who checks it before Confirm.
+      const plate = this.stage('invite-claimed').querySelector(
+        '[data-fingerprint="invitee"]'
+      );
+      if (plate !== null) {
+        setFingerprint(
+          plate,
+          formatFingerprint(
+            await identityFingerprint(identity.identityId, email)
+          )
+        );
+      }
+      this.inviteStage('invite-claimed', open.owner.email, undefined, listed);
+    } catch (error) {
+      if (error instanceof PrivateApiError && error.code === 'invite_claimed') {
+        this.inviteStage('invite-used', invitation.open.owner.email);
+        return;
+      }
+      this.failure(error);
+    } finally {
+      this.keepPending = false;
+      if (this.keepButton !== undefined) this.keepButton.disabled = false;
+      restore();
+    }
+  }
+
+  /** The invitee's view of one listed version, opened with the verified invitation key. */
+  private async inviteOpenVersion(
+    version: number,
+    invite: InviteContext
+  ): Promise<HistoricalVersionState> {
+    if (!invite.invitation.open.versions.includes(version)) {
+      return {
+        kind: 'unavailable',
+        code: 'version_unavailable',
+        detail: COPY_GENERIC_FAILURE,
+      };
+    }
+    try {
+      const opened = await openInvitedVersion(
+        this.mount.deps,
+        invite.invitation,
+        version
+      );
+      return {
+        kind: 'ready',
+        view: await this.readyView(opened, version, undefined, invite),
+      };
+    } catch (error) {
+      if (error instanceof SealMismatchError) {
+        return {
+          kind: 'unavailable',
+          code: 'seal_mismatch',
+          detail: COPY_SEAL_DETAIL,
+        };
+      }
+      return {
+        kind: 'unavailable',
+        code: 'version_unavailable',
+        detail: COPY_GENERIC_FAILURE,
+      };
+    }
+  }
+
   private mountSignIn(): void {
     mountPasskeySignIn({
       host: required<HTMLElement>(this.host, '#signin-passkey-host'),
@@ -542,6 +1054,7 @@ class PrivateReader {
       outcome: required<HTMLElement>(this.host, '#signin-note'),
       deps: this.mount.deps,
       onSignedIn: () => {
+        this.verifiedAt = nowMs(this.mount.deps);
         void this.route();
       },
     });
@@ -665,51 +1178,67 @@ class PrivateReader {
 
   private async openSealed(identity: UnlockedIdentity): Promise<void> {
     const access = this.access;
-    if (access === undefined || access.sealedVersion === null) {
+    // An invited reader opens only what the claim covers: the newest listed version.
+    const target =
+      access?.role === 'invited'
+        ? Math.max(0, ...access.readableVersions)
+        : (access?.sealedVersion ?? null);
+    if (access === undefined || target === null || target <= 0) {
       this.showDead(deadFromProblem('relic_not_yet_published'));
       return;
     }
-    this.pendingVersion = access.sealedVersion;
+    this.pendingVersion = target;
     const opened = await privateKeysOf(this.mount.deps).fetchAndDecryptVersion(
       this.mount.deps,
       this.mount.relicId,
-      access.sealedVersion,
+      target,
       identity
     );
-    void this.recordOpened(opened, access.sealedVersion, identity);
-    this.mountReady(
-      await this.readyView(opened, access.sealedVersion, identity)
-    );
+    void this.recordOpened(opened, target, identity);
+    this.mountReady(await this.readyView(opened, target, identity));
   }
 
   /** Builds the view the shell renders, with keys resolved per version. */
   private async readyView(
     opened: OpenedVersion,
     version: number,
-    identity: UnlockedIdentity
+    identity: UnlockedIdentity | undefined,
+    invite?: InviteContext
   ): Promise<ReadyView> {
+    const access = this.access;
+    const shared = {
+      access: 'private' as const,
+      shareUrl: keylessLink(this.mount.deps.locationHref),
+      version,
+      currentVersion:
+        invite?.currentVersion ?? access?.currentVersion ?? version,
+      versionDigest: opened.digest,
+      settings: invite === undefined ? access?.settings : undefined,
+      manage: invite === undefined && access?.role === 'owner',
+      viewOnly: invite !== undefined,
+      ...(identity === undefined ? {} : { signingIdentity: identity }),
+      keyFor: (wanted: number): Promise<Uint8Array> =>
+        invite !== undefined
+          ? inviteVersionKey(this.mount.deps, invite.invitation, wanted)
+          : this.keyFor(wanted, requireIdentity(identity)),
+      openVersion: (wanted: number): Promise<HistoricalVersionState> =>
+        invite !== undefined
+          ? this.inviteOpenVersion(wanted, invite)
+          : this.openVersion(wanted, requireIdentity(identity)),
+    };
     if ('folderContent' in opened) {
       const folder = await openFolderRelic(
         opened.envelope,
         opened.folderContent
       );
       const base: ReadyView = {
+        ...shared,
         filename: opened.envelope.name,
         declaredMimetype: '',
         content: opened.folderContent,
         document: undefined,
         route: 'download',
         downgradeNotice: undefined,
-        shareUrl: keylessLink(this.mount.deps.locationHref),
-        version,
-        currentVersion: this.access?.currentVersion ?? version,
-        versionDigest: opened.digest,
-        access: 'private',
-        settings: this.access?.settings,
-        signingIdentity: identity,
-        manage: this.access?.role === 'owner',
-        keyFor: (wanted: number) => this.keyFor(wanted, identity),
-        openVersion: (wanted: number) => this.openVersion(wanted, identity),
         folder,
       };
       return entryView(base, folder.index);
@@ -721,6 +1250,7 @@ class PrivateReader {
     const content = await sink.finish();
     const route = await routeContent(entry.filename, entry.mimetype, content);
     return {
+      ...shared,
       filename: entry.filename,
       declaredMimetype: entry.mimetype,
       content,
@@ -728,16 +1258,6 @@ class PrivateReader {
       route: route.route,
       documentKind: route.documentKind,
       downgradeNotice: route.notice,
-      shareUrl: keylessLink(this.mount.deps.locationHref),
-      version,
-      currentVersion: this.access?.currentVersion ?? version,
-      versionDigest: opened.digest,
-      access: 'private',
-      settings: this.access?.settings,
-      signingIdentity: identity,
-      manage: this.access?.role === 'owner',
-      keyFor: (wanted: number) => this.keyFor(wanted, identity),
-      openVersion: (wanted: number) => this.openVersion(wanted, identity),
     };
   }
 
@@ -838,14 +1358,18 @@ class PrivateReader {
     }
   }
 
-  private mountReady(view: ReadyView): void {
+  private mountReady(
+    view: ReadyView,
+    decorate: (page: HTMLElement) => void = (page) => this.decorateReady(page)
+  ): void {
     this.host.remove();
+    this.detached = true;
     this.mount.renderReady(
       view,
       this.mount.relicId,
       this.mount.usercontentOrigin,
       this.mount.deps,
-      (page) => this.decorateReady(page)
+      decorate
     );
   }
 
@@ -931,7 +1455,8 @@ class PrivateReader {
       );
       if (requester === null) void this.openOwnerPanel();
       else void this.openGrantCard(requester);
-    }
+    } else if (wanted === 'share' || wanted === 'invites')
+      void this.openOwnerPanel();
   }
 
   /** The owner's Access control on the relic's taskbar, with the pending count. */
@@ -945,13 +1470,17 @@ class PrivateReader {
     count.id = 'request-count';
     this.requestCount = count;
     const button = document.createElement('button');
+    button.type = 'button';
     button.className = 'action';
+    // The band is rebuilt as counts land; this marks the control to carry across.
+    button.setAttribute('data-band-extra', '');
     button.setAttribute('data-action', 'open-access-panel');
     button.setAttribute('aria-expanded', 'false');
     button.setAttribute('aria-controls', 'access-panel');
     const label = document.createElement('span');
     label.textContent = 'Access';
-    button.append(label, count);
+    // The glyph keeps the control visible when narrow widths drop its label.
+    button.append(icon('users'), label, count);
     button.addEventListener('click', () => {
       void this.openOwnerPanel();
     });
@@ -971,9 +1500,18 @@ class PrivateReader {
         'GET',
         `/api/relics/${encodeURIComponent(this.mount.relicId)}/requests`
       );
-      const pending = listed.requests.filter(
-        (request) => request.status === 'pending'
-      ).length;
+      const accepted = await listInvites(
+        this.mount.deps,
+        this.mount.relicId
+      ).then(
+        (invites) =>
+          invites.filter((invite) => invite.status === 'claimed').length,
+        () => 0
+      );
+      // The Access button counts pending requests and accepted invitations awaiting Confirm.
+      const pending =
+        listed.requests.filter((request) => request.status === 'pending')
+          .length + accepted;
       count.textContent = String(pending);
       count.hidden = pending === 0;
       count.setAttribute(
@@ -1000,6 +1538,7 @@ class PrivateReader {
         relicId,
         access,
         deps,
+        prefill: this.sharePrefill,
         ...(focus === null ? {} : { focusRequester: focus }),
         onChanged: () => {
           void this.refreshRequestCount();

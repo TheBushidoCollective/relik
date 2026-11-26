@@ -25,6 +25,7 @@ export interface FakeGcs {
   readonly requests: { readonly url: string; readonly init: RequestInit }[];
   /** `times: -1` means every write, for modelling permanent contention. */
   beforeNextUpload(name: string, hook: () => Promise<void>): void;
+  beforeNextDelete(name: string, hook: () => Promise<void>): void;
   contendOn(name: string, times: number): void;
 }
 
@@ -82,6 +83,7 @@ export function fakeGcs(): FakeGcs {
    */
   const bumps = new Map<string, number>();
   const uploadHooks = new Map<string, () => Promise<void>>();
+  const deleteHooks = new Map<string, () => Promise<void>>();
 
   const competingIncrement = (name: string): void => {
     const remaining = bumps.get(name);
@@ -247,6 +249,11 @@ export function fakeGcs(): FakeGcs {
       }
 
       if (method === 'DELETE') {
+        const deleteHook = deleteHooks.get(name);
+        if (deleteHook !== undefined) {
+          deleteHooks.delete(name);
+          await deleteHook();
+        }
         const precondition = url.searchParams.get('ifGenerationMatch');
         if (precondition !== null) {
           const existing = objects.get(name);
@@ -286,6 +293,9 @@ export function fakeGcs(): FakeGcs {
     requests,
     beforeNextUpload(name: string, hook: () => Promise<void>) {
       uploadHooks.set(name, hook);
+    },
+    beforeNextDelete(name: string, hook: () => Promise<void>) {
+      deleteHooks.set(name, hook);
     },
     contendOn(name: string, times: number) {
       bumps.set(name, times);

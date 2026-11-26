@@ -419,3 +419,77 @@ built viewer and virtual passkeys in isolated headless browsers. It exercises
 public and private signatures, receipts, certificate verification, cancellation,
 the signing pause, and version locks. It does not prove real passkeys, production
 storage lifecycle behavior or mail delivery.
+
+# Direct share and invitations
+
+```sh
+bun run build
+bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=<owned-headless-shell> bun packages/relic-mcp/test/direct-share-path.ts
+```
+
+The path uses two app instances over one store, a third app that answers only the budget probes, a fourth with the kill switch engaged, a harness clock injected through `createApp` `now`, captured mail, the built viewer, virtual passkeys in isolated headless browsers, and relic-mcp over stdio. Every write goes to loopback. CI runs it as the `Direct share path` step after `Signing path`.
+
+The previously recorded loopback pass predates the grant and claim storage change. The updated path has not been rerun on this revision. The lines below are expected receipts, not evidence of a current pass (the PRIVATE_STEP lines come first and are shared with the private shares path):
+
+```
+DIRECT_STEP_1_LOOKUP_GATE signed_out=401 other_reader=403 public_relik=400 owner=200 fingerprint_field=absent unregistered=null standing_self=owner
+DIRECT_STEP_2_BUDGET per_address=true shared_with_recovery=true ip_budget=429 non_owner_charged=false
+DIRECT_STEP_3_PANEL fingerprints=local_match self=that_is_you reader=already prefill=fragment fragment_after_open=absent
+DIRECT_STEP_4_ONE_TAP owner_sign_count_delta=1 grants=2 statements_verify=owner_key stored_grant=reverifies wraps=exact v1_wraps=0 log=share,share
+DIRECT_STEP_5_NOTICE per_recipient=1 names_owner=true fingerprint=own title=absent file=absent fragment=absent other_recipient=absent
+DIRECT_STEP_6_RECIPIENT_OPENS states=signin,unlock,ready request_state=never v2=opened v1_key=403 shared_with_you=listed
+DIRECT_STEP_7_LATER_VERSION mcp_republish=sealed mcp_roster=accepts_batch_grants recipient_v3=opened
+DIRECT_STEP_8_REPEAT_AND_REVOKED repeat_api=409_grant_exists wraps_unchanged=true revoked_regrant=201 revoked_reader_opens=current
+DIRECT_STEP_9_REFUSALS self=400_grantee wrong_fingerprint=409 substituted_lookup=ui_rejects_unverified substituted_api=400_grantee substitute_wraps=0 retired_identity=400_grantee
+DIRECT_STEP_10_REQUEST_PATH lookup_standing=requested grant_log=grant grant_mail=unchanged
+INVITE_STEP_1_CREATE batch=grant:1,invite:2 owner_sign_count_delta=1 invite_rows=2 wraps_open_under_invite_key=true d_in_any_request=false notice_mails=2 notice_names_owner=true notice_link=absent notice_key=absent links_shown=2
+INVITE_STEP_2_ADDRESS_BOUND signed_out=401 other_address=404 bogus_id=404 same_body=true key_other=403 mint_other=403
+INVITE_STEP_3_OPEN_WITH_CODE sign_in=code state=invite-ready listed=opened unlisted_key=403 comments=absent signing=absent fragment_after_open=absent log=wrap_fetch:address receipts=0 key_in_body=absent
+INVITE_STEP_4_CLAIM passkey_created=1 identity=registered extra_claim_taps=0 claim_wraps=listed claim_store=invite_row m_wrap=absent invite_wraps=0 role=invited reads_after_invite_expiry=ok log=claim owner_mail=1
+INVITE_STEP_5_SINGLE_USE second_tab=201_same_claimant_repeat winner_wraps_intact=true reopen_same_identity=reader
+INVITE_STEP_6_INVISIBLE recipients_equal_without_invites=true mcp_republish=sealed new_version_wrapped_to_claimant=false
+INVITE_STEP_7_CONFIRM owner_sign_count_delta=1 grant=live claim=retained invitation=confirmed mcp_republish_after=wraps_claimant claimant_opens_new_version=ok
+INVITE_STEP_8_EXPIRY open_status=expired key=403 mint=403 claim=410_invite_expired
+INVITE_STEP_9_REVOKE cancel_open=wraps_0 link_state=invite-withdrawn remove_claimed=claim_wraps_0 key=403 role=revoked
+INVITE_STEP_10_REKEY revoke_other=new_version open_invite_listed=ok open_invite_new_version=403
+INVITE_STEP_11_REGISTERED invite_for_registered=409_identity_exists lookup_charged=true existing_identity=unlock_then_claim already_reader=consumed_no_extra_wraps_or_index
+INVITE_STEP_12_DELETE version_delete=versions_stripped surviving_key=200 deleted_key=403
+INVITE_STEP_13_MCP grant_url_unregistered=invite_offered service_calls=0 refusal=recipient_forged_grant grant_url_in_refusal=true
+INVITE_STEP_12_RELIK_DELETE whole_relik=invites_0,claim_indexes_0 checked_claimants=3
+DIRECT_STEP_11_SIGNING_ONE_TAP owner_sign_count_delta=1 grants=2 new_signer_versions=[8] owner_as_signer=accepted request=open signer_mails=1 signed=ok certificate=valid public_signer=no_lookup known_signer=no_new_grant invited_claimant=granted_on_send review_edit=reset_on_edit
+DIRECT_STEP_12_SIGNING_REFUSALS unregistered_signer=refused_no_request send_offered=false grants_on_public_session=400 grants_on_public_publish_token=400 grantee_not_signer=400 versions_not_request=400 unregistered_mail=0 refused_grants_stored=0
+DIRECT_STEP_13_MCP share_grant_url=fragment_addresses service_calls=0 key_in_output=false request_signatures=recipient_forged_grant grant_url_in_refusal=true
+DIRECT_STEP_13_ENUMERATION non_owner_registered=403 non_owner_unregistered=403 identical=true
+DIRECT_STEP_13_KILL_SWITCH grant=503_service_paused replay=201 nonce_consumed_by_refusal=false
+DIRECT_SHARE_PATH_OK
+```
+
+`new_signer_versions` is the version sealed for the signing request, so it changes from run to run. Whole-relik deletion checks the three claimant indexes created by this path, not an unbounded listing. A failed assertion prints `DIRECT_SHARE_PATH_FAILED last_receipt_step=<n> <message>` and exits 1; a product defect prints `DEFECT <id>: ...` and `DIRECT_SHARE_PATH_BLOCKED` with exit 1.
+
+What differs from the targets in `docs/plans/direct-share/plan.md` section 10, and why:
+
+- `DIRECT_STEP_9` prints `substituted_lookup=ui_rejects_unverified`, not `ui_shows_substitute`. The viewer marks a looked-up party unverified when its identity address differs from the typed address (`direct-share.ts`, `lookupShares`). The server still refuses the grant with `400 grantee`. Open decision: keep the stricter viewer, or show the substitute's fingerprint.
+- `INVITE_STEP_5` requires `second_tab=201_same_claimant_repeat`. A repeat by the same claimant returns the existing claim; a different claimant is refused.
+- `INVITE_STEP_12` is two lines: the version delete, then the whole-relik delete at the end of the run.
+- `INVITE_STEP_13` drops `mcp_invite_tool=absent`: the path does not list MCP tools. relic-mcp registers only `relic_share` for sharing (`server.ts`, `SHARE_TOOL_NAME`).
+- `DIRECT_STEP_11` prints the request status the service reported. The composer says "Relik will grant X access when you send" (the plan's wording was "will be granted when you send"). Editing a signer after review resets the review at the edit (`review_edit=reset_on_edit`), so the next tap is "Review and send" again. An invited claimant who has not been confirmed is granted by the send, as plan section 6 says; it is not refused. The public signer goes through `relic_request_signatures` (the device path) and makes no `/grants/lookup` call.
+- `DIRECT_STEP_12` prints `unregistered_signer=refused_no_request send_offered=false`: the composer refuses with a notice and offers no send, but does not disable its review button. The plan's `grants_on_device_path=400` is `grants_on_public_session=400 grants_on_public_publish_token=400`: a public relik has no owner identity, so the grants refusal now runs before the owner lookup (`signing.ts`) and answers 400. `grantee_not_signer` and `versions_not_request` rewrite the browser's real request in the harness handler and re-sign the grant with the owner key; the server has one combined grants check, so both answer `invalid_statement` with `statement_check=grants` and the receipt does not say which sub-condition fired.
+- `DIRECT_STEP_13` adds the enumeration and kill-switch lines. The kill switch is exercised through the Share panel, so the refused body carries real wraps; it is replayed unchanged and returns 201, which shows the refusal did not consume the challenge.
+
+Server reconciliations made for this path: the private grant route refuses under the kill switch before `grantAccess` (`app.ts`), and the signing route refuses `grants` on a non-private relic before the owner lookup (`signing.ts`), each with a test (the second in `signing-acceptance.test.ts`; the first through `DIRECT_STEP_13_KILL_SWITCH`).
+
+Mutation controls recorded on the earlier claim implementation, each run in a scratch checkout (`ovnfs`) and removed afterwards. They have not been rerun against the updated path:
+
+| Mutation | Expected failure | Result |
+|---|---|---|
+| Lookup owner check removed (`app.ts`, grants lookup route) | Direct 1 | Failed at `DIRECT_STEP_1`: `non-owner lookup is not 403` |
+| Address check removed from invitation open (`relic.ts`, `heldInvitation`) | Invite 2 | Failed at `INVITE_STEP_2`: `another address can open the invitation` |
+| Invitation claim compare-and-swap skipped (`relic.ts`, claim write) | Invite 5 | Not caught by the path (exit 0). Caught by `private-invites.test.ts`: `a different claimant wins the CAS without inheriting the losing claim` |
+| Invitation key sent in the open request body (viewer `invite-wire.ts`, `openInvite`) | Invite 3 | Failed at `INVITE_STEP_3`: `an invitation key reached a request body` |
+
+The compare-and-swap is not observable over the path because an invitation can only be claimed by the one identity of its address, so a concurrent repeat converges to the same state with or without the guard. Only a second claimant, which the server unit test builds directly, tells the two apart.
+
+Not run in this slice: budget charged per call, `statements[0]` served for every grant, fingerprint check skipped, version filter dropped, signer membership skipped, claim not emptying the invitation's wraps, invitation lookup charge skipped, and invitation rows added to `extendPrivateLifetime` (the last belongs to the server fake-GCS test).
+
+The post-deploy operator targets are `DIRECT_LIVE share=201 notice=received open=ok deleted=ok` and `INVITE_LIVE create=201 code_open=ok claim=201 confirm=201 deleted=ok`. Neither is claimed here as run. Loopback does not prove real passkeys, real mail delivery, production GCS lifecycle timing or cross-instance budget enforcement. Live test writes to a shared system of record are not permitted; use an appropriate test mode or leave that leg unproven.

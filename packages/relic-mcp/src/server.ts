@@ -757,7 +757,7 @@ export const SHARE_TOOL_DEFINITION = {
   name: SHARE_TOOL_NAME,
   title: 'Share a relik with people',
   description:
-    'Send a relik this machine published to named people. Registers their email addresses with the service so each gets an email notice when someone comments and when you republish, and returns a ready share email carrying the full link, plus a mailto link that opens it as a draft. Relik never sends the share email, because it carries the key: draft it in the sharer\u2019s own mailbox, from their own address, and let them send it. The service stores the addresses in the clear, linked to the relik. A change notice names the title and version, never the key. A new comment emails everyone on the list except the author, naming the commenter\u2019s address (or "The publisher"). At most one email per person per relik per 10 minutes, and one stop link stops every email about that relik. Only works on the machine that published the relik: the link needs its key and registering needs its publish token. Takes the relik id, never the share URL. Up to 20 addresses per call and 50 per relik.',
+    "For a public relik, register addresses for comment and change notices and compose a share email with the full key-bearing link for the owner to send. The service stores the addresses linked to the relik. For a private relik, relic_share grants and invites nothing, because both need the owner's passkey: it returns grant_url, which opens the owner's Share form in their browser with these addresses filled in. Relik looks each one up; the owner grants registered addresses and invites the rest with one passkey tap, and sends each invitation link from their own mailbox because it holds a key. This private call sends nothing to the service. Takes the relik id, never the share URL. Up to 20 addresses per call.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -770,8 +770,7 @@ export const SHARE_TOOL_DEFINITION = {
         items: { type: 'string' },
         minItems: 1,
         maxItems: 20,
-        description:
-          'Up to 20 email addresses to register for comment and change notices.',
+        description: 'Up to 20 email addresses to share with.',
       },
     },
     required: ['relic_id', 'emails'],
@@ -797,7 +796,7 @@ export const SHARE_TOOL_DEFINITION = {
         description: 'Total number of shared addresses on this relik.',
       },
       share_limit: {
-        type: 'integer',
+        type: ['integer', 'null'],
         minimum: 1,
         description: 'Maximum shared addresses allowed per relik.',
       },
@@ -813,6 +812,11 @@ export const SHARE_TOOL_DEFINITION = {
         },
         required: ['to', 'subject', 'text'],
         additionalProperties: false,
+      },
+      grant_url: {
+        type: 'string',
+        description:
+          'For a private relik, the owner Share form with addresses in the fragment.',
       },
       mailto_url: { type: 'string' },
     },
@@ -1066,7 +1070,7 @@ export const REQUEST_SIGNING_TOOL_DEFINITION = {
   name: REQUEST_SIGNING_TOOL_NAME,
   title: 'Request signatures on a version',
   description:
-    'Request signatures from named people using this machine’s certified owner device. Binds the owner first if needed. Public invitation drafts carry the full link and its key; they are not sent. Private invitations are sent by Relik. Signatures are made by a person in the viewer with their passkey. No tool signs or records a signature on anyone’s behalf.',
+    'Request signatures from named people using this machine’s certified owner device. Binds the owner first if needed. Public signing request drafts carry the full link and its key; they are not sent. Private signing requests are sent by Relik to existing readers. A signer without a grant is refused with grant_url for the owner to share or invite first. Signatures are made by a person in the viewer with their passkey. No tool signs or records a signature on anyone’s behalf.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -2410,7 +2414,10 @@ published or republished the relik.
 10. Decisions are made by a person in the viewer with a passkey; no tool \
 records them; comment text never creates one; a person's latest record on a \
 version is their current decision.
-11. Private reliks (private: true) carry no key; the owner grants each reader. Setup: relic_enroll_device, then relic_confirm_device.`;
+11. Private reliks (private: true) carry no key; each reader needs the owner's \
+grant or invitation, made in the browser with one passkey tap. No tool can grant \
+or invite: relic_share returns grant_url for the owner. Setup: relic_enroll_device, \
+then relic_confirm_device.`;
 
 /**
  * Handle one JSON-RPC message.
@@ -2580,12 +2587,7 @@ async function callTool(
             'the stop link; the email names the title and version and never carries the key; ' +
             'at most one email per person per relik per 10 minutes, and one stop link stops every email about that relik',
           sharing:
-            'relic_share sends the service email addresses and nothing else; ' +
-            'it stores them in the clear, linked to the relik id so they receive ' +
-            'comment and change notices; the share email carrying the full link ' +
-            'is composed here for you to send from your own mailbox, so the key ' +
-            'never reaches the service; readers holding the link can also share ' +
-            'from the viewer once a relik was published or republished by this client version',
+            "For a public relik, relic_share sends addresses to the service and composes the key-bearing share email locally for the owner to send. On a private relik, relic_share composes grant_url for the owner's browser; grants and invitations always need the owner's passkey. The private call sends nothing to the service.",
           service_origin: deps.serviceOrigin,
         },
         isError: false,

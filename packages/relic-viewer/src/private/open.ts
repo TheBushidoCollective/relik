@@ -22,6 +22,7 @@ import {
   deviceFingerprint,
   deviceIdOf,
   fingerprintsEqual,
+  type HpkeRecipient,
   type IdentityPublicJSON,
   identityIdOf,
   type KeyJSON,
@@ -43,6 +44,7 @@ import {
 } from '../content.ts';
 import { ciphertextBlob } from './ciphertext-blob.ts';
 import { mint, type MintResponse, type ViewerDeps } from '../viewer.ts';
+import { inviteKeyBody } from './invite-wire.ts';
 import {
   postJson,
   readField,
@@ -350,13 +352,18 @@ export async function verifyVersionKey(
   deps: ViewerDeps,
   relicId: string,
   version: number,
-  identity: UnlockedIdentity
+  identity: UnlockedIdentity,
+  invite?: {
+    readonly inviteId: string;
+    readonly recipient: HpkeRecipient;
+    readonly ownerId: string;
+  }
 ): Promise<VerifiedKey> {
   const keyJson = parseKey(
     await postJson(
       deps,
       `/api/relics/${encodeURIComponent(relicId)}/versions/${version}/key`,
-      {}
+      invite === undefined ? {} : inviteKeyBody(invite.inviteId)
     ),
     relicId,
     version
@@ -368,6 +375,8 @@ export async function verifyVersionKey(
   if ((await identityIdOf(ownerKem, ownerSig)) !== ownerId) {
     throw new SealMismatchError('owner_keys');
   }
+  if (invite !== undefined && invite.ownerId !== ownerId)
+    throw new SealMismatchError('invite_owner');
 
   const pinned = pinnedOwnerFor(relicId);
   if (pinned !== undefined && pinned.identityId !== ownerId) {
@@ -404,7 +413,8 @@ export async function verifyVersionKey(
   // version and the recipient, so unwrapping it proves that the holder of the
   // version key addressed it. The seal is not consulted for membership: a
   // grant made after a version was sealed writes its wrap without re-sealing.
-  const myKeyId = hex(identity.kemKeyId);
+  const myKeyId =
+    invite === undefined ? hex(identity.kemKeyId) : invite.inviteId;
   if (keyJson.wrap.recipient_key_id !== myKeyId) {
     throw new RecipientMissingError('recipient');
   }
@@ -412,7 +422,7 @@ export async function verifyVersionKey(
   let key: Uint8Array;
   try {
     key = await unwrapVersionKey({
-      recipient: recipientOf(identity),
+      recipient: invite?.recipient ?? recipientOf(identity),
       relicId,
       version,
       enc: keyJson.wrap.enc,
@@ -469,10 +479,21 @@ export async function fetchAndDecryptVersion(
   deps: ViewerDeps,
   relicId: string,
   version: number,
-  identity: UnlockedIdentity
+  identity: UnlockedIdentity,
+  invite?: {
+    readonly inviteId: string;
+    readonly recipient: HpkeRecipient;
+    readonly ownerId: string;
+  }
 ): Promise<OpenedVersion> {
-  const verified = await verifyVersionKey(deps, relicId, version, identity);
-  const minted = await mint(relicId, deps, version);
+  const verified = await verifyVersionKey(
+    deps,
+    relicId,
+    version,
+    identity,
+    invite
+  );
+  const minted = await mint(relicId, deps, version, invite?.inviteId);
   if ('dead' in minted) throw new VersionUnavailableError(minted.dead.code);
   const signed: MintResponse = minted.mint;
   if (signed.version !== version) {

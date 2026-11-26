@@ -8,10 +8,12 @@ import {
   MemoryStore,
   type PasskeyCredential,
   type RelicRow,
+  type RelicStore,
 } from '../src/store.ts';
 import { fakeGcs, storeOn } from './fake-gcs.ts';
 import {
   accessEvent,
+  attestation,
   accessRequest,
   DAY,
   GRANTEE_ID,
@@ -45,6 +47,160 @@ function row(overrides: Partial<RelicRow> = {}): RelicRow {
     ...overrides,
   };
 }
+
+test('invitation lifetimes retain their expiry while claim indexes extend under a prefix', async () => {
+  const gcs = fakeGcs();
+  const store = gcsStore({
+    bucket: 'relics',
+    prefix: 'tenant/m',
+    getAccessToken: async () => 'token',
+    host: 'https://gcs.test',
+    fetch: gcs.fetch,
+  });
+  await store.putRelic(privateRelic());
+  const inviteId = 'a'.repeat(64);
+  await store.putInvite({
+    relicId: RELIC_ID,
+    inviteId,
+    ownerIdentityId: OWNER_ID,
+    invitedEmail: 'ada@example.com',
+    invitePublicKey: 'public',
+    versions: [1],
+    expiresAt: NOW + DAY,
+    createdAt: NOW,
+    status: 'open',
+    wraps: [],
+    attestation: attestation(),
+  });
+  await store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, inviteId);
+  await store.putWrap(wrap(RECIPIENT_A, 1));
+  const invitePath = `tenant/m/invite/${RELIC_ID}/${inviteId}.json`;
+  const claimPath = `tenant/m/invite-claim/${RELIC_ID}/${GRANTEE_ID}.json`;
+  const wrapPath = `tenant/m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+  expect(gcs.objects.get(invitePath)?.customTime).toBe(
+    new Date(NOW + DAY).toISOString()
+  );
+  await store.updateInvite(RELIC_ID, inviteId, (invite) => ({
+    ...invite,
+    wraps: [],
+  }));
+  expect(gcs.objects.get(invitePath)?.customTime).toBe(
+    new Date(NOW + DAY).toISOString()
+  );
+  await store.extendPrivateLifetime(RELIC_ID, NOW + 40 * DAY);
+  expect(gcs.objects.get(invitePath)?.customTime).toBe(
+    new Date(NOW + DAY).toISOString()
+  );
+  expect(gcs.objects.get(claimPath)?.customTime).toBe(
+    new Date(NOW + 40 * DAY).toISOString()
+  );
+  expect(gcs.objects.get(wrapPath)?.customTime).toBe(
+    new Date(NOW + 40 * DAY).toISOString()
+  );
+  await store.deleteInvitesForRelic(RELIC_ID);
+  await store.deleteInviteClaimsForRelic(RELIC_ID);
+  await store.deleteWraps(RELIC_ID, {});
+  expect(gcs.objects.has(invitePath)).toBe(false);
+  expect(gcs.objects.has(claimPath)).toBe(false);
+  expect(gcs.objects.has(wrapPath)).toBe(false);
+});
+
+test('operator deletion removes invitation, claim and wrap objects under a prefix', async () => {
+  const gcs = fakeGcs();
+  const store = gcsStore({
+    bucket: 'relics',
+    prefix: 'tenant/m',
+    getAccessToken: async () => 'token',
+    host: 'https://gcs.test',
+    fetch: gcs.fetch,
+  });
+  await store.putRelic(privateRelic());
+  const inviteId = 'a'.repeat(64);
+  await store.putInvite({
+    relicId: RELIC_ID,
+    inviteId,
+    ownerIdentityId: OWNER_ID,
+    invitedEmail: 'ada@example.com',
+    invitePublicKey: 'public',
+    versions: [1],
+    expiresAt: NOW + DAY,
+    createdAt: NOW,
+    status: 'open',
+    wraps: [],
+    attestation: attestation(),
+  });
+  await store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, inviteId);
+  await store.putWrap(wrap(RECIPIENT_A, 1));
+  const storage = new MemoryStorage();
+  storage.put(RELIC_ID, new Uint8Array([1, 2, 3]));
+  const app = createApp({
+    store,
+    storage,
+    now: () => NOW,
+    operatorTokens: new Map([['test', 'secret']]),
+  });
+  const response = await app.fetch(
+    new Request(`https://relic.example/api/relics/${RELIC_ID}`, {
+      method: 'DELETE',
+      headers: { authorization: 'Bearer secret' },
+    })
+  );
+  expect(response.status).toBe(200);
+  expect(await store.listInvites(RELIC_ID)).toEqual([]);
+  expect(await store.getInviteClaimIndex(RELIC_ID, GRANTEE_ID)).toBeUndefined();
+  expect(await store.listWraps(RELIC_ID)).toEqual([]);
+});
+
+test.each(['memory', 'gcs'] as const)(
+  'conditional grant rollback and claim index on %s',
+  async (backend) => {
+    const fake = fakeGcs();
+    const store = backend === 'memory' ? new MemoryStore() : storeOn(fake);
+    await store.putRelic(privateRelic());
+    await store.putGrant(grant());
+    expect(await store.deleteGrantIf(RELIC_ID, GRANTEE_ID, () => false)).toBe(
+      false
+    );
+    expect(await store.getGrant(RELIC_ID, GRANTEE_ID)).toBeDefined();
+    expect(await store.deleteGrantIf(RELIC_ID, GRANTEE_ID, () => true)).toBe(
+      true
+    );
+    expect(await store.getGrant(RELIC_ID, GRANTEE_ID)).toBeUndefined();
+    expect(await store.listGrantsForGrantee(GRANTEE_ID)).toEqual([]);
+    if (backend === 'gcs') {
+      expect(
+        fake.objects.has(`m/grant-by-grantee/${GRANTEE_ID}/${RELIC_ID}.json`)
+      ).toBe(true);
+    }
+    await Promise.all([
+      store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, '1'.repeat(64)),
+      store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, '2'.repeat(64)),
+      store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, '1'.repeat(64)),
+    ]);
+    const index = await store.getInviteClaimIndex(RELIC_ID, GRANTEE_ID);
+    expect([...(index?.inviteIds ?? [])].sort()).toEqual([
+      '1'.repeat(64),
+      '2'.repeat(64),
+    ]);
+  }
+);
+
+test('a failed grant index write does not erase a concurrently revoked row', async () => {
+  const fake = fakeGcs();
+  const store = storeOn(fake);
+  await store.putRelic(privateRelic());
+  const index = `m/grant-by-grantee/${GRANTEE_ID}/${RELIC_ID}.json`;
+  fake.beforeNextUpload(index, async () => {
+    await store.updateGrant(RELIC_ID, GRANTEE_ID, (current) => ({
+      ...current,
+      revokedAt: NOW,
+      revocation: attestation(),
+    }));
+    throw new Error('index unavailable');
+  });
+  await expect(store.putGrant(grant())).rejects.toThrow('index unavailable');
+  expect((await store.getGrant(RELIC_ID, GRANTEE_ID))?.revokedAt).toBe(NOW);
+});
 
 describe('gcsStore', () => {
   test('a relik survives being written and read back', async () => {
@@ -2214,5 +2370,124 @@ describe('gcsStore private-share objects', () => {
       operator: 'jason',
       reasonClass: 'abuse',
     });
+  });
+});
+
+test('a claimed invitation receives the relik lifetime and keeps it after revocation', async () => {
+  const gcs = fakeGcs();
+  const store = gcsStore({
+    bucket: 'relics',
+    prefix: 'tenant/m',
+    getAccessToken: async () => 'token',
+    host: 'https://gcs.test',
+    fetch: gcs.fetch,
+  });
+  await store.putRelic(privateRelic());
+  const inviteId = 'a'.repeat(64);
+  await store.putInvite({
+    relicId: RELIC_ID,
+    inviteId,
+    ownerIdentityId: OWNER_ID,
+    invitedEmail: 'ada@example.com',
+    invitePublicKey: 'public',
+    versions: [1],
+    expiresAt: NOW + DAY,
+    createdAt: NOW,
+    status: 'open',
+    wraps: [],
+    attestation: attestation(),
+  });
+  const path = `tenant/m/invite/${RELIC_ID}/${inviteId}.json`;
+  await store.updateInvite(RELIC_ID, inviteId, (invite) => ({
+    ...invite,
+    status: 'claimed',
+    claimedAt: NOW,
+    claimantIdentityId: GRANTEE_ID,
+  }));
+  expect(gcs.objects.get(path)?.customTime).toBe(
+    new Date(NOW + 30 * DAY).toISOString()
+  );
+  await store.updateInvite(RELIC_ID, inviteId, (invite) => ({
+    ...invite,
+    status: 'revoked',
+    revokedAt: NOW,
+  }));
+  expect(gcs.objects.get(path)?.customTime).toBe(
+    new Date(NOW + 30 * DAY).toISOString()
+  );
+  await store.extendPrivateLifetime(RELIC_ID, NOW + 40 * DAY);
+  expect(gcs.objects.get(path)?.customTime).toBe(
+    new Date(NOW + 40 * DAY).toISOString()
+  );
+});
+
+describe('conditional wrap primitives', () => {
+  test.each(['memory', 'gcs'] as const)(
+    'replaces only an older wrap and deletes only a judged one (%s)',
+    async (backend) => {
+      const store: RelicStore =
+        backend === 'memory' ? new MemoryStore() : storeOn(fakeGcs());
+      await store.putRelic(privateRelic());
+      await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
+      expect(
+        await store.replaceWrapIf(
+          { ...wrap(RECIPIENT_A, 1), enc: 'later', epoch: 3 },
+          (current) => (current.epoch ?? 0) < 1
+        )
+      ).toBe(false);
+      expect(
+        await store.replaceWrapIf(
+          { ...wrap(RECIPIENT_A, 1), enc: 'later', epoch: 3 },
+          (current) => (current.epoch ?? 0) < 3
+        )
+      ).toBe(true);
+      expect(
+        await store.deleteWrapIf(
+          RELIC_ID,
+          1,
+          RECIPIENT_A,
+          (current) => (current.epoch ?? 0) <= 1
+        )
+      ).toBe(false);
+      expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.enc).toBe(
+        'later'
+      );
+      expect(
+        await store.deleteWrapIf(
+          RELIC_ID,
+          1,
+          RECIPIENT_A,
+          (current) => (current.epoch ?? 0) <= 3
+        )
+      ).toBe(true);
+      expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toBeUndefined();
+    }
+  );
+
+  test('a delete that loses a race to a replacement judges the replacement, not the wrap it read', async () => {
+    const fake = fakeGcs();
+    const store = storeOn(fake);
+    await store.putRelic(privateRelic());
+    await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
+    fake.beforeNextDelete(
+      `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`,
+      async () => {
+        expect(
+          await store.replaceWrapIf(
+            { ...wrap(RECIPIENT_A, 1), enc: 'later', epoch: 3 },
+            (current) => (current.epoch ?? 0) < 3
+          )
+        ).toBe(true);
+      }
+    );
+    expect(
+      await store.deleteWrapIf(
+        RELIC_ID,
+        1,
+        RECIPIENT_A,
+        (current) => (current.epoch ?? 0) <= 1
+      )
+    ).toBe(false);
+    expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.enc).toBe('later');
   });
 });

@@ -341,6 +341,14 @@ export function mountSigning(input: {
         content,
         signingKey,
         private: view.access === 'private',
+        ...(view.signingIdentity === undefined
+          ? {}
+          : {
+              owner: {
+                identityId: view.signingIdentity.identityId,
+                email: view.signingIdentity.email,
+              },
+            }),
         grants,
         pdf: view.route === 'pdf',
         stage: input.stage,

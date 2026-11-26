@@ -58,11 +58,28 @@ export function setChildren(
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ICON_PATHS: Readonly<
-  Record<'check' | 'warn' | 'cross', readonly string[]>
+  Record<
+    'check' | 'warn' | 'cross' | 'clock' | 'user' | 'users',
+    readonly string[]
+  >
 > = {
   check: ['M3.5 8.5l3 3 6-6.5'],
   warn: ['M8 2.5l6 11H2z', 'M8 6.5v3', 'M8 11.6v.4'],
   cross: ['M4 4l8 8', 'M12 4l-8 8'],
+  clock: [
+    'M8 2.2a5.8 5.8 0 1 1 0 11.6a5.8 5.8 0 1 1 0-11.6z',
+    'M8 4.6V8l2.4 1.6',
+  ],
+  user: [
+    'M8 2.8a2.6 2.6 0 1 1 0 5.2a2.6 2.6 0 1 1 0-5.2z',
+    'M2.8 14c.6-2.8 2.6-4.2 5.2-4.2s4.6 1.4 5.2 4.2',
+  ],
+  users: [
+    'M6 3.3a2.3 2.3 0 1 1 0 4.6a2.3 2.3 0 1 1 0-4.6z',
+    'M1.8 13.5c.5-2.5 2.1-3.7 4.2-3.7s3.7 1.2 4.2 3.7',
+    'M10.6 3.6a2.2 2.2 0 0 1 0 4.2',
+    'M12.2 9.9c1 .5 1.7 1.7 2 3.6',
+  ],
 };
 
 /** A small inline icon. The paths are fixed here, never taken from input. */
@@ -148,6 +165,20 @@ export function problemMessage(error: unknown): string {
   if (error instanceof VerificationRefusedError) return error.message;
   if (error instanceof PrivateApiError) {
     switch (error.code) {
+      case 'grant_exists':
+        return 'This person can already read this relik.';
+      case 'invite_not_found':
+        return 'No such invitation.';
+      case 'invite_claimed':
+        return 'This invitation was already used.';
+      case 'invite_expired':
+        return 'This invitation expired.';
+      case 'invite_revoked':
+        return 'This invitation was withdrawn.';
+      case 'invite_limit_reached':
+        return 'This relik has too many open invitations.';
+      case 'identity_exists':
+        return 'This person now has a private-share key. Look them up again.';
       case 'fingerprint_mismatch':
         return 'The fingerprint does not match. Nothing was granted.';
       case 'grant_stale_version':

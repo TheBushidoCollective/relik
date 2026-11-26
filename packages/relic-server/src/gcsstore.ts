@@ -38,6 +38,8 @@ import {
   type DeviceEnrollmentRow,
   type DeviceRecord,
   type GrantRow,
+  type InviteClaimIndex,
+  type InviteRow,
   type IdentityRecord,
   type KemHolder,
   looksLikeEmail,
@@ -709,6 +711,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         'wrap',
         'seal',
         'grant',
+        'invite-claim',
         'access-request',
         'settings',
         'signing',
@@ -719,6 +722,10 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       for (const kind of scoped) {
         for (const name of await listObjectNames(`${key(kind, id)}/`))
           names.add(name);
+      }
+      for (const invite of await list<InviteRow>(`${key('invite', id)}/`)) {
+        if (invite.claimedAt !== undefined)
+          names.add(key('invite', id, `${invite.inviteId}.json`));
       }
       for (const kind of reverse) {
         for (const name of await listObjectNames(`${key(kind)}/`)) {
@@ -2116,6 +2123,55 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       return doomed.length;
     },
 
+    /**
+     * Replaces the wrap at this row's name when `matches` holds for the wrap
+     * there now. The write is conditional on the generation read, so a write
+     * that lands in between is judged again.
+     */
+    async replaceWrapIf(
+      row: WrapRow,
+      matches: (current: WrapRow) => boolean
+    ): Promise<boolean> {
+      const name = key(
+        'wrap',
+        row.relicId,
+        String(row.version),
+        `${row.recipientKeyId}.json`
+      );
+      const customTime = await privateCustomTime(row.relicId);
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<WrapRow>(name);
+        if (current === undefined || !matches(current.value)) return false;
+        if (await put(name, row, current.generation, customTime)) return true;
+      }
+      throw new Error(`gcs wrap lost ${casAttempts} compare-and-swap races`);
+    },
+
+    /**
+     * Deletes the wrap at this name when `matches` holds for it. The delete is
+     * conditional on the generation it judged, so a concurrent write makes it
+     * judge again and no wrap is removed unjudged.
+     */
+    async deleteWrapIf(
+      relicId: string,
+      version: number,
+      recipientKeyId: string,
+      matches: (current: WrapRow) => boolean
+    ): Promise<boolean> {
+      const name = key(
+        'wrap',
+        relicId,
+        String(version),
+        `${recipientKeyId}.json`
+      );
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<WrapRow>(name);
+        if (current === undefined || !matches(current.value)) return false;
+        if (await remove(name, current.generation)) return true;
+      }
+      throw new Error(`gcs wrap lost ${casAttempts} compare-and-swap races`);
+    },
+
     async putSeal(row: SealRow): Promise<boolean> {
       return put(
         key('seal', row.relicId, `${row.version}.json`),
@@ -2166,7 +2222,14 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           customTime
         );
       } catch (error) {
-        await remove(grantName);
+        const current = await get<GrantRow>(grantName);
+        if (
+          current !== undefined &&
+          current.value.attestation.nonce === row.attestation.nonce &&
+          current.value.revokedAt === undefined
+        ) {
+          await remove(grantName, current.generation);
+        }
         throw error;
       }
       return true;
@@ -2211,6 +2274,16 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       await removeGrant(relicId, granteeIdentityId);
     },
 
+    async deleteGrantIf(
+      relicId: string,
+      granteeIdentityId: string,
+      matches: (r: GrantRow) => boolean
+    ): Promise<boolean> {
+      const name = key('grant', relicId, `${granteeIdentityId}.json`);
+      const current = await get<GrantRow>(name);
+      if (current === undefined || !matches(current.value)) return false;
+      return remove(name, current.generation);
+    },
     async deleteGrantsForRelic(relicId: string): Promise<number> {
       const prefixUnder = `${key('grant', relicId)}/`;
       const names = await listObjectNames(prefixUnder);
@@ -2220,6 +2293,104 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           .replace(/\.json$/, '');
         await removeGrant(relicId, granteeIdentityId);
       }
+      return names.length;
+    },
+
+    /**
+     * Create-only. The initial `customTime` is the invitation expiry, already
+     * capped by relik expiry. A claim moves it to the relik expiry.
+     */
+    async putInvite(row: InviteRow): Promise<boolean> {
+      return put(
+        key('invite', row.relicId, `${row.inviteId}.json`),
+        row,
+        '0',
+        new Date(row.expiresAt).toISOString()
+      );
+    },
+
+    async getInvite(
+      relicId: string,
+      inviteId: string
+    ): Promise<InviteRow | undefined> {
+      return (await get<InviteRow>(key('invite', relicId, `${inviteId}.json`)))
+        ?.value;
+    },
+
+    async listInvites(relicId: string): Promise<readonly InviteRow[]> {
+      const rows = await list<InviteRow>(`${key('invite', relicId)}/`);
+      return [...rows].sort(
+        (a, b) =>
+          a.createdAt - b.createdAt || (a.inviteId < b.inviteId ? -1 : 1)
+      );
+    },
+
+    async updateInvite(
+      relicId: string,
+      inviteId: string,
+      change: (r: InviteRow) => InviteRow
+    ): Promise<InviteRow | undefined> {
+      const name = key('invite', relicId, `${inviteId}.json`);
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<InviteRow>(name);
+        if (current === undefined) return undefined;
+        const next = change(current.value);
+        const customTime =
+          next.claimedAt !== undefined || current.value.claimedAt !== undefined
+            ? await privateCustomTime(relicId)
+            : new Date(current.value.expiresAt).toISOString();
+        if (await put(name, next, current.generation, customTime)) return next;
+      }
+      throw new Error(`gcs invite lost ${casAttempts} compare-and-swap races`);
+    },
+
+    async deleteInvite(relicId: string, inviteId: string): Promise<void> {
+      await remove(key('invite', relicId, `${inviteId}.json`));
+    },
+
+    async deleteInvitesForRelic(relicId: string): Promise<number> {
+      const names = await listObjectNames(`${key('invite', relicId)}/`);
+      for (const name of names) await remove(name);
+      return names.length;
+    },
+
+    async addInviteClaimIndex(
+      relicId: string,
+      identityId: string,
+      inviteId: string
+    ): Promise<void> {
+      const name = key('invite-claim', relicId, `${identityId}.json`);
+      const customTime = await privateCustomTime(relicId);
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<InviteClaimIndex>(name);
+        if (current?.value.inviteIds.includes(inviteId)) return;
+        const next: InviteClaimIndex = {
+          relicId,
+          identityId,
+          inviteIds: [...(current?.value.inviteIds ?? []), inviteId],
+        };
+        if (await put(name, next, current?.generation ?? '0', customTime))
+          return;
+      }
+      throw new Error(
+        `gcs invite claim index lost ${casAttempts} compare-and-swap races`
+      );
+    },
+
+    async getInviteClaimIndex(
+      relicId: string,
+      identityId: string
+    ): Promise<InviteClaimIndex | undefined> {
+      return (
+        await get<InviteClaimIndex>(
+          key('invite-claim', relicId, `${identityId}.json`)
+        )
+      )?.value;
+    },
+
+    async deleteInviteClaimsForRelic(relicId: string): Promise<number> {
+      const names = await listObjectNames(`${key('invite-claim', relicId)}/`);
+      for (const name of names) await remove(name);
       return names.length;
     },
 

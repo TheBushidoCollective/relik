@@ -30,6 +30,9 @@ import {
   generateIdentityKeys,
   identityFingerprint,
   identityIdOf,
+  generateInviteKeyPair,
+  inviteFragment,
+  inviteIdOf,
   type IdentityKeys,
   kemKeyIdOf,
   keyCommitment,
@@ -260,6 +263,8 @@ interface WorldOptions {
   readonly tamperCiphertext?: boolean;
   /** The wrap carries a key the service chose, not the one the owner sealed. */
   readonly substituteKey?: boolean;
+  /** The wrap is addressed to an invitation's key, not the reader's. */
+  readonly invite?: { readonly publicKey: Uint8Array };
   readonly role?: string;
   /** The seal is signed by a device the owner certified, not by the owner. */
   readonly device?: {
@@ -413,9 +418,12 @@ async function sealedWorld(
     : signed;
 
   const wrappedKey = options.substituteKey ? randomBytes(KEY_BYTES) : key;
-  const wrapRecipient = options.wrapToOtherKey
-    ? (await generateIdentityKeys()).kemPublicKey
-    : reader.kemPublicKey;
+  const wrapRecipient =
+    options.invite !== undefined
+      ? options.invite.publicKey
+      : options.wrapToOtherKey
+        ? (await generateIdentityKeys()).kemPublicKey
+        : reader.kemPublicKey;
   const wrap = await wrapVersionKey({
     recipientPublicKey: wrapRecipient,
     relicId,
@@ -2664,4 +2672,470 @@ describe('a version key the seal does not commit to is refused before use', () =
     const { key } = await fetchVersionKey(deps, relicId, 1, identity);
     expect(Array.from(key)).toEqual(Array.from(world.key));
   });
+});
+
+// ---------------------------------------------------------------------------
+// The invitee: an address-bound invitation, read and kept (plan 5.2).
+// ---------------------------------------------------------------------------
+
+interface Invitation {
+  readonly world: Sealed;
+  readonly inviteId: string;
+  readonly d: Uint8Array;
+  readonly open: Record<string, unknown>;
+}
+
+/** The owner's signed invitation to the reader's address, over the sealed world's version 1. */
+async function invitationFor(
+  relicId: string,
+  status = 'open',
+  signedVersions: number[] = [1]
+): Promise<Invitation> {
+  const pair = await generateInviteKeyPair();
+  const inviteId = await inviteIdOf(pair.publicKey);
+  const world = await sealedWorld(relicId, {
+    invite: { publicKey: pair.publicKey },
+  });
+  const expiresAt = NOW + 7 * 86_400_000;
+  const statement = {
+    at: NOW,
+    expires_at: expiresAt,
+    invite_public_key: encodeBase64url(pair.publicKey),
+    invited_email: READER_EMAIL,
+    owner_identity_id: world.ownerId,
+    relic_id: relicId,
+    versions: signedVersions,
+  };
+  const identity_signature = await signStatement(
+    async (message) =>
+      new Uint8Array(
+        await crypto.subtle.sign(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          world.owner.sig.privateKey,
+          new Uint8Array(message)
+        )
+      ),
+    statementBytes('invite', parseStatement('invite', statement))
+  );
+  return {
+    world,
+    inviteId,
+    d: pair.d,
+    open: {
+      relic_id: relicId,
+      invite_id: inviteId,
+      status,
+      expires_at: new Date(expiresAt).toISOString(),
+      versions: [1],
+      sealed_version: 1,
+      owner: {
+        email: 'sam@example.com',
+        identity: {
+          identity_id: world.ownerId,
+          email: 'sam@example.com',
+          kem_public_key: encodeBase64url(world.owner.kemPublicKey),
+          sig_public_key: encodeBase64url(world.owner.sigPublicKey),
+          created_at: '2026-11-01T00:00:00Z',
+          retired_at: null,
+        },
+      },
+      invite: { statement, identity_signature },
+      claimed_by_identity_id: null,
+    },
+  };
+}
+
+/** The invitee's service: the invitation routes, and a session that a code sign-in turns on. */
+function inviteeService(
+  inv: Invitation,
+  relicId: string,
+  options: { readonly signedIn: boolean; readonly openStatus?: number }
+): { readonly fetch: typeof globalThis.fetch; readonly seen: Recorded[] } {
+  let session = options.signedIn;
+  const route = `/api/relics/${relicId}/invites/${inv.inviteId}`;
+  return service({
+    ...inv.world.routes,
+    'GET /api/auth/session': () =>
+      json(session ? { email: READER_EMAIL } : { email: null }),
+    'POST /api/auth/request': () => new Response(null, { status: 202 }),
+    'POST /api/auth/code': () => {
+      session = true;
+      return json({ email: READER_EMAIL });
+    },
+    [`POST ${route}/open`]: () =>
+      options.openStatus === undefined
+        ? json(inv.open)
+        : json({ code: 'invite_not_found' }, options.openStatus),
+    [`POST ${route}/claim`]: () => json({ status: 'claimed' }, 201),
+  });
+}
+
+function inviteeDeps(
+  inv: Invitation,
+  relicId: string,
+  fetch: typeof globalThis.fetch,
+  fragment: string,
+  onStrip: () => void
+): ViewerDeps {
+  const credentials = authenticator(() =>
+    assertion(inv.world.readerPasskey.rawId, inv.world.readerPasskey.prf)
+  );
+  return {
+    ...depsFor(fetch, credentials),
+    locationHref: `${ORIGIN}/${relicId}?invite=${inv.inviteId}${fragment}`,
+    stripFragment: onStrip,
+  };
+}
+
+/** Asks for a code and submits it through the reader's own form, as a visitor would. */
+async function signInByCode(root: El): Promise<void> {
+  const emailInput = root.querySelector('#signin-email');
+  const codeForm = root.querySelector('#signin-code-form');
+  if (emailInput === null || codeForm === null)
+    throw new Error('no sign-in form');
+  emailInput.value = READER_EMAIL;
+  root.querySelector('#signin-email-form')?.dispatch('submit');
+  await until(() => codeForm.hidden === false, 'the code form');
+  const codeInput = root.querySelector('#signin-code');
+  if (codeInput === null) throw new Error('no code input');
+  codeInput.value = '402817';
+  root.querySelector('#signin-code-form')?.dispatch('submit');
+}
+
+describe('the invitee reads an address-bound invitation', () => {
+  test('signs in by code, reads the listed version view-only, and no request carries the key', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId);
+    const { fetch, seen } = inviteeService(inv, relicId, { signedIn: false });
+    let stripped = 0;
+    const deps = inviteeDeps(
+      inv,
+      relicId,
+      fetch,
+      `#${inviteFragment(inv.d)}`,
+      () => {
+        stripped += 1;
+      }
+    );
+    const { root, views } = await mountReader(deps, relicId);
+
+    expect(stateOf(root)).toBe('invite-signin');
+    expect(
+      stageOf(root, 'signin').querySelector('.card-title')?.textContent
+    ).toBe("You're invited to a private relik");
+    expect(stripped).toBe(1);
+    expect(seen[0]?.route).toBe('GET /api/auth/session');
+
+    await signInByCode(root);
+    await until(() => views.length === 1, 'the invitation ready view');
+    const view = views[0];
+    if (view === undefined) throw new Error('no view');
+    expect(view.viewOnly).toBe(true);
+    expect(view.manage).toBe(false);
+    expect(view.signingIdentity).toBeUndefined();
+    expect(view.settings).toBeUndefined();
+    expect(Array.from((await view.keyFor?.(1)) ?? [])).toEqual(
+      Array.from(inv.world.key)
+    );
+    expect(root.querySelector('[data-invite-banner]')).not.toBeNull();
+    expect(
+      seen.some(
+        (request) =>
+          request.route ===
+          `POST /api/relics/${relicId}/invites/${inv.inviteId}/open`
+      )
+    ).toBe(true);
+    const keyText = encodeBase64url(inv.d);
+    for (const request of seen)
+      expect(request.text.includes(keyText)).toBe(false);
+  });
+
+  test('opens surviving versions within the owner-signed scope', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId, 'open', [1, 2]);
+    const { fetch } = inviteeService(inv, relicId, { signedIn: true });
+    const { views } = await mountReader(
+      inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}),
+      relicId
+    );
+    expect(views).toHaveLength(1);
+    expect(views[0]?.version).toBe(1);
+  });
+
+  test('refuses an unsigned change to the displayed invitation expiry', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId);
+    inv.open['expires_at'] = new Date(NOW + 60 * 86_400_000).toISOString();
+    const { fetch } = inviteeService(inv, relicId, { signedIn: true });
+    const { root, views } = await mountReader(
+      inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}),
+      relicId
+    );
+    expect(views).toHaveLength(0);
+    expect(stateOf(root)).toBe('invite-damaged');
+  });
+
+  test('Keep access creates the first passkey then claims without another assertion', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId);
+    let signedIn = false;
+    let created = false;
+    let assertions = 0;
+    let registeredKey = '';
+    const route = `/api/relics/${relicId}/invites/${inv.inviteId}`;
+    const { fetch, seen } = service({
+      ...inv.world.routes,
+      'GET /api/auth/session': () =>
+        json({ email: signedIn ? READER_EMAIL : null }),
+      'POST /api/auth/request': () => new Response(null, { status: 202 }),
+      'POST /api/auth/code': () => {
+        signedIn = true;
+        return json({ email: READER_EMAIL });
+      },
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+      'POST /api/attest/nonce': () =>
+        created
+          ? json(nonceResponse(inv.world.readerPasskey.rawId))
+          : json({ code: 'passkey_required' }, 409),
+      'POST /api/auth/passkeys/options': () => json(creationOptions()),
+      'POST /api/auth/passkeys': () => {
+        created = true;
+        return json({ credential_id: 'created' }, 201);
+      },
+      'POST /api/identity': (body) => {
+        const registration = body as {
+          attestation: {
+            statements: { statement: { sig_public_key: string } }[];
+          };
+        };
+        registeredKey =
+          registration.attestation.statements[0]!.statement.sig_public_key;
+        return json({ identity: {} }, 201);
+      },
+      [`POST ${route}/open`]: () => json(inv.open),
+      [`POST ${route}/claim`]: () => json({ status: 'claimed' }, 201),
+    });
+    const deps = {
+      ...inviteeDeps(
+        inv,
+        relicId,
+        fetch,
+        `#${inviteFragment(inv.d)}`,
+        () => {}
+      ),
+      credentials: authenticator(() => {
+        assertions++;
+        return assertion(
+          inv.world.readerPasskey.rawId,
+          inv.world.readerPasskey.prf
+        );
+      }),
+    };
+    const { root, views } = await mountReader(deps, relicId);
+    await signInByCode(root);
+    await until(() => views.length === 1, 'invitation ready');
+    press(root, '[data-action="invite-keep"]');
+    await until(
+      () => stateOf(root) === 'invite-claimed',
+      'claim after first passkey'
+    );
+    const claim = seen.find((item) => item.route === `POST ${route}/claim`);
+    if (!claim) throw new Error('missing claim');
+    const body = JSON.parse(claim.text) as {
+      statement: Record<string, unknown>;
+      identity_signature: string;
+      wraps: unknown[];
+    };
+    expect(
+      await verifyStatement(
+        decodeBase64url(registeredKey),
+        statementBytes(
+          'invite_claim',
+          parseStatement('invite_claim', body.statement)
+        ),
+        body.identity_signature
+      )
+    ).toBe(true);
+    expect(body.wraps).toHaveLength(1);
+    expect(assertions).toBe(1);
+  });
+
+  test('reopening a claimed invitation as the same identity resumes normal access', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId, 'claimed');
+    inv.open['claimed_by_identity_id'] = inv.world.readerId;
+    const { fetch } = inviteeService(inv, relicId, { signedIn: true });
+    const { root } = await mountReader(
+      inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}),
+      relicId
+    );
+    expect(stateOf(root)).toBe('unlock');
+  });
+  test('Keep access claims the listed version with a signed invite_claim re-wrapped to the reader', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId);
+    const { fetch, seen } = inviteeService(inv, relicId, { signedIn: false });
+    const deps = inviteeDeps(
+      inv,
+      relicId,
+      fetch,
+      `#${inviteFragment(inv.d)}`,
+      () => {}
+    );
+    const { root, views } = await mountReader(deps, relicId);
+    await signInByCode(root);
+    await until(() => views.length === 1, 'the invitation ready view');
+
+    press(root, '[data-action="invite-keep"]');
+    await until(() => stateOf(root) === 'invite-claimed', 'the claimed stage');
+
+    const claim = seen.find(
+      (request) =>
+        request.route ===
+        `POST /api/relics/${relicId}/invites/${inv.inviteId}/claim`
+    );
+    if (claim === undefined) throw new Error('no claim request');
+    const body = JSON.parse(claim.text) as {
+      statement: Record<string, unknown>;
+      identity_signature: string;
+      wraps: { recipient_key_id: string; version: number }[];
+    };
+    expect(body.statement['claimant_identity_id']).toBe(inv.world.readerId);
+    expect(body.statement['versions']).toEqual([1]);
+    const bytes = statementBytes(
+      'invite_claim',
+      parseStatement('invite_claim', body.statement)
+    );
+    expect(
+      await verifyStatement(
+        inv.world.reader.sigPublicKey,
+        bytes,
+        body.identity_signature
+      )
+    ).toBe(true);
+    expect(body.wraps.map((wrap) => wrap.version)).toEqual([1]);
+    expect(body.wraps[0]?.recipient_key_id).toBe(
+      hex(await kemKeyIdOf(inv.world.reader.kemPublicKey))
+    );
+    expect(
+      stageOf(root, 'invite-claimed').querySelector('[data-invite-versions]')
+        ?.textContent
+    ).toBe('1');
+  });
+
+  test('Keep access remains single-flight after a reader redraw', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId);
+    const service = inviteeService(inv, relicId, { signedIn: false });
+    const held = Promise.withResolvers<Response>();
+    let claims = 0;
+    const fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/claim')) {
+          claims++;
+          return held.promise;
+        }
+        return service.fetch(input, init);
+      },
+      { preconnect: () => {} }
+    ) as typeof globalThis.fetch;
+    const mounted = await mountReader(
+      inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}),
+      relicId
+    );
+    await signInByCode(mounted.root);
+    await until(() => mounted.views.length === 1, 'invite ready');
+    press(mounted.root, '[data-action="invite-keep"]');
+    await until(() => claims === 1, 'first claim');
+    mounted.reRender();
+    expect(
+      mounted.root.querySelector('[data-action="invite-keep"]')?.disabled
+    ).toBe(true);
+    press(mounted.root, '[data-action="invite-keep"]');
+    held.resolve(json({ status: 'claimed' }, 201));
+    await until(
+      () => stateOf(mounted.root) === 'invite-claimed',
+      'claim complete'
+    );
+    expect(claims).toBe(1);
+  });
+
+  test('a sign-in older than fifteen minutes is asked again before Keep access, and nothing is claimed', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId);
+    const { fetch, seen } = inviteeService(inv, relicId, { signedIn: true });
+    const deps = inviteeDeps(
+      inv,
+      relicId,
+      fetch,
+      `#${inviteFragment(inv.d)}`,
+      () => {}
+    );
+    const { root, views } = await mountReader(deps, relicId);
+    await until(() => views.length === 1, 'the invitation ready view');
+
+    press(root, '[data-action="invite-keep"]');
+    await until(() => stateOf(root) === 'invite-signin', 'a new sign-in');
+    // The passkey sign-in mounted here writes its own outcome to the same note,
+    // so the copy is asserted in the copy tests, not here.
+    expect(seen.some((request) => request.route.endsWith('/claim'))).toBe(
+      false
+    );
+  });
+
+  test('a link without its key opens the key-missing stage and makes no request', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId);
+    const { fetch, seen } = inviteeService(inv, relicId, { signedIn: true });
+    const deps = inviteeDeps(inv, relicId, fetch, '', () => {});
+    const { root } = await mountReader(deps, relicId);
+    expect(stateOf(root)).toBe('invite-key-missing');
+    expect(seen).toEqual([]);
+  });
+
+  test('an address that is not invited, and a bogus id, get the same refusal', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId);
+    const { fetch } = inviteeService(inv, relicId, {
+      signedIn: true,
+      openStatus: 404,
+    });
+    const deps = inviteeDeps(
+      inv,
+      relicId,
+      fetch,
+      `#${inviteFragment(inv.d)}`,
+      () => {}
+    );
+    const { root } = await mountReader(deps, relicId);
+    expect(stateOf(root)).toBe('invite-wrong-address');
+    expect(
+      stageOf(root, 'invite-wrong-address').querySelector(
+        '[data-invite-address]'
+      )?.textContent
+    ).toBe(READER_EMAIL);
+  });
+
+  const states: readonly (readonly [string, string])[] = [
+    ['expired', 'invite-expired'],
+    ['revoked', 'invite-withdrawn'],
+    ['claimed', 'invite-used'],
+  ];
+  for (const [status, stage] of states) {
+    test(`an invitation that is ${status} shows ${stage}`, async () => {
+      const relicId = freshRelicId();
+      const inv = await invitationFor(relicId, status);
+      const { fetch } = inviteeService(inv, relicId, { signedIn: true });
+      const deps = inviteeDeps(
+        inv,
+        relicId,
+        fetch,
+        `#${inviteFragment(inv.d)}`,
+        () => {}
+      );
+      const { root, views } = await mountReader(deps, relicId);
+      expect(views).toEqual([]);
+      expect(stateOf(root)).toBe(stage);
+    });
+  }
 });

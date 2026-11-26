@@ -12,8 +12,8 @@ import type {
   AccessRequestRow,
   GrantRow,
   IdentityRecord,
+  InviteRow,
   RelicRow,
-  WrapRow,
 } from '../store.ts';
 import { ProblemError } from '../problems.ts';
 import { DAY_MS, type PrivateEnv, sameString, sha256Hex } from './context.ts';
@@ -26,14 +26,23 @@ export type AccessRole =
   | 'revoked'
   | 'requested'
   | 'declined'
+  | 'invited'
   | 'none';
 
-/** The roles that may open a version. A wrap alone is never authority (plan 4.12). */
-const READABLE_ROLES: Partial<Record<AccessRole, true>> = {
-  owner: true,
-  grantee: true,
-  recovery: true,
-};
+export interface ServedWrap {
+  readonly recipientKeyId: string;
+  readonly version: number;
+  readonly enc: string;
+  readonly ct: string;
+}
+
+/** Grants include their selected versions and all subsequently sealed versions. */
+export function grantCovers(grant: GrantRow, version: number): boolean {
+  return (
+    grant.versions.length > 0 &&
+    (grant.versions.includes(version) || version > Math.max(...grant.versions))
+  );
+}
 export interface Standing {
   readonly role: AccessRole;
   readonly grant?: GrantRow;
@@ -63,17 +72,20 @@ export async function ownerRecord(
  * `exceptGrantee` leaves one grant out, to ask what a revocation of it would
  * still leave current.
  */
-export async function recipientKeys(
+export async function recipientCoverage(
   env: PrivateEnv,
   row: RelicRow,
   owner: IdentityRecord,
   options: { readonly exceptGrantee?: string } = {}
-): Promise<string[]> {
-  const keys = new Set<string>([owner.kemKeyId]);
+): Promise<ReadonlyMap<string, (version: number) => boolean>> {
+  const allVersions = () => true;
+  const keys = new Map<string, (version: number) => boolean>([
+    [owner.kemKeyId, allVersions],
+  ]);
   const devices = await env.store.listDevicesForOwner(owner.identityId);
   for (const device of devices) {
     if (device.revokedAt === undefined && device.notAfter > env.now) {
-      keys.add(device.kemKeyId);
+      keys.set(device.kemKeyId, allVersions);
     }
   }
   if (owner.recovery !== undefined) {
@@ -81,18 +93,31 @@ export async function recipientKeys(
       owner.recovery.recoveryIdentityId
     );
     if (recovery !== undefined && recovery.retiredAt === undefined) {
-      keys.add(recovery.kemKeyId);
+      keys.set(recovery.kemKeyId, allVersions);
     }
   }
   for (const grant of await env.store.listGrants(row.id)) {
     if (grant.revokedAt !== undefined) continue;
     if (grant.granteeIdentityId === options.exceptGrantee) continue;
     const grantee = await env.store.getIdentity(grant.granteeIdentityId);
-    if (grantee !== undefined && grantee.retiredAt === undefined) {
-      keys.add(grantee.kemKeyId);
+    if (
+      grantee !== undefined &&
+      grantee.retiredAt === undefined &&
+      !keys.has(grantee.kemKeyId)
+    ) {
+      keys.set(grantee.kemKeyId, (version) => grantCovers(grant, version));
     }
   }
-  return [...keys].sort();
+  return keys;
+}
+
+export async function recipientKeys(
+  env: PrivateEnv,
+  row: RelicRow,
+  owner: IdentityRecord,
+  options: { readonly exceptGrantee?: string } = {}
+): Promise<string[]> {
+  return [...(await recipientCoverage(env, row, owner, options)).keys()].sort();
 }
 
 /**
@@ -108,14 +133,77 @@ export async function sweepWrapsFor(
 ): Promise<void> {
   for (const owned of await env.store.listOwnedRelics(owner.identityId)) {
     const row = await env.store.getRelic(owned.relicId);
+    // Read before the recipient set: a grant that commits after this read has
+    // a later epoch, so its wraps survive the sweep.
+    const epoch = row?.accessEpoch ?? 0;
     const current = new Set(
       row === undefined ? [] : await recipientKeys(env, row, owner)
     );
     for (const keyId of keyIds) {
       if (current.has(keyId)) continue;
-      await env.store.deleteWraps(owned.relicId, { recipientKeyId: keyId });
+      await removeWrapsUpTo(env, owned.relicId, keyId, epoch);
     }
   }
+}
+
+/**
+ * Deletes the wraps one key holds on a relic that were written at or before
+ * `epoch`. A wrap written later belongs to a grant or seal that committed after
+ * the caller read the epoch, and survives. Every delete is conditional on the
+ * wrap it judged, so a write that lands during the sweep is judged again.
+ */
+export async function removeWrapsUpTo(
+  env: PrivateEnv,
+  relicId: string,
+  recipientKeyId: string,
+  epoch: number
+): Promise<void> {
+  for (const wrap of await env.store.listWraps(relicId)) {
+    if (wrap.recipientKeyId !== recipientKeyId) continue;
+    await env.store.deleteWrapIf(
+      relicId,
+      wrap.version,
+      recipientKeyId,
+      (current) => (current.epoch ?? 0) <= epoch
+    );
+  }
+}
+
+/**
+ * An invitation is fenced when its address has a fence committed after the
+ * invitation was created. The fence is written with the epoch, so the two
+ * cannot disagree.
+ */
+export function invitationRevokedByEpoch(
+  row: RelicRow,
+  invite: InviteRow
+): boolean {
+  const fence = row.accessFence?.[invite.invitedEmail];
+  return fence !== undefined && (invite.createdAccessEpoch ?? 0) < fence.epoch;
+}
+
+/** The index is only a hint: each referenced invitation must still authorize. */
+export async function claimedInvitations(
+  env: PrivateEnv,
+  row: RelicRow,
+  identityId: string
+): Promise<{ live: InviteRow[]; revoked: InviteRow[] }> {
+  const index = await env.store.getInviteClaimIndex(row.id, identityId);
+  const rows = await Promise.all(
+    (index?.inviteIds ?? []).map((id) => env.store.getInvite(row.id, id))
+  );
+  const live: InviteRow[] = [];
+  const revoked: InviteRow[] = [];
+  for (const invite of rows) {
+    if (invite === undefined || invite.claimantIdentityId !== identityId)
+      continue;
+    if (invite.status === 'revoked' || invitationRevokedByEpoch(row, invite)) {
+      revoked.push(invite);
+    } else if (invite.status === 'claimed') {
+      live.push(invite);
+    }
+  }
+  return { live, revoked };
 }
 
 /** What the identity is to this relic, in precedence order. */
@@ -135,6 +223,9 @@ export async function standingOf(
     return { role: 'grantee', grant };
   }
   if (grant !== undefined) return { role: 'revoked', grant };
+  const claims = await claimedInvitations(env, row, me.identityId);
+  if (claims.live.length > 0) return { role: 'invited' };
+  if (claims.revoked.length > 0) return { role: 'revoked' };
   const request = await env.store.getAccessRequest(row.id, me.identityId);
   if (request?.status === 'pending') return { role: 'requested', request };
   if (request?.status === 'declined') return { role: 'declined', request };
@@ -145,22 +236,81 @@ export function isDeleted(row: RelicRow, version: number): boolean {
   return row.deletedVersions?.includes(version) === true;
 }
 
-/** Versions this recipient key can open: wrapped, sealed, and not deleted. */
+async function wrapForStanding(
+  env: PrivateEnv,
+  row: RelicRow,
+  me: IdentityRecord,
+  standing: Standing,
+  claims: readonly InviteRow[],
+  version: number
+): Promise<ServedWrap | undefined> {
+  if (
+    standing.role === 'owner' ||
+    standing.role === 'recovery' ||
+    (standing.role === 'grantee' &&
+      standing.grant !== undefined &&
+      grantCovers(standing.grant, version))
+  ) {
+    const wrap = await env.store.getWrap(row.id, version, me.kemKeyId);
+    if (wrap !== undefined) return wrap;
+  }
+  if (standing.role !== 'invited' && standing.role !== 'grantee')
+    return undefined;
+  for (const claim of claims) {
+    if (!claim.versions.includes(version)) continue;
+    const wrap = claim.claimWraps?.find((item) => item.version === version);
+    if (wrap !== undefined) return { ...wrap, recipientKeyId: me.kemKeyId };
+  }
+  return undefined;
+}
+
+/** Returns only a wrap covered by the identity's current standing. */
+export async function servedWrap(
+  env: PrivateEnv,
+  row: RelicRow,
+  owner: IdentityRecord,
+  me: IdentityRecord,
+  version: number
+): Promise<ServedWrap | undefined> {
+  const standing = await standingOf(env, row, owner, me);
+  const claims =
+    standing.role === 'invited' || standing.role === 'grantee'
+      ? (await claimedInvitations(env, row, me.identityId)).live
+      : [];
+  return wrapForStanding(env, row, me, standing, claims, version);
+}
+
+/** Versions this identity can open: authorized, wrapped, sealed, and not deleted. */
 export async function readableVersions(
   env: PrivateEnv,
   row: RelicRow,
-  recipientKeyId: string
+  recipientKeyId: string,
+  me: IdentityRecord,
+  owner: IdentityRecord
 ): Promise<number[]> {
-  const versions = new Set<number>();
-  for (const wrap of await env.store.listWraps(row.id)) {
-    if (wrap.recipientKeyId !== recipientKeyId) continue;
-    if (wrap.version > (row.sealedVersion ?? 0)) continue;
-    if (isDeleted(row, wrap.version)) continue;
-    if ((await env.store.getSeal(row.id, wrap.version)) !== undefined) {
-      versions.add(wrap.version);
+  if (recipientKeyId !== me.kemKeyId) return [];
+  const standing = await standingOf(env, row, owner, me);
+  const claims =
+    standing.role === 'invited' || standing.role === 'grantee'
+      ? (await claimedInvitations(env, row, me.identityId)).live
+      : [];
+  const candidates = new Set(
+    (await env.store.listWraps(row.id))
+      .filter((wrap) => wrap.recipientKeyId === recipientKeyId)
+      .map((wrap) => wrap.version)
+  );
+  for (const claim of claims) {
+    for (const wrap of claim.claimWraps ?? []) candidates.add(wrap.version);
+  }
+  const versions: number[] = [];
+  for (const version of [...candidates].sort((a, b) => a - b)) {
+    if (version > (row.sealedVersion ?? 0) || isDeleted(row, version)) continue;
+    if ((await env.store.getSeal(row.id, version)) === undefined) continue;
+    if (await wrapForStanding(env, row, me, standing, claims, version)) {
+      versions.push(version);
     }
   }
-  return [...versions].sort((a, b) => a - b);
+  return versions;
 }
 
 /**
@@ -174,7 +324,7 @@ export async function requireRead(
   owner: IdentityRecord,
   me: IdentityRecord | undefined,
   version: number
-): Promise<WrapRow> {
+): Promise<ServedWrap> {
   if (isDeleted(row, version)) {
     throw new ProblemError('version_deleted', { version });
   }
@@ -187,11 +337,10 @@ export async function requireRead(
       retry_after_seconds: 5,
     });
   }
-  const standing = await standingOf(env, row, owner, me);
-  if (me === undefined || READABLE_ROLES[standing.role] !== true) {
-    throw new ProblemError('private_access_denied', { relic_id: row.id });
-  }
-  const wrap = await env.store.getWrap(row.id, version, me.kemKeyId);
+  const wrap =
+    me === undefined
+      ? undefined
+      : await servedWrap(env, row, owner, me, version);
   if (wrap === undefined) {
     throw new ProblemError('private_access_denied', { relic_id: row.id });
   }
@@ -223,6 +372,7 @@ export async function logAccess(
     readonly actorDeviceId?: string;
     readonly actorEmail?: string;
     readonly subjectIdentityId?: string;
+    readonly subjectEmail?: string;
   } = {}
 ): Promise<void> {
   const owner = await env.store.getIdentity(ownerIdentityId);

@@ -428,6 +428,8 @@ Each bound passkey has its own bundle, and a bundle opens only under that passke
 | `identity_register`, `identity_bind`, `identity_settings` | the identity | yes |
 | `access_request` | the requester's identity | yes |
 | `grant`, `revocation`, `republish`, `delete`, `device_cert`, `device_revocation`, `recovery_designation` | the owner's identity | yes |
+| `invite` | the owner's identity | yes, under the grant purpose |
+| `invite_claim` | the claimant's identity | no |
 | `relic_settings` | the owner's identity, on a private or a public relik | yes |
 | `signing_request`, `signing_cancel` | An owner identity (browser, passkey attested), or an owner device (relic-mcp, not attested) | Yes for an identity, no for a device |
 | `signature` | Private: the signer's identity. Public: nobody (`identity_signature` is `''`) | Always |
@@ -446,6 +448,8 @@ The attestation purposes `relic_settings`, `signing_request`, `signing_cancel`, 
 **The owner pin, and its limit.** The viewer pins the owner identity per relik at first open and refuses a different owner later, with no button to accept one. At first open the reader has only the service's report of the owner, so a forged owner is caught only if the reader compares the owner fingerprint out of band (plan correction 22). This is an accepted residual (plan section 8, item 7).
 
 **Grants and revocation.** A grant wraps exactly the versions it names. A revocation deletes the revoked identity's wraps for every version and republishes the current content as a new version under a fresh key, which only the remaining recipients receive (3.10, plan 4.12). A revoked reader keeps whatever they already opened.
+
+**Invitation keys.** An invitation uses a fresh P-256 ECDH key pair. Its identifier is the lowercase hex SHA-256 of its 65-byte public key. The owner signs the invited address, public key, expiry and version list in an `invite` statement. Each listed version is wrapped to that key using the normal HPKE wrap. The invitation link carries `?invite=<id>#k=<d>`, where `d` is the 32-byte private scalar in unpadded base64url. The owner sends that key-bearing link, and the service never receives the fragment. The invitee imports `d` with the signed public key's `x` and `y` as a P-256 JWK. A claim signs the invitation ID and versions under the claimant's identity.
 
 ### 3.18 Parameter table
 
@@ -484,7 +488,7 @@ Identifiers and fingerprints:
 - Device fingerprint: the first 20 bytes of `SHA-256(UTF8("relic/device-fp/v1") ‖ 0x00 ‖ deviceId (32 raw bytes))`.
 - Encoding: Crockford base32 over the relik ID alphabet `0123456789abcdefghjkmnpqrstvwxyz`, most significant bit first. 160 bits make exactly 32 characters, stored and compared lowercase. The display form is uppercase, in eight groups of four separated by single spaces.
 - Typed input: remove all whitespace and `-`, lowercase, fold `i` and `l` to `1` and `o` to `0`, require 32 characters of the alphabet, and compare with the locally computed value in constant time.
-- Every fingerprint a browser or relic-mcp shows is computed locally from public keys. No API returns a fingerprint field, so the owner types the requester's fingerprint and never receives one to compare against from the service.
+- Every fingerprint a browser or relic-mcp shows is computed locally from public keys. No API returns a fingerprint field; the owner compares the locally computed fingerprint.
 
 These definitions are frozen once any production private relik is sealed. Changing a label, field or encoding then needs a new versioned label and dual support. The known-answer fixtures in `private.test.ts` and the RFC 9180 vectors in `hpke.test.ts` guard them (plan section 7, item 10).
 

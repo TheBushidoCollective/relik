@@ -124,6 +124,17 @@ export interface RelicRow {
   readonly privateErasureAt?: number;
   /** Bumped by every grant and revocation. A seal or grant that read an older value loses. */
   readonly accessEpoch?: number | undefined;
+  /**
+   * Per normalized grantee address: the latest revocation or regrant that
+   * fenced the address's invitations, the access epoch it committed at, and the
+   * nonce of its attestation. Written in the same compare-and-swap as the
+   * epoch, so the fence and the epoch never disagree.
+   */
+  readonly accessFence?:
+    | Readonly<
+        Record<string, { readonly epoch: number; readonly nonce: string }>
+      >
+    | undefined;
   /** The highest version whose seal the server recorded. It is provisional until the owner-epoch recheck passes. */
   readonly sealedVersion?: number | undefined;
   /** Versions the owner deleted. The row keeps the number so it is never reused. */
@@ -375,6 +386,8 @@ export interface WrapRow {
   readonly ct: string;
   readonly createdAt: number;
   readonly source: 'seal' | 'grant' | 'backfill';
+  /** The access epoch the write committed at. Absent reads as 0. */
+  readonly epoch?: number | undefined;
 }
 export interface SealRow {
   readonly relicId: string;
@@ -392,8 +405,66 @@ export interface GrantRow {
   readonly versions: readonly number[];
   readonly grantedAt: number;
   readonly attestation: StoredAttestation;
+  readonly grantStatement?: {
+    readonly statement: Record<string, unknown>;
+    readonly identitySignature: string;
+  };
   readonly revokedAt?: number | undefined;
   readonly revocation?: StoredAttestation | undefined;
+}
+/**
+ * An invitation for an address with no private-share key yet (plan 3.2). Its
+ * temporary and claimant wraps live inside the row, not in `m/wrap/`. The
+ * row's `customTime` follows invitation expiry until claim, then relik expiry.
+ */
+export interface InviteRow {
+  readonly relicId: string;
+  /** Lowercase hex of the invitation's KEM key id. */
+  readonly inviteId: string;
+  readonly ownerIdentityId: string;
+  /** Normalized address the invitation is bound to. */
+  readonly invitedEmail: string;
+  /** Base64url SEC1 public key the owner signed in the invitation statement. */
+  readonly invitePublicKey: string;
+  /** Versions listed, minus any deleted since. */
+  readonly versions: readonly number[];
+  readonly expiresAt: number;
+  readonly createdAt: number;
+  /** The relik access epoch observed when this invitation was created. */
+  readonly createdAccessEpoch?: number | undefined;
+  readonly status: 'open' | 'claimed' | 'revoked';
+  /** Wraps of the listed versions to the invite key. Empty once claimed or revoked. */
+  readonly wraps: readonly {
+    readonly version: number;
+    readonly enc: string;
+    readonly ct: string;
+  }[];
+  /** Wraps to the claimant's identity, committed atomically with the claim. */
+  readonly claimWraps?:
+    | readonly {
+        readonly version: number;
+        readonly enc: string;
+        readonly ct: string;
+      }[]
+    | undefined;
+  readonly claim?:
+    | {
+        readonly statement: Record<string, unknown>;
+        readonly identitySignature: string;
+      }
+    | undefined;
+  /** The owner's attested grant tap. Its single statement is the `invite` statement. */
+  readonly attestation: StoredAttestation;
+  readonly claimedAt?: number | undefined;
+  readonly claimantIdentityId?: string | undefined;
+  readonly revokedAt?: number | undefined;
+}
+
+/** Lookup index only. Invitation rows themselves decide claim authority. */
+export interface InviteClaimIndex {
+  readonly relicId: string;
+  readonly identityId: string;
+  readonly inviteIds: readonly string[];
 }
 export interface AccessRequestRow {
   readonly relicId: string;
@@ -418,6 +489,9 @@ export interface AccessEvent {
   readonly kind:
     | 'request'
     | 'grant'
+    | 'share'
+    | 'invite'
+    | 'claim'
     | 'revoke'
     | 'wrap_fetch'
     | 'delete'
@@ -427,6 +501,7 @@ export interface AccessEvent {
   readonly actorDeviceId?: string | undefined;
   readonly actorEmail?: string | undefined;
   readonly subjectIdentityId?: string | undefined;
+  readonly subjectEmail?: string | undefined;
   readonly retainUntil: number;
 }
 /**
@@ -978,6 +1053,25 @@ export interface RelicStore {
     relicId: string,
     filter: { readonly version?: number; readonly recipientKeyId?: string }
   ): Promise<number>;
+  /**
+   * Replaces the wrap at this row's name when `matches` holds for the wrap
+   * there now. Create-only writes use `putWrap`.
+   */
+  replaceWrapIf(
+    row: WrapRow,
+    matches: (current: WrapRow) => boolean
+  ): Promise<boolean>;
+  /**
+   * Deletes the wrap at this name when `matches` holds for it. A concurrent
+   * write makes the delete judge the wrap again, so a wrap is removed only
+   * after it was judged.
+   */
+  deleteWrapIf(
+    relicId: string,
+    version: number,
+    recipientKeyId: string,
+    matches: (current: WrapRow) => boolean
+  ): Promise<boolean>;
   /** Create-only. */
   putSeal(row: SealRow): Promise<boolean>;
   getSeal(relicId: string, version: number): Promise<SealRow | undefined>;
@@ -996,8 +1090,36 @@ export interface RelicStore {
   ): Promise<GrantRow | undefined>;
   /** Removes the grant, then its grantee index entry. */
   deleteGrant(relicId: string, granteeIdentityId: string): Promise<void>;
+  /** Deletes only the matching grant, leaving its grantee index entry. */
+  deleteGrantIf(
+    relicId: string,
+    granteeIdentityId: string,
+    matches: (r: GrantRow) => boolean
+  ): Promise<boolean>;
   deleteGrantsForRelic(relicId: string): Promise<number>;
   listGrantsForGrantee(granteeIdentityId: string): Promise<readonly GrantRow[]>;
+  /** Create-only. Invitation wraps are embedded in the row. */
+  putInvite(row: InviteRow): Promise<boolean>;
+  getInvite(relicId: string, inviteId: string): Promise<InviteRow | undefined>;
+  listInvites(relicId: string): Promise<readonly InviteRow[]>;
+  updateInvite(
+    relicId: string,
+    inviteId: string,
+    change: (r: InviteRow) => InviteRow
+  ): Promise<InviteRow | undefined>;
+  deleteInvite(relicId: string, inviteId: string): Promise<void>;
+  deleteInvitesForRelic(relicId: string): Promise<number>;
+  /** Adds an invitation id idempotently, before the invitation is claimed. */
+  addInviteClaimIndex(
+    relicId: string,
+    identityId: string,
+    inviteId: string
+  ): Promise<void>;
+  getInviteClaimIndex(
+    relicId: string,
+    identityId: string
+  ): Promise<InviteClaimIndex | undefined>;
+  deleteInviteClaimsForRelic(relicId: string): Promise<number>;
   /** Create-only. */
   putAccessRequest(row: AccessRequestRow): Promise<boolean>;
   getAccessRequest(
@@ -1207,6 +1329,8 @@ export class MemoryStore implements RelicStore {
   private readonly wraps = new Map<string, WrapRow>();
   private readonly seals = new Map<string, SealRow>();
   private readonly grants = new Map<string, GrantRow>();
+  private readonly invites = new Map<string, InviteRow>();
+  private readonly inviteClaims = new Map<string, InviteClaimIndex>();
   private readonly accessRequests = new Map<string, AccessRequestRow>();
   private readonly ownedRelics = new Map<string, OwnedRelicRow>();
   private readonly accessEvents: AccessEvent[] = [];
@@ -2076,6 +2200,34 @@ export class MemoryStore implements RelicStore {
     return removed;
   }
 
+  async replaceWrapIf(
+    row: WrapRow,
+    matches: (current: WrapRow) => boolean
+  ): Promise<boolean> {
+    const k = compositeKey(
+      row.relicId,
+      String(row.version),
+      row.recipientKeyId
+    );
+    const current = this.wraps.get(k);
+    if (current === undefined || !matches(current)) return false;
+    this.wraps.set(k, row);
+    return true;
+  }
+
+  async deleteWrapIf(
+    relicId: string,
+    version: number,
+    recipientKeyId: string,
+    matches: (current: WrapRow) => boolean
+  ): Promise<boolean> {
+    const k = compositeKey(relicId, String(version), recipientKeyId);
+    const current = this.wraps.get(k);
+    if (current === undefined || !matches(current)) return false;
+    this.wraps.delete(k);
+    return true;
+  }
+
   async putSeal(row: SealRow): Promise<boolean> {
     const k = compositeKey(row.relicId, String(row.version));
     if (this.seals.has(k)) return false;
@@ -2141,11 +2293,98 @@ export class MemoryStore implements RelicStore {
     this.grants.delete(compositeKey(relicId, granteeIdentityId));
   }
 
+  async deleteGrantIf(
+    relicId: string,
+    granteeIdentityId: string,
+    matches: (r: GrantRow) => boolean
+  ): Promise<boolean> {
+    const key = compositeKey(relicId, granteeIdentityId);
+    const current = this.grants.get(key);
+    return current !== undefined && matches(current) && this.grants.delete(key);
+  }
+
   async deleteGrantsForRelic(relicId: string): Promise<number> {
     let removed = 0;
     for (const [k, g] of this.grants) {
       if (g.relicId !== relicId) continue;
       this.grants.delete(k);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  async putInvite(row: InviteRow): Promise<boolean> {
+    const k = compositeKey(row.relicId, row.inviteId);
+    if (this.invites.has(k)) return false;
+    this.invites.set(k, row);
+    return true;
+  }
+
+  async getInvite(
+    relicId: string,
+    inviteId: string
+  ): Promise<InviteRow | undefined> {
+    return this.invites.get(compositeKey(relicId, inviteId));
+  }
+
+  async listInvites(relicId: string): Promise<readonly InviteRow[]> {
+    return [...this.invites.values()]
+      .filter((r) => r.relicId === relicId)
+      .sort(
+        (a, b) =>
+          a.createdAt - b.createdAt || (a.inviteId < b.inviteId ? -1 : 1)
+      );
+  }
+
+  async updateInvite(
+    relicId: string,
+    inviteId: string,
+    change: (r: InviteRow) => InviteRow
+  ): Promise<InviteRow | undefined> {
+    return updateEntry(this.invites, compositeKey(relicId, inviteId), change);
+  }
+
+  async deleteInvite(relicId: string, inviteId: string): Promise<void> {
+    this.invites.delete(compositeKey(relicId, inviteId));
+  }
+
+  async deleteInvitesForRelic(relicId: string): Promise<number> {
+    let removed = 0;
+    for (const [k, r] of this.invites) {
+      if (r.relicId !== relicId) continue;
+      this.invites.delete(k);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  async addInviteClaimIndex(
+    relicId: string,
+    identityId: string,
+    inviteId: string
+  ): Promise<void> {
+    const key = compositeKey(relicId, identityId);
+    const current = this.inviteClaims.get(key);
+    if (current?.inviteIds.includes(inviteId)) return;
+    this.inviteClaims.set(key, {
+      relicId,
+      identityId,
+      inviteIds: [...(current?.inviteIds ?? []), inviteId],
+    });
+  }
+
+  async getInviteClaimIndex(
+    relicId: string,
+    identityId: string
+  ): Promise<InviteClaimIndex | undefined> {
+    return this.inviteClaims.get(compositeKey(relicId, identityId));
+  }
+
+  async deleteInviteClaimsForRelic(relicId: string): Promise<number> {
+    let removed = 0;
+    for (const [k, r] of this.inviteClaims) {
+      if (r.relicId !== relicId) continue;
+      this.inviteClaims.delete(k);
       removed += 1;
     }
     return removed;

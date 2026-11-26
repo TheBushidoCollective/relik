@@ -7021,7 +7021,9 @@ export function buildThread(
   onViewOriginal?: (version: number) => void,
   onFileCounts?: (counts: ReadonlyMap<string, number>) => void
 ): ThreadHandle {
-  const canComment = view.settings?.comments !== false || view.manage === true;
+  const canComment =
+    view.viewOnly !== true &&
+    (view.settings?.comments !== false || view.manage === true);
   const canSuggest = view.settings?.suggestions !== false && canComment;
   const section = document.createElement('aside');
   section.className = 'thread';
@@ -11550,12 +11552,26 @@ export function renderReady(
   let activeView = view;
   const versionStore = versionsFor(relicId, view, deps);
 
+  /**
+   * Swaps the band for a rebuilt one. A control a page decorator added to the
+   * band (`data-band-extra`, the private owner's Access control) belongs to
+   * the page rather than to one build of the band, so it moves across:
+   * without this, the first count to land took the owner's Access away.
+   */
+  const swapBar = (current: HTMLElement, replacement: HTMLElement): void => {
+    for (const extra of Array.from(current.children)) {
+      if (extra.getAttribute('data-band-extra') !== null) {
+        replacement.append(extra);
+      }
+    }
+    current.replaceWith(replacement);
+    bar = replacement;
+  };
+
   /** Swaps in a band carrying the new counts, while this page still shows it. */
   const replaceBar = (): void => {
     if (bar === undefined || bar.isConnected !== true) return;
-    const replacement = barFor(false);
-    bar.replaceWith(replacement);
-    bar = replacement;
+    swapBar(bar, barFor(false));
   };
 
   const refreshDecisionTally = (shown: ReadyView): void => {
@@ -11647,10 +11663,15 @@ export function renderReady(
           showComparison(pair.left, pair.right);
         }
       },
-      onShare: (opener) => {
-        openSharePanel(activeView, relicId, deps, opener);
-      },
-      ...(activeView.settings?.decisions === false
+      ...(activeView.viewOnly === true
+        ? {}
+        : {
+            onShare: (opener: HTMLElement) => {
+              openSharePanel(activeView, relicId, deps, opener);
+            },
+          }),
+      ...(activeView.settings?.decisions === false ||
+      activeView.viewOnly === true
         ? {}
         : { onDecide: toggleDecisions }),
       ...(decisionTally === undefined ? {} : { decisionTally }),
@@ -11718,7 +11739,10 @@ export function renderReady(
     signingOpen = undefined;
     disposeComparison = undefined;
     decisionPanel?.close();
-    if (viewToShow !== activeView || decisionTally === undefined) {
+    if (
+      viewToShow.viewOnly !== true &&
+      (viewToShow !== activeView || decisionTally === undefined)
+    ) {
       refreshDecisionTally(viewToShow);
     }
     if (pinnedView !== viewToShow.version) {
@@ -11732,7 +11756,10 @@ export function renderReady(
     let setFolderCounts:
       | ((counts: ReadonlyMap<string, number>) => void)
       | undefined;
-    if (viewToShow.route !== 'download' || viewToShow.folder) {
+    if (
+      viewToShow.viewOnly !== true &&
+      (viewToShow.route !== 'download' || viewToShow.folder)
+    ) {
       thread = buildThread(
         viewToShow,
         relicId,
@@ -11740,9 +11767,7 @@ export function renderReady(
         (count) => {
           commentCount = count;
           if (bar === undefined) return;
-          const replacement = barFor(false);
-          bar.replaceWith(replacement);
-          bar = replacement;
+          swapBar(bar, barFor(false));
         },
         (version) => {
           void showVersion(version);
@@ -11825,7 +11850,13 @@ export function renderReady(
     trackRenderState(stage, wrap, viewToShow.route, viewToShow.documentKind);
     void import('./signing/controller.ts')
       .then(({ mountSigning }) => {
-        if (disposed || activeView !== viewToShow || !stage.isConnected) return;
+        if (
+          disposed ||
+          activeView !== viewToShow ||
+          viewToShow.viewOnly === true ||
+          !stage.isConnected
+        )
+          return;
         disposeSigning = mountSigning({
           view: viewToShow,
           relicId,

@@ -107,6 +107,7 @@ export type ProblemCode =
   | 'private_access_denied'
   | 'private_policy_violation'
   | 'identity_required'
+  | 'identity_changed'
   | 'identity_exists'
   | 'invalid_identity'
   | 'invalid_statement'
@@ -115,6 +116,12 @@ export type ProblemCode =
   | 'owner_exists'
   | 'fingerprint_mismatch'
   | 'grant_stale_version'
+  | 'grant_exists'
+  | 'invite_not_found'
+  | 'invite_claimed'
+  | 'invite_expired'
+  | 'invite_revoked'
+  | 'invite_limit_reached'
   | 'recipients_changed'
   | 'version_conflict'
   | 'private_seal_required'
@@ -202,6 +209,7 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   private_access_denied: 403,
   private_policy_violation: 400,
   identity_required: 409,
+  identity_changed: 409,
   identity_exists: 409,
   invalid_identity: 400,
   invalid_statement: 400,
@@ -210,6 +218,12 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   owner_exists: 409,
   fingerprint_mismatch: 409,
   grant_stale_version: 409,
+  grant_exists: 409,
+  invite_not_found: 404,
+  invite_claimed: 409,
+  invite_expired: 410,
+  invite_revoked: 410,
+  invite_limit_reached: 409,
   recipients_changed: 409,
   version_conflict: 409,
   private_seal_required: 409,
@@ -302,6 +316,7 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   private_access_denied: 'You do not have access to this relik',
   private_policy_violation: 'Private reliks do not allow that',
   identity_required: 'Set up a private-share key first',
+  identity_changed: 'The private-share identity changed',
   identity_exists: 'This address already has a private-share key',
   invalid_identity: 'Invalid private-share key payload',
   invalid_statement: 'Invalid signed statement',
@@ -310,6 +325,12 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   owner_exists: 'This relik already has an owner',
   fingerprint_mismatch: 'The fingerprint does not match',
   grant_stale_version: 'A newer version exists',
+  grant_exists: 'This person can already read this relik',
+  invite_not_found: 'No such invitation',
+  invite_claimed: 'This invitation was already used',
+  invite_expired: 'This invitation expired',
+  invite_revoked: 'This invitation was withdrawn',
+  invite_limit_reached: 'This relik has too many open invitations',
   recipients_changed: 'Who can read this relik changed',
   version_conflict: 'The relik changed while this was in progress',
   private_seal_required: 'This version needs its seal',
@@ -352,6 +373,11 @@ export interface ProblemExtensions {
   readonly comment_id?: string;
   readonly cover_validation_failure?: CoverValidationFailure;
   readonly current_version?: number;
+  readonly grantee_identity_id?: string;
+  readonly reason?: string;
+  readonly email?: string;
+  /** Grantee identities whose grants this call already applied before it was refused. */
+  readonly granted?: readonly string[];
   readonly share_limit?: number;
   readonly shared_count?: number;
   readonly share_max_per_call?: number;
@@ -367,6 +393,7 @@ export interface ProblemExtensions {
     | 'share_proof'
     | 'version';
   readonly identity_check?: string;
+  readonly index?: number;
   readonly statement_check?: string;
   readonly seal_check?: string;
   readonly device_check?: string;

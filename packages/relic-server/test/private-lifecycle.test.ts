@@ -1215,12 +1215,12 @@ async function revocationRequest(owner: Person, reader: Person) {
 
 /** Makes the next wrap sweep throw, as a failed storage write would. Returns the restore. */
 function failNextSweep(): () => void {
-  const real = store.deleteWraps.bind(store);
-  store.deleteWraps = async () => {
+  const real = store.deleteWrapIf.bind(store);
+  store.deleteWrapIf = async () => {
     throw new Error('store unavailable');
   };
   return () => {
-    store.deleteWraps = real;
+    store.deleteWrapIf = real;
   };
 }
 
@@ -1300,7 +1300,7 @@ describe('security review: server fixes', () => {
     expect(await store.getIdentityForAddress(stranger.email)).toBeUndefined();
   });
 
-  test('a failed wrap sweep leaves the grant standing, so the owner can retry the revocation', async () => {
+  test('a failed wrap sweep leaves the grant revoked and returns the republish upload', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     const sealed = await sealedPrivateRelic(owner);
@@ -1337,25 +1337,17 @@ describe('security review: server fixes', () => {
     expect(granted.status).toBe(201);
 
     const restore = failNextSweep();
-    await expect(
-      app.fetch(
-        req(
-          `/api/relics/${RELIC_ID}/revocations`,
-          await revocationRequest(owner, reader)
-        )
-      )
-    ).rejects.toThrow('store unavailable');
-    restore();
-    expect(
-      (await store.getGrant(RELIC_ID, reader.identityId as string))?.revokedAt
-    ).toBeUndefined();
-
-    const retried = await send(
+    const revoked = await send(
       `/api/relics/${RELIC_ID}/revocations`,
       await revocationRequest(owner, reader)
     );
-    expect(retried.status).toBe(200);
-    expect(retried.body['revoked_identity_id']).toBe(reader.identityId);
+    restore();
+    expect(revoked.status).toBe(200);
+    expect(revoked.body['revoked_identity_id']).toBe(reader.identityId);
+    expect(revoked.body['republish']).toBeDefined();
+    expect(
+      (await store.getGrant(RELIC_ID, reader.identityId as string))?.revokedAt
+    ).toBeDefined();
     const denied = await send(
       `/api/relics/${RELIC_ID}/versions/1/key`,
       post({}, reader.cookie)

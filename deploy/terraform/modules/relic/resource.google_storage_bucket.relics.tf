@@ -47,6 +47,8 @@ resource "google_storage_bucket" "relics" {
         "${local.store_prefix}/wrap/",
         "${local.store_prefix}/seal/",
         "${local.store_prefix}/grant/",
+        "${local.store_prefix}/invite/",
+        "${local.store_prefix}/invite-claim/",
         "${local.store_prefix}/grant-by-grantee/",
         "${local.store_prefix}/access-request/",
         "${local.store_prefix}/owner-relic/",

@@ -153,7 +153,7 @@ export function parseWorksheet(
         type = 'number';
       }
     } else throw new Error('corrupt');
-    let formula = cell.formula || undefined;
+    const formula = cell.formula || undefined;
     let detailId: number | undefined;
     if (cell.formulaKind === 'shared' && cell.sharedId !== undefined) {
       if (formula) {

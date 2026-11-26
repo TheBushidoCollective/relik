@@ -700,7 +700,7 @@ interface OwnerKeys {
 }
 
 type Draft = {
-  readonly kind: 'identity_register' | 'grant' | 'device_cert';
+  readonly kind: 'identity_register' | 'grant' | 'device_cert' | 'invite';
   readonly statement: Json;
 };
 
@@ -2209,24 +2209,45 @@ export async function runPrivateFolderRekey(
 }
 
 export {
+  api,
   approveDeviceFromProcess,
+  asObject,
+  attestationFor,
+  altered,
   bootstrapOwner,
-  inPage,
-  nodeSignIn,
-  pageCreatePasskey,
-  sessionCookieParams,
-  waitForOpened,
-  callMcpRaw,
+  canonicalOf,
+  checkReadyStrip,
   click,
+  callMcpRaw,
+  cookieHeader,
+  countIdentityPosts,
+  currentState,
   currentVersion,
   goto,
+  hexOf,
+  identityOf,
+  inPage,
   launchActor,
   localPrivateState,
+  nodeSignIn,
   openPanel,
+  pageCreatePasskey,
   pageStatus,
+  postGrant,
   poll,
+  problemCode,
+  sessionCookieParams,
+  setCookiePairs,
+  setField,
+  signCountTotal,
   stepsFourAndFive,
   stepsOneToThree,
   stepSeven,
+  stringAt,
+  submitForm,
+  textOf,
+  viewerSignIn,
+  waitForOpened,
   waitForState,
 };
+export type { ApiResult, Json, OwnerKeys };

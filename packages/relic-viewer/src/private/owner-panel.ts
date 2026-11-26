@@ -28,6 +28,8 @@ import {
 } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
 import { createDeleteDialog, type DeleteDialog } from './delete.ts';
+import { createShareSection } from './share-section.ts';
+import { createInvitationsSection } from './invitations-section.ts';
 import { describeVersions, formatUtcDay } from './access-log.ts';
 import {
   fingerprintGroups,
@@ -55,6 +57,7 @@ export interface OwnerPanelContext {
   onChanged(): void;
   /** The requester's identity ID from the mail link (`?grant=`): their card is listed first. */
   readonly focusRequester?: string;
+  readonly prefill?: readonly string[];
   /**
    * `focused` is the mail link's view: one card for the requester, in the host,
    * with no side sheet. The reader hides its own unlock card while it shows.
@@ -78,6 +81,7 @@ interface PanelData {
   readonly grants: readonly GrantJSON[];
   /** The grantee identities this browser's floor admits: a grant the owner revoked is not one. */
   readonly admitted: ReadonlySet<string>;
+  readonly ownerId: string | undefined;
   readonly devices: readonly {
     readonly label: string;
     readonly revoked_at: string | null;
@@ -171,6 +175,25 @@ export function openAccessPanel(
   const requestsHost = h('div', { id: 'requests', class: 'dash-grid' });
   const grantList = h('ul', { class: 'row-list', id: 'grants' });
   const alsoList = h('ul', { class: 'row-list' });
+  const share = createShareSection({
+    relicId: ctx.relicId,
+    deps: ctx.deps,
+    ...(ctx.prefill === undefined ? {} : { prefill: ctx.prefill }),
+    onChanged: (message) => {
+      ctx.onChanged();
+      void refresh(message, true);
+    },
+  });
+  const invitations = createInvitationsSection({
+    relicId: ctx.relicId,
+    deps: ctx.deps,
+    // A confirmed claimant moves to Readers, so the whole panel reloads.
+    onChanged: () => {
+      ctx.onChanged();
+      void refresh('', true);
+    },
+    inviteAgain: (email) => share.fill([email]),
+  });
   const deleteOpen = h(
     'button',
     { type: 'button', class: 'btn is-danger', 'data-action': 'delete-relic' },
@@ -227,6 +250,9 @@ export function openAccessPanel(
       { class: 'panel-body' },
       lead,
       notice,
+      share.element,
+      share.links,
+      invitations.element,
       h(
         'section',
         { class: 'panel-section', 'aria-labelledby': 'requests-title' },
@@ -306,6 +332,7 @@ export function openAccessPanel(
     const state = await privateKeysOf(ctx.deps).loadIdentityState(ctx.deps);
     return {
       access,
+      ownerId: state.identity?.identity_id,
       requests: requests.requests.filter(
         (request) => request.status === 'pending'
       ),
@@ -685,6 +712,16 @@ export function openAccessPanel(
   async function refresh(message: string, keepNotice = false): Promise<void> {
     try {
       const data = await load();
+      share.update({
+        access: data.access,
+        admitted: data.admitted,
+        ownerId: data.ownerId,
+      });
+      if (ctx.mode !== 'focused') {
+        void invitations
+          .update(data.access)
+          .catch((error: unknown) => showNotice(problemMessage(error), true));
+      }
       const count = data.admitted.size;
       const readers =
         count === 0

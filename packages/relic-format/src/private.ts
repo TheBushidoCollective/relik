@@ -31,6 +31,8 @@ const BASE64URL_RE = /^[A-Za-z0-9_-]*$/;
 /** WebAuthn PRF `eval.first` for the identity ceremony: UTF8('relic/identity-prf/v1'). */
 export const PRF_SALT: Uint8Array = utf8('relic/identity-prf/v1');
 
+export const PRIVATE_SHARE_MAX_GRANTS = 20;
+
 const NUL = Uint8Array.of(0x00);
 const WRAP_LABEL = utf8('relic/wrap/v1');
 const KEY_COMMIT_LABEL = utf8('relic/key-commit/v1');
@@ -48,6 +50,8 @@ export type StatementKind =
   | 'identity_settings'
   | 'access_request'
   | 'grant'
+  | 'invite'
+  | 'invite_claim'
   | 'revocation'
   | 'republish'
   | 'delete'
@@ -99,6 +103,24 @@ export interface GrantStatement {
   readonly grantee_email: string;
   readonly grantee_identity_id: string;
   readonly owner_identity_id: string;
+  readonly relic_id: string;
+  readonly versions: readonly number[];
+}
+
+export interface InviteStatement {
+  readonly at: number;
+  readonly expires_at: number;
+  readonly invite_public_key: string;
+  readonly invited_email: string;
+  readonly owner_identity_id: string;
+  readonly relic_id: string;
+  readonly versions: readonly number[];
+}
+
+export interface InviteClaimStatement {
+  readonly at: number;
+  readonly claimant_identity_id: string;
+  readonly invite_id: string;
   readonly relic_id: string;
   readonly versions: readonly number[];
 }
@@ -300,6 +322,8 @@ export interface StatementMap {
   readonly identity_settings: IdentitySettingsStatement;
   readonly access_request: AccessRequestStatement;
   readonly grant: GrantStatement;
+  readonly invite: InviteStatement;
+  readonly invite_claim: InviteClaimStatement;
   readonly revocation: RevocationStatement;
   readonly republish: RepublishStatement;
   readonly delete: DeleteStatement;
@@ -707,6 +731,84 @@ export function deviceIdOf(
 export async function kemKeyIdOf(kemPub: Uint8Array): Promise<Uint8Array> {
   requireLength(kemPub, 65, 'KEM public key');
   return sha256(kemPub);
+}
+
+export async function inviteIdOf(publicKey: Uint8Array): Promise<string> {
+  return bytesToHex(await kemKeyIdOf(publicKey));
+}
+
+export async function generateInviteKeyPair(): Promise<{
+  publicKey: Uint8Array;
+  d: Uint8Array;
+}> {
+  const pair = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits']
+  );
+  const publicKey = new Uint8Array(
+    await crypto.subtle.exportKey('raw', pair.publicKey)
+  );
+  const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  if (!jwk.d) throw new RelicFormatError('missing invitation private key');
+  return { publicKey, d: decodeBase64url(jwk.d) };
+}
+
+export async function inviteRecipient(
+  d: Uint8Array,
+  publicKey: Uint8Array
+): Promise<HpkeRecipient> {
+  requireLength(d, 32, 'invitation private key');
+  requireLength(publicKey, 65, 'invitation public key');
+  if (publicKey[0] !== 4)
+    throw new RelicFormatError('invalid invitation public key');
+  const key = await crypto.subtle.importKey(
+    'jwk',
+    {
+      kty: 'EC',
+      crv: 'P-256',
+      d: encodeBase64url(d),
+      x: encodeBase64url(publicKey.subarray(1, 33)),
+      y: encodeBase64url(publicKey.subarray(33, 65)),
+    },
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    ['deriveBits']
+  );
+  return {
+    publicKey: publicKey.slice(),
+    async dh(peer) {
+      const peerKey = await crypto.subtle.importKey(
+        'raw',
+        peer.slice().buffer,
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,
+        []
+      );
+      return new Uint8Array(
+        await crypto.subtle.deriveBits(
+          { name: 'ECDH', public: peerKey },
+          key,
+          256
+        )
+      );
+    },
+  };
+}
+
+export function inviteFragment(d: Uint8Array): string {
+  requireLength(d, 32, 'invitation private key');
+  return `k=${encodeBase64url(d)}`;
+}
+
+export function parseInviteFragment(hash: string): Uint8Array | undefined {
+  if (!/^k=[A-Za-z0-9_-]{43}$/.test(hash)) return undefined;
+  try {
+    const d = decodeBase64url(hash.slice(2));
+    return d.length === 32 ? d : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -1193,6 +1295,22 @@ const SPECS: { readonly [K in StatementKind]: Readonly<Record<string, Rule>> } =
       relic_id: RELIC_ID,
       versions: versionList(true),
     },
+    invite: {
+      at: AT,
+      expires_at: AT,
+      invite_public_key: PUBLIC_KEY,
+      invited_email: EMAIL,
+      owner_identity_id: HEX_ID,
+      relic_id: RELIC_ID,
+      versions: versionList(true),
+    },
+    invite_claim: {
+      at: AT,
+      claimant_identity_id: HEX_ID,
+      invite_id: HEX_ID,
+      relic_id: RELIC_ID,
+      versions: versionList(true),
+    },
     revocation: {
       at: AT,
       grantee_identity_id: HEX_ID,
@@ -1347,6 +1465,8 @@ const CROSS_CHECKS: Partial<
     (value: Record<string, unknown>) => StatementCheck | undefined
   >
 > = {
+  invite: (value) =>
+    (value.expires_at as number) > (value.at as number) ? undefined : 'range',
   recovery_designation: (value) => {
     const nulls = [
       value.fingerprint_typed,

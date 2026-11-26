@@ -166,6 +166,8 @@ jobs:
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/settings-path.ts
       - name: Signing path
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/signing-path.ts
+      - name: Direct share path
+        run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/direct-share-path.ts
       - name: SVG sandbox browser path
         run: RELIC_SVG_PATH_SHOTS=svg-path-shots RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/svg-path.ts
       - name: Upload SVG path shots
