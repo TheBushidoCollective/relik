@@ -1454,6 +1454,9 @@ export function createApp(options: AppOptions = {}): RelicApp {
         }
         if (third === 'grants' && fourth === undefined && post) {
           if (session === undefined) return refuse('sign_in_required');
+          // Refused before grantAccess consumes the attestation nonce (plan 10, DIRECT_STEP_13).
+          if (config.killSwitchEngaged)
+            return refuse('service_paused', { retry_after_seconds: 300 });
           const body = await privateBody(request, 'invalid_wrap');
           const email = normalizeEmail(session.email);
           const result = await grantAccess(env, {

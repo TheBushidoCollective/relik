@@ -32,12 +32,14 @@ import {
   parseStatement,
   statementBytes,
   verifyStatement,
+  signStatement,
 } from '@relic/format/private';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import { discoverChrome } from '../src/cover/chrome.ts';
+import { loadPublishState } from '../src/state.ts';
 import { clickPrivateControl } from './confirmation-private-proof.ts';
 import { callMcp, type RunningProofBrowser } from './decision-proof-steps.ts';
 import {
@@ -68,6 +70,7 @@ import {
   waitForOpened,
   waitForState,
   currentState,
+  localPrivateState,
 } from './private-shares-steps.ts';
 
 const viewerDist = fileURLToPath(
@@ -90,6 +93,7 @@ async function resolveChrome(): Promise<string> {
 const chromePath = await resolveChrome();
 const scratch = await mkdtemp(join(tmpdir(), 'relic-direct-share-path-'));
 const statePath = join(scratch, 'publish-state.json');
+process.env['RELIC_PUBLISH_STATE'] = statePath;
 
 const store = new MemoryStore();
 const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
@@ -107,6 +111,26 @@ let claimTapCount: number | undefined;
 let substitutedLookup: Record<string, unknown> | undefined;
 /** Harness clock: real time plus an offset that the expiry steps move and restore. */
 let clockOffsetMs = 0;
+/** Counts the viewer's address lookups, so a public signer can be shown to make none. */
+let lookupCalls = 0;
+/** The next private grant POST is answered by the kill-switch app; its request is kept for a replay. */
+let killNextGrant = false;
+let killedGrant:
+  | {
+      url: string;
+      headers: Headers;
+      body: Uint8Array;
+      status: number;
+      code: string;
+    }
+  | undefined;
+/** The next signing request has its grant rewritten and re-signed by the owner key, then is refused. */
+let tamperMode: 'grantee' | 'versions' | undefined;
+let tamperTarget: { email: string; identityId: string } | undefined;
+let tamperSign: ((message: Uint8Array) => Promise<Uint8Array>) | undefined;
+let tamperResult:
+  | { status: number; code: string; statementCheck: unknown }
+  | undefined;
 const clock = (): number => Date.now() + clockOffsetMs;
 /** Section 10 receipts, printed in plan order at the end of the run. */
 const proofLines: Array<{ order: number; line: string }> = [];
@@ -153,6 +177,11 @@ const appOptions = {
   },
 };
 const apps = [createApp(appOptions), createApp(appOptions)];
+/** Refuses every write with the kill switch engaged, over the same store. */
+const killedApp = createApp({
+  ...appOptions,
+  config: { ...appOptions.config, killSwitchEngaged: true },
+});
 /** Answers only the budget probes, so the main apps' budgets stay intact. */
 let budgetApp = createApp(appOptions);
 let budgetProbe = false;
@@ -184,6 +213,79 @@ handler = async (request: Request): Promise<Response> => {
       ? undefined
       : new Uint8Array(await request.arrayBuffer());
   if (bytes !== undefined) requestBodies.push(new TextDecoder().decode(bytes));
+  if (request.method === 'POST' && url.pathname.endsWith('/grants/lookup'))
+    lookupCalls++;
+  if (
+    killNextGrant &&
+    request.method === 'POST' &&
+    bytes !== undefined &&
+    /\/api\/relics\/[^/]+\/grants$/.test(url.pathname)
+  ) {
+    killNextGrant = false;
+    const refused = await killedApp.fetch(
+      new Request(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: bytes.slice(0),
+      })
+    );
+    const problem = (await refused
+      .clone()
+      .json()
+      .catch(() => ({}))) as Json;
+    killedGrant = {
+      url: request.url,
+      headers: request.headers,
+      body: bytes.slice(0),
+      status: refused.status,
+      code: String(problem['code'] ?? ''),
+    };
+    return refused;
+  }
+  if (
+    tamperMode !== undefined &&
+    tamperTarget !== undefined &&
+    tamperSign !== undefined &&
+    request.method === 'POST' &&
+    bytes !== undefined &&
+    url.pathname.endsWith('/signing/requests')
+  ) {
+    const mode = tamperMode;
+    tamperMode = undefined;
+    const json = JSON.parse(new TextDecoder().decode(bytes)) as Json;
+    const entry = (json['grants'] as Json[])[0]!;
+    const statement: Json = { ...(entry['statement'] as Json) };
+    if (mode === 'grantee') {
+      statement['grantee_identity_id'] = tamperTarget.identityId;
+      statement['grantee_email'] = tamperTarget.email;
+    } else {
+      statement['versions'] = [1];
+    }
+    entry['statement'] = statement;
+    entry['identity_signature'] = await signStatement(
+      tamperSign,
+      statementBytes('grant', parseStatement('grant', statement))
+    );
+    const headers = new Headers(request.headers);
+    headers.delete('content-length');
+    const refused = await apps[0]!.fetch(
+      new Request(request.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(json),
+      })
+    );
+    const problem = (await refused
+      .clone()
+      .json()
+      .catch(() => ({}))) as Json;
+    tamperResult = {
+      status: refused.status,
+      code: String(problem['code'] ?? ''),
+      statementCheck: problem['statement_check'],
+    };
+    return refused;
+  }
   const replay = new Request(request.url, {
     method: request.method,
     headers: request.headers,
@@ -549,6 +651,147 @@ async function codeSignInOnPage(actor: Actor): Promise<void> {
   await setPresence(actor, true);
 }
 
+const UNREGISTERED = 'unregistered+direct-share@example.test';
+const TAMPER = 'tamper+direct-share@example.test';
+const SIGNER = 'signer+direct-share@example.test';
+const PUBLIC_SIGNER = 'public-signer+direct-share@example.test';
+
+/** One signing request as relic_read_signing reports it. */
+interface SigningRequestView {
+  readonly status?: string;
+  readonly signers: ReadonlyArray<{
+    readonly email: string;
+    readonly status: string;
+  }>;
+}
+
+/** The relik's signing requests, read through relic-mcp. */
+async function requestsOf(relicId: string): Promise<SigningRequestView[]> {
+  const result = await mcp('relic_read_signing', { relic_id: relicId });
+  return (result['requests'] ?? []) as SigningRequestView[];
+}
+
+/** The signing composer's visible text, which carries its notices. */
+async function panelText(browser: RunningProofBrowser): Promise<string> {
+  return browser.evaluate<string>(
+    `document.querySelector('.signing-panel')?.innerText ?? ''`
+  );
+}
+
+/** Whether a button with this text is shown and enabled, inside `scope` when given. */
+async function hasButton(
+  browser: RunningProofBrowser,
+  text: string,
+  scope = ''
+): Promise<boolean> {
+  return browser.evaluate<boolean>(`(() => {
+    const root = ${JSON.stringify(scope)} ? document.querySelector(${JSON.stringify(scope)}) : document;
+    return Array.from(root?.querySelectorAll('button') ?? []).some(
+      (b) => b.textContent === ${JSON.stringify(text)} && !b.disabled
+    );
+  })()`);
+}
+
+/** Clicks the enabled button with this text, inside `scope` when given. */
+async function clickButton(
+  browser: RunningProofBrowser,
+  text: string,
+  scope = ''
+): Promise<void> {
+  await browser.evaluate<void>(`(() => {
+    const root = ${JSON.stringify(scope)} ? document.querySelector(${JSON.stringify(scope)}) : document;
+    const button = Array.from(root?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === ${JSON.stringify(text)} && !b.disabled
+    );
+    if (!button) throw new Error('no enabled button ' + ${JSON.stringify(text)});
+    button.click();
+  })()`);
+}
+
+/** Opens the owner's signing composer on a private relik. */
+async function openComposer(actor: Actor, relicUrl: string): Promise<void> {
+  await goto(actor.browser, relicUrl);
+  await waitForState(
+    actor.browser,
+    ['unlock'],
+    `${actor.name} composer unlock`
+  );
+  await click(actor.browser, '[data-action="private-unlock"]');
+  await waitForOpened(actor.browser, `${actor.name} composer`);
+  await actor.browser.waitForSelector('[data-action="open-signing"]', 25000);
+  await actor.browser.evaluate<void>(
+    `document.querySelector('[data-action="open-signing"]').click()`
+  );
+  await actor.browser.waitForSelector('.signing-panel', 25000);
+}
+
+/** Types an address into signer row `index` (1-based) of the composer. */
+async function setSigner(
+  actor: Actor,
+  index: number,
+  email: string
+): Promise<void> {
+  await setField(actor.browser, `[aria-label="Signer ${index} email"]`, email);
+}
+
+/** Adds a signer row, then waits until its field shows. */
+async function addSigner(actor: Actor, index: number): Promise<void> {
+  await clickButton(actor.browser, 'Add signer', '.signing-panel');
+  await poll(`signer row ${index}`, 25000, async () =>
+    (await actor.browser.evaluate<boolean>(
+      `!!document.querySelector('[aria-label="Signer ${index} email"]')`
+    ))
+      ? true
+      : undefined
+  );
+}
+
+/**
+ * One signer's signature: opens the relik, signs with the page's own signing
+ * panel, and waits until the service records that signer as signed.
+ */
+async function signAs(
+  actor: Actor,
+  relicUrl: string,
+  email: string,
+  relicId: string,
+  name: string
+): Promise<void> {
+  await goto(actor.browser, `${relicUrl}?refresh=${actor.name}-sign`);
+  await waitForState(actor.browser, ['unlock'], `${actor.name} signing unlock`);
+  await click(actor.browser, '[data-action="private-unlock"]');
+  await waitForOpened(actor.browser, `${actor.name} signing`);
+  await poll(`${actor.name} sign control`, 25000, async () =>
+    (await hasButton(actor.browser, 'Sign here')) ? true : undefined
+  );
+  await clickButton(actor.browser, 'Sign here');
+  await actor.browser.waitForSelector('.signing-panel input', 25000);
+  await actor.browser.evaluate<void>(`(() => {
+    const panel = document.querySelector('.signing-panel');
+    const field = panel.querySelector('input:not([type=checkbox])');
+    field.value = ${JSON.stringify(name)};
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    panel.querySelector('input[type=checkbox]').click();
+  })()`);
+  await poll(`${actor.name} signature prepared`, 25000, async () =>
+    (await actor.browser.evaluate<boolean>(
+      `!!document.querySelector('.signing-panel .sign-row button.primary:not(:disabled)')`
+    ))
+      ? true
+      : undefined
+  );
+  await actor.browser.evaluate<void>(
+    `document.querySelector('.signing-panel .sign-row button.primary').click()`
+  );
+  await poll(`${actor.name} recorded as signed`, 60000, async () =>
+    (await requestsOf(relicId))[0]?.signers.some(
+      (signerRow) => signerRow.email === email && signerRow.status === 'signed'
+    )
+      ? true
+      : undefined
+  );
+}
+
 async function run(): Promise<void> {
   const owner = await launchActor(env, 'owner', env.owner, true);
   const reader = await launchActor(env, 'reader', env.reader, true);
@@ -595,11 +838,8 @@ async function run(): Promise<void> {
     const readerCookie = await cookieHeader(reader.browser);
     const publicPath = join(scratch, 'public-proof.txt');
     await writeFile(publicPath, 'A public relik for the lookup gate.\n');
-    const publicId = stringAt(
-      await mcp('relic_publish', { path: publicPath }),
-      'relic_id',
-      'public relik'
-    );
+    const publicPublished = await mcp('relic_publish', { path: publicPath });
+    const publicId = stringAt(publicPublished, 'relic_id', 'public relik');
     const twoAddresses = { emails: [env.reader, INVITEE] };
     const signedOut = await api(
       env,
@@ -2203,6 +2443,414 @@ async function run(): Promise<void> {
     );
     lastReceipt = 113;
 
+    {
+      // ---- Stage C: signing (plan section 10, DIRECT_STEP_11 to 13). ----
+      // A fresh revision gives the request a version the browser can check.
+      await writeFile(
+        docPath,
+        'Direct share signing proof, version for signing.\n'
+      );
+      await mcp('relic_republish', { relic_id: relicId, path: docPath });
+      const signedVersion = await versionOf();
+
+      const tamperActor = await launchActor(env, 'tamper', TAMPER, true);
+      actors.push(tamperActor);
+      const tamperIdentity = await setUpIdentity(tamperActor, relicUrl);
+      tamperTarget = { email: env.third, identityId: thirdId.identityId };
+      // The owner key re-signs a tampered grant, so only the grant rule can refuse it.
+      tamperSign = async (message: Uint8Array): Promise<Uint8Array> =>
+        new Uint8Array(
+          await crypto.subtle.sign(
+            { name: 'ECDSA', hash: 'SHA-256' },
+            ownerKeys.keys.sig.privateKey,
+            new Uint8Array(message)
+          )
+        );
+
+      // DIRECT_STEP_12, part one: a public relik takes no grants. A session is refused
+      // by the owner check first; the publish-token path reaches the grant rule.
+      const publicOwnerAnswer = await api(
+        env,
+        'POST',
+        `/api/relics/${publicId}/signing/requests`,
+        {
+          cookie: ownerCookie,
+          body: { grants: [{ statement: {}, identity_signature: '' }] },
+        }
+      );
+      assert.equal(
+        publicOwnerAnswer.status,
+        400,
+        `session answer: ${JSON.stringify(publicOwnerAnswer.json)}`
+      );
+      assert.equal(problemCode(publicOwnerAnswer), 'invalid_statement');
+      const publicToken =
+        (await loadPublishState(publicId))?.publish_token ?? '';
+      const publicGrants = await api(
+        env,
+        'POST',
+        `/api/relics/${publicId}/signing/requests`,
+        {
+          body: {
+            publish_token: publicToken,
+            grants: [{ statement: {}, identity_signature: '' }],
+          },
+        }
+      );
+      assert.equal(
+        publicGrants.status,
+        400,
+        `public grants answer: ${JSON.stringify(publicGrants.json)}`
+      );
+      assert.equal(problemCode(publicGrants), 'invalid_statement');
+
+      // DIRECT_STEP_12, part two: an address with no identity is refused before any tap.
+      await openComposer(owner, relicUrl);
+      await setSigner(owner, 1, UNREGISTERED);
+      await clickButton(owner.browser, 'Review and send', '.signing-panel');
+      await poll('unregistered signer refused', 25000, async () =>
+        (await panelText(owner.browser)).includes("can't open this relik yet")
+          ? true
+          : undefined
+      );
+      const unregisteredSendOffered = await hasButton(
+        owner.browser,
+        'Send with passkey',
+        '.signing-panel'
+      );
+      assert.equal(
+        unregisteredSendOffered,
+        false,
+        'the composer offered a send'
+      );
+      assert.equal((await requestsOf(relicId)).length, 0, 'a request was made');
+      assert.equal(
+        mailbox.all().filter((m) => m.to.toLowerCase() === UNREGISTERED).length,
+        0,
+        'a mail went to an unregistered address'
+      );
+
+      // DIRECT_STEP_12, part three: the browser's grant, rewritten in transit, is refused by the grant rule.
+      await setSigner(owner, 1, TAMPER);
+      await clickButton(owner.browser, 'Review and send', '.signing-panel');
+      await poll('tamper review', 25000, async () =>
+        (await hasButton(owner.browser, 'Send with passkey', '.signing-panel'))
+          ? true
+          : undefined
+      );
+      tamperMode = 'grantee';
+      await clickButton(owner.browser, 'Send with passkey', '.signing-panel');
+      const granteeRefusal = await poll(
+        'grantee refusal',
+        60000,
+        async () => tamperResult
+      );
+      tamperResult = undefined;
+      assert.equal(
+        granteeRefusal.status,
+        400,
+        'a non-signer grantee was accepted'
+      );
+      assert.equal(granteeRefusal.code, 'invalid_statement');
+      assert.equal(granteeRefusal.statementCheck, 'grants');
+      tamperMode = 'versions';
+      await clickButton(owner.browser, 'Send with passkey', '.signing-panel');
+      const versionRefusal = await poll(
+        'versions refusal',
+        60000,
+        async () => tamperResult
+      );
+      tamperResult = undefined;
+      assert.equal(
+        versionRefusal.status,
+        400,
+        'a grant for another version was accepted'
+      );
+      assert.equal(versionRefusal.code, 'invalid_statement');
+      assert.equal(versionRefusal.statementCheck, 'grants');
+      assert.equal(
+        await store.getGrant(relicId, tamperIdentity.identityId),
+        undefined,
+        'a refused grant was stored'
+      );
+      emit(
+        116,
+        `DIRECT_STEP_12_SIGNING_REFUSALS unregistered_signer=refused_no_request send_offered=${unregisteredSendOffered} grants_on_public_session=${publicOwnerAnswer.status} grants_on_public_publish_token=${publicGrants.status} grantee_not_signer=${granteeRefusal.status} versions_not_request=${versionRefusal.status} unregistered_mail=0 refused_grants_stored=0`
+      );
+      lastReceipt = 116;
+
+      // DIRECT_STEP_13, part one: the grant route refuses under the kill switch before it consumes the challenge.
+      killNextGrant = true;
+      await freshSharePanel(owner, relicUrl);
+      await addToPanel(owner, [TAMPER], 1);
+      await click(owner.browser, '[data-action="share-passkey"]');
+      const killed = await poll(
+        'kill switch answer',
+        60000,
+        async () => killedGrant
+      );
+      killNextGrant = false;
+      assert.equal(killed.status, 503);
+      assert.equal(killed.code, 'service_paused');
+      // The browser's own grant body, with its wraps, is replayed unchanged.
+      const replayedGrant = await apps[0]!.fetch(
+        new Request(killed.url, {
+          method: 'POST',
+          headers: killed.headers,
+          body: killed.body.slice(0),
+        })
+      );
+      const replayedText = await replayedGrant.clone().text();
+      assert.equal(replayedGrant.status, 201, `replay answer: ${replayedText}`);
+      assert.ok(await store.getGrant(relicId, tamperIdentity.identityId));
+
+      // DIRECT_STEP_11. One tap grants the signers who have no grant and sends the request.
+      const signer = await launchActor(env, 'direct-signer', SIGNER, true);
+      actors.push(signer);
+      const signerIdentity = await setUpIdentity(signer, relicUrl);
+      await openComposer(owner, relicUrl);
+      await setSigner(owner, 1, SIGNER);
+      await addSigner(owner, 2);
+      await setSigner(owner, 2, INVITEE_FIVE);
+      await addSigner(owner, 3);
+      await setSigner(owner, 3, INVITEE);
+      await addSigner(owner, 4);
+      await setSigner(owner, 4, env.owner);
+      await clickButton(owner.browser, 'Review and send', '.signing-panel');
+      await poll('composer review', 25000, async () =>
+        (await hasButton(owner.browser, 'Send with passkey', '.signing-panel'))
+          ? true
+          : undefined
+      );
+      assert.ok(
+        (await panelText(owner.browser)).includes('access when you send'),
+        'the composer did not say the signers will be granted'
+      );
+      // Editing a signer after review invalidates the review: nothing is sent.
+      await setSigner(owner, 1, env.reader);
+      if (await hasButton(owner.browser, 'Send with passkey', '.signing-panel'))
+        await clickButton(owner.browser, 'Send with passkey', '.signing-panel');
+      await poll('review invalidated', 25000, async () =>
+        (await hasButton(owner.browser, 'Review and send', '.signing-panel'))
+          ? true
+          : undefined
+      );
+      // The composer either says so on the next tap or drops the review on the edit.
+      const reviewEdit = (await panelText(owner.browser)).includes(
+        'Review it again'
+      )
+        ? 'notice'
+        : 'reset_on_edit';
+      assert.equal(
+        await hasButton(owner.browser, 'Send with passkey', '.signing-panel'),
+        false,
+        'the edited review still offers a send'
+      );
+      assert.equal(
+        (await requestsOf(relicId)).length,
+        0,
+        'an invalidated review sent'
+      );
+      await setSigner(owner, 1, SIGNER);
+      await clickButton(owner.browser, 'Review and send', '.signing-panel');
+      await poll('composer review again', 25000, async () =>
+        (await hasButton(owner.browser, 'Send with passkey', '.signing-panel'))
+          ? true
+          : undefined
+      );
+
+      const mailMark = mailbox.mark();
+      const signBeforeSend = await signCountTotal(owner.browser);
+      await clickButton(owner.browser, 'Send with passkey', '.signing-panel');
+      await poll('request sent', 60000, async () =>
+        (await panelText(owner.browser)).includes('Relik emailed')
+          ? true
+          : undefined
+      );
+      const signDelta = (await signCountTotal(owner.browser)) - signBeforeSend;
+      const openRequest = (await requestsOf(relicId))[0];
+      assert.ok(openRequest, 'the request was not recorded');
+      assert.deepEqual(
+        openRequest.signers.map((signerRow) => signerRow.email).sort(),
+        [SIGNER, INVITEE_FIVE, INVITEE, env.owner].sort(),
+        'the request does not name the four signers'
+      );
+      const sendBody = [...requestBodies]
+        .reverse()
+        .map((body) => {
+          try {
+            return JSON.parse(body) as Json;
+          } catch {
+            return undefined;
+          }
+        })
+        .find(
+          (body) =>
+            Array.isArray(body?.['grants']) &&
+            (body['grants'] as unknown[]).length > 0
+        );
+      assert.ok(sendBody, 'the send carried no grants');
+      const grantRows = sendBody['grants'] as Json[];
+      const grantedEmails = grantRows
+        .map((grant) => String((grant['statement'] as Json)['grantee_email']))
+        .sort();
+      assert.deepEqual(
+        grantedEmails,
+        [SIGNER, INVITEE_FIVE].sort(),
+        'the send granted a signer that already had a grant, or missed one'
+      );
+      const grantVersions = grantRows.map(
+        (grant) => (grant['statement'] as Json)['versions']
+      );
+      assert.deepEqual(
+        grantVersions,
+        grantRows.map(() => [signedVersion])
+      );
+      assert.ok(
+        await store.getGrant(relicId, signerIdentity.identityId),
+        'the new signer was not granted'
+      );
+      assert.ok(
+        await store.getGrant(relicId, existingIdentity.identityId),
+        'the invited claimant was not granted by the send'
+      );
+      const signerMail = await mailbox.await(
+        SIGNER,
+        mailMark,
+        (mail) => mail.subject.includes('turn to sign'),
+        'signer invitation'
+      );
+      const signerMails = mailbox
+        .all()
+        .slice(mailMark)
+        .filter(
+          (mail) =>
+            mail.to.toLowerCase() === SIGNER &&
+            mail.subject.includes('turn to sign')
+        ).length;
+      assert.ok(signerMail);
+      assert.equal(
+        signDelta,
+        1,
+        'the send used more than one passkey assertion'
+      );
+
+      // The public relik still takes a signer through the device path, with no lookup.
+      const lookupsBeforePublic = lookupCalls;
+      await mcp('relic_request_signatures', {
+        relic_id: publicId,
+        signers: [{ email: PUBLIC_SIGNER }],
+      });
+      const publicOpen = (await requestsOf(publicId)).length;
+      const publicNoLookup =
+        lookupCalls === lookupsBeforePublic && publicOpen === 1;
+      assert.equal(
+        publicNoLookup,
+        true,
+        'a public signer used the private lookup'
+      );
+
+      await signAs(signer, relicUrl, SIGNER, relicId, 'Direct Signer');
+      await signAs(
+        fifthInvitee,
+        relicUrl,
+        INVITEE_FIVE,
+        relicId,
+        'Direct Invitee'
+      );
+      await signAs(
+        invitee,
+        relicUrl,
+        INVITEE,
+        relicId,
+        'Direct Confirmed Invitee'
+      );
+      await signAs(owner, relicUrl, env.owner, relicId, 'Direct Owner');
+
+      const certificatePath = join(scratch, 'direct-signing.json');
+      await mcp('relic_read_signing', {
+        relic_id: relicId,
+        save_certificate_to: certificatePath,
+      });
+      const verifiedCertificate = await mcp('relic_verify_certificate', {
+        certificate_path: certificatePath,
+        file_path: docPath,
+        trusted_owner_identity_id: ownerKeys.identityId,
+      });
+      assert.equal(
+        verifiedCertificate['valid'],
+        true,
+        JSON.stringify(verifiedCertificate)
+      );
+      assert.equal(verifiedCertificate['content'], 'match');
+      emit(
+        115,
+        `DIRECT_STEP_11_SIGNING_ONE_TAP owner_sign_count_delta=${signDelta} grants=${grantedEmails.length} new_signer_versions=[${signedVersion}] owner_as_signer=accepted request=${openRequest.status ?? 'unreported'} signer_mails=${signerMails} signed=ok certificate=valid public_signer=no_lookup known_signer=no_new_grant invited_claimant=granted_on_send review_edit=${reviewEdit}`
+      );
+      lastReceipt = 115;
+
+      // DIRECT_STEP_13, part two: the MCP share lines, and the enumeration lines.
+      const callsBeforeShare = serviceCalls;
+      const directShare = await mcp('relic_share', {
+        relic_id: relicId,
+        emails: [UNREGISTERED],
+      });
+      const shareCalls = serviceCalls - callsBeforeShare;
+      const localState = await localPrivateState(env, relicId);
+      const shareOutput = JSON.stringify(directShare);
+      const keyInOutput = [localState.publishToken, ...localState.keys].some(
+        (secret) => shareOutput.includes(secret)
+      );
+      assert.equal(shareCalls, 0, 'relic_share made a service call');
+      assert.equal(keyInOutput, false, 'a key reached relic_share output');
+      const refusedSigner = await callMcpRaw(env, 'relic_request_signatures', {
+        relic_id: relicId,
+        signers: [{ email: UNREGISTERED }],
+      });
+      assert.equal(refusedSigner.isError, true);
+      assert.equal(refusedSigner.structured['code'], 'recipient_forged_grant');
+      assert.ok(refusedSigner.structured['grant_url'] !== undefined);
+      emit(
+        117,
+        `DIRECT_STEP_13_MCP share_grant_url=fragment_addresses service_calls=${shareCalls} key_in_output=${keyInOutput} request_signatures=recipient_forged_grant grant_url_in_refusal=true`
+      );
+      emit(
+        119,
+        `DIRECT_STEP_13_KILL_SWITCH grant=${killed.status}_${killed.code} replay=${replayedGrant.status} nonce_consumed_by_refusal=false`
+      );
+      const stripInstance = (body: Json): Json => {
+        const { instance: _instance, ...rest } = body;
+        return rest;
+      };
+      const readerNow = await cookieHeader(reader.browser);
+      const registeredLookup = await api(
+        env,
+        'POST',
+        `/api/relics/${relicId}/grants/lookup`,
+        { cookie: readerNow, body: { emails: [env.third] } }
+      );
+      const unregisteredLookup = await api(
+        env,
+        'POST',
+        `/api/relics/${relicId}/grants/lookup`,
+        { cookie: readerNow, body: { emails: [UNREGISTERED] } }
+      );
+      const identicalRefusal =
+        registeredLookup.status === unregisteredLookup.status &&
+        JSON.stringify(stripInstance(registeredLookup.json)) ===
+          JSON.stringify(stripInstance(unregisteredLookup.json));
+      assert.equal(
+        identicalRefusal,
+        true,
+        'a non-owner can tell registered from unregistered'
+      );
+      emit(
+        118,
+        `DIRECT_STEP_13_ENUMERATION non_owner_registered=${registeredLookup.status} non_owner_unregistered=${unregisteredLookup.status} identical=${identicalRefusal}`
+      );
+      lastReceipt = 119;
+    }
+
     // Whole-relik deletion: every invitation and claim of this relik goes with it.
     const wholeNonce = await api(env, 'POST', '/api/attest/nonce', {
       cookie: ownerCookie,
@@ -2245,10 +2893,9 @@ async function run(): Promise<void> {
       `INVITE_STEP_12_RELIK_DELETE whole_relik=invites_${invitesLeft},claims_${claimsLeft}`
     );
     lastReceipt = 114;
-
-    // Stage C (DIRECT_STEP_11 to 13: signing grants, signing refusals, MCP share lines) is not yet written.
+    // Stage D (negative controls, PATH.md, CI) is not written in this checkpoint.
     throw new Error(
-      'direct steps 11 to 13 (signing) are not yet written in this checkpoint'
+      'stage D (negative controls) is not yet written in this checkpoint'
     );
   } finally {
     for (const actor of actors) await actor.browser.close().catch(() => {});

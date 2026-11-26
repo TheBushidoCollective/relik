@@ -487,6 +487,18 @@ test('a signing request grants its named private signer with the same attestatio
   expect(saved?.attestation.statements[0]?.kind).toBe('signing_request');
 });
 
+test('grants on a public relik are refused as invalid_statement before the owner lookup', async () => {
+  const f = await fixture();
+  const response = await f.post(
+    f.a,
+    `${root}/signing/requests`,
+    { grants: [{ statement: {}, identity_signature: '' }] },
+    f.first.cookie
+  );
+  expect(response.status).toBe(400);
+  expect(response.body['code']).toBe('invalid_statement');
+});
+
 test('a grant that applies stays when the request it came with is refused, and the refusal lists it', async () => {
   const f = await fixture();
   await f.enablePrivate();

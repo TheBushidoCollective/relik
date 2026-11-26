@@ -243,7 +243,8 @@ export async function createSigningRequest(
       : await currentIdentity(env, normalizeEmail(session.email));
   if (!('publish_token' in body) && identity === undefined)
     throw new ProblemError('identity_required');
-  const owner = await ownerRecord(env, row);
+  // Refused before the owner lookup: a public relik has no owner identity, so
+  // ownerRecord would answer owner_required, and plan 3.3 C asks for this 400.
   if (
     'grants' in body &&
     (row.access !== 'private' ||
@@ -252,6 +253,7 @@ export async function createSigningRequest(
   ) {
     throw new ProblemError('invalid_statement', { statement_check: 'grants' });
   }
+  const owner = await ownerRecord(env, row);
   let statement: SigningRequestStatement;
   let signature: string;
   let signerKind: 'identity' | 'device';
