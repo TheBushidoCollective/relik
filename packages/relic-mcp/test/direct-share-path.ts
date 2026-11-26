@@ -2082,7 +2082,6 @@ async function run(): Promise<void> {
         ? true
         : undefined
     );
-    await inPage(inviteeThree.browser, pageCreatePasskey, { prf: true });
     await click(inviteeThree.browser, '[data-action="invite-keep"]');
     await poll('third invitation claimed', 25000, async () =>
       (await store.getInvite(relicId, toRemove.inviteId))?.status === 'claimed'
