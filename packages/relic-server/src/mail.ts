@@ -566,6 +566,7 @@ export function directShareMail(p: {
     `Your fingerprint: ${p.fingerprint}`,
     `Open it: ${p.relicUrl}`,
     "You'll confirm with your passkey.",
+    `If you don't know ${p.ownerAddress}, ignore this email.`,
   ];
   return {
     subject: `${p.ownerAddress} shared a relik with you`,
@@ -576,11 +577,14 @@ export function directShareMail(p: {
 
 export function inviteNoticeMail(p: {
   readonly ownerAddress: string;
-  readonly expiresAt: string;
+  /** When the invitation stops opening, in milliseconds. Shown as a UTC day. */
+  readonly expiresAt: number;
 }): OutboundMail {
+  const d = new Date(p.expiresAt);
+  const until = `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
   const paragraphs = [
     `${p.ownerAddress} invited you to open a private relik on Relik.`,
-    `They'll send you the link themselves: it holds the key, and Relik never has it. The link opens only after you confirm this address, and it works until ${p.expiresAt}.`,
+    `They'll send you the link themselves: it holds the key, and Relik never has it. The link opens only after you confirm this address, and it works until ${until}.`,
     `If you don't know ${p.ownerAddress}, ignore this email.`,
   ];
   return {

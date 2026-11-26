@@ -19,6 +19,11 @@ import {
   statementBytesOf,
   type StatementDraft,
 } from '../private/keys.ts';
+import {
+  fingerprintGroups,
+  h,
+  setChildren,
+} from '../private/fingerprint-input.ts';
 import { privateKeysOf } from '../private/ops.ts';
 import { type GrantTarget, lookupShares } from '../private/direct-share.ts';
 import { verifiedPartyKeys } from '../private/rekey.ts';
@@ -87,18 +92,22 @@ export async function resolveSigners(
       signers.push({ email, identity_id: row.party.identity.identity_id });
       continue;
     }
+    // Plan 3.8: an address holding only an invitation is told why, not sent to invite again.
     return {
       kind: 'refused',
-      message: `${email} can't open this relik yet, so they can't be asked to sign. Invite them in Access first.`,
+      message:
+        row?.kind === 'unregistered' && row.invites.length > 0
+          ? `${email} has an invitation but hasn't set up a private-share key, so they can't sign yet.`
+          : `${email} can't open this relik yet, so they can't be asked to sign. Invite them in Access first.`,
     };
   }
   return { kind: 'ready', signers, grants };
 }
 
-/** The notice that names each person a send will grant, with the fingerprint to check. */
+/** The notice that names each person a send will grant. Each fingerprint is listed under its address. */
 export function grantNotice(grants: readonly GrantTarget[]): string {
   if (grants.length === 0) return '';
-  return `Relik will grant ${grants.map((grant) => grant.party.email).join(', ')} access when you send. Check each fingerprint first: ${grants.map((grant) => formatFingerprint(grant.fingerprint)).join('; ')}.`;
+  return `Relik will grant ${grants.map((grant) => grant.party.email).join(', ')} access when you send. Check each fingerprint first.`;
 }
 
 /** Owner-only composer. Private signer identities come from the owner's verified grants. */
@@ -237,7 +246,7 @@ export function openSigningComposer(input: {
     'Select a box and use the arrow keys to move it, Shift with the arrows to resize, Delete to remove.';
   placementControls.append(pageSelect, keyboard);
   placement.append(placementTitle, placementControls, keyboardHint);
-  const notice = document.createElement('p');
+  const notice = document.createElement('div');
   notice.className = 'panel-notice';
   notice.setAttribute('role', 'status');
   const send = document.createElement('button');
@@ -397,7 +406,34 @@ export function openSigningComposer(input: {
             return;
           }
           resolved = next;
-          notice.textContent = grantNotice(next.grants);
+          // Each fingerprint sits under its own address, so the owner checks
+          // the right one with the right person.
+          setChildren(
+            notice,
+            ...(next.grants.length === 0
+              ? []
+              : [
+                  h('p', {}, grantNotice(next.grants)),
+                  h(
+                    'ul',
+                    { class: 'grant-list' },
+                    ...next.grants.map((grant) =>
+                      h(
+                        'li',
+                        {},
+                        h('strong', {}, grant.party.email),
+                        h(
+                          'p',
+                          { class: 'fingerprint is-small' },
+                          ...fingerprintGroups(
+                            formatFingerprint(grant.fingerprint)
+                          )
+                        )
+                      )
+                    )
+                  ),
+                ])
+          );
           send.dataset['confirmed'] = 'true';
           send.textContent = 'Send with passkey';
         })

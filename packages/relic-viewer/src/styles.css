@@ -7074,6 +7074,28 @@ mark[data-concealed] {
 @media (max-width: 34rem) {
   .private-strip { padding: 0.6rem 0.75rem; }
 }
+
+/* The owner's Access control on the band: a stroked glyph, then its label. */
+.bar > [data-action="open-access-panel"] .icon { fill: none; }
+/*
+ * The private owner's band carries Access and Settings beside every reader
+ * action: more than a 1440px screen holds with every label, which pushed
+ * Access past the edge. Below 95rem the least-used actions keep only their
+ * icons, below 80rem all of them do (as every action does under 34rem), and
+ * Access keeps its word. Each keeps its accessible name.
+ */
+@media (max-width: 95rem) {
+  .bar:has(> [data-action="open-access-panel"]) :is(.action-relics, .action-history, .action-report, .action-upload) > span {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+}
+@media (max-width: 80rem) {
+  .bar:has(> [data-action="open-access-panel"]) .actions .action > span:not(.action-count, .decision-tally) {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+}
 /*
  * ---------- the access panel ----------
  *
@@ -7122,7 +7144,9 @@ mark[data-concealed] {
 .panel-close:hover { color: var(--patina-ink); background: var(--ground); }
 .panel-close:focus-visible { outline: 2px solid var(--patina); outline-offset: -2px; }
 
-.panel-body { display: grid; gap: 1.5rem; padding: 1.1rem 1.25rem 1.5rem; }
+/* One column the panel's width: a long word (an invitation link, an
+   address) wraps inside it rather than widening the grid past the sheet. */
+.panel-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; padding: 1.1rem 1.25rem 1.5rem; }
 .panel-lead { margin: 0; font-size: 0.86rem; color: var(--ink-soft); }
 .panel-section { display: grid; gap: 0.6rem; }
 .panel-section > h3 {
@@ -7136,6 +7160,8 @@ mark[data-concealed] {
   background: var(--ground); border-left: 3px solid var(--patina);
 }
 .panel-notice.is-oxide { border-left-color: var(--oxide); }
+.panel-notice p { margin: 0; }
+.panel-notice p + p { margin-top: 0.4rem; }
 .panel-foot { margin: 0; padding-top: 0.85rem; border-top: 1px solid var(--rule); font-size: 0.82rem; color: var(--ink-soft); }
 
 /* On a wide screen the relic moves over rather than sitting under the sheet. */
@@ -7194,6 +7220,107 @@ fieldset.versions legend { padding: 0; margin: 0 0 0.45rem; font-size: 0.86rem; 
 .row-kind {
   font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase;
   color: var(--ink-soft); border: 1px solid var(--rule-strong); padding: 0 0.3rem; white-space: nowrap;
+}
+
+/*
+ * ---------- direct share and invitations ----------
+ *
+ * The Share and Invitations sections of the access panel (mock DS and IV).
+ * A row is a ticket on a grid: a check or a mark, the address and what it
+ * means, its kind and its action, and under them anything the owner has to
+ * read before the tap, such as a fingerprint plate.
+ */
+.row-list > li:is([data-share-row], [data-invite]) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.35rem 0.7rem;
+  padding: 0.75rem 0.25rem;
+}
+:is([data-share-row], [data-invite]) > .row-main { grid-column: 2; gap: 0.15rem; }
+:is([data-share-row], [data-invite]) > .row-end { grid-column: 3; display: flex; align-items: center; gap: 0.4rem; }
+:is([data-share-row], [data-invite]) > .row-extra {
+  grid-column: 2 / -1;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem;
+}
+:is([data-share-row], [data-invite]) .row-meta { font-size: 0.8rem; }
+:is([data-share-row], [data-invite]) .row-kind { align-self: start; margin-top: 0.15rem; }
+.row-extra .fp-caption { margin: 0; }
+.row-check { margin: 0.2rem 0 0; accent-color: var(--patina); width: 1rem; height: 1rem; }
+.row-dot { display: inline-flex; width: 1rem; height: 1rem; margin-top: 0.2rem; color: var(--ink-soft); }
+/* The row marks and the remove control are stroked glyphs, not filled ones. */
+.row-dot .icon, .row-end .btn .icon { fill: none; }
+.row-meta.is-oxide { color: var(--oxide); }
+.row-kind.is-patina { color: var(--patina); border-color: var(--patina); }
+.row-kind.is-oxide { color: var(--oxide); border-color: var(--oxide); }
+.btn.is-oxide { color: var(--oxide); }
+.btn.is-oxide:hover { border-color: var(--oxide); color: var(--oxide); }
+.btn.is-icon { padding: 0.3rem 0.4rem; }
+
+.add-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; }
+.add-row .compose-input { padding: 0.45rem 0.6rem; font-size: 0.88rem; }
+.days { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--ink-soft); }
+.days select {
+  padding: 0.2rem 0.35rem; background: var(--ground); color: var(--ink);
+  border: 1px solid var(--rule-strong); font-family: var(--mono); font-size: 0.78rem;
+}
+.lifetime { display: grid; gap: 0.35rem; padding: 0.65rem 0.75rem; background: var(--ground); border: 1px solid var(--rule); }
+.lifetime-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.86rem; }
+.lifetime-row .compose-input { width: 4.5rem; padding: 0.3rem 0.45rem; font-size: 0.88rem; }
+.lifetime-row .compose-input[aria-invalid="true"] { border-color: var(--oxide); }
+.lifetime .hint { margin: 0; font-size: 0.78rem; color: var(--ink-soft); }
+:is([data-share-section], [data-invites-section]) .err {
+  display: flex; gap: 0.35rem; align-items: flex-start; margin: 0; font-size: 0.8rem; color: var(--oxide);
+}
+:is([data-share-section], [data-invites-section]) .err:empty { display: none; }
+.share-foot { display: grid; gap: 0.5rem; justify-items: start; }
+.share-sum { margin: 0; font-size: 0.82rem; color: var(--ink-soft); }
+[data-share-section] .passkey-note { margin: 0; font-size: 0.78rem; color: var(--ink-soft); }
+
+/* A primary that cannot be pressed yet reads as resting, not as ready. */
+.access-panel .action.primary:disabled,
+.invite-banner .action.primary:disabled {
+  color: var(--ink-soft);
+  background: var(--ground);
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+  cursor: default;
+}
+.access-panel .btn:disabled { color: var(--ink-soft); border-color: var(--rule); background: var(--surface); cursor: default; }
+
+/* After the tap: each invitation link once, on its own card, broken anywhere so it never widens the sheet. */
+.link-card {
+  display: grid; gap: 0.5rem; padding: 0.75rem 0.85rem; background: var(--ground);
+  border: 1px solid var(--rule); border-left: 3px solid var(--oxide);
+}
+.link-card strong { font-weight: 600; font-size: 0.9rem; word-break: break-word; }
+.link-text {
+  margin: 0; padding: 0.45rem 0.55rem; background: var(--surface); border: 1px dashed var(--rule-strong);
+  font-family: var(--mono); font-size: 0.72rem; line-height: 1.45; word-break: break-all; color: var(--ink);
+  user-select: all;
+}
+.link-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.link-actions .btn { text-decoration: none; }
+[data-invite-links] .feedback { font-family: var(--mono); font-size: 0.72rem; color: var(--patina); min-height: 1em; }
+.link-gone { margin: 0; font-size: 0.82rem; color: var(--ink-soft); font-style: italic; }
+
+/* The composer's grants: each address with the fingerprint to check with that person. */
+.grant-list { display: grid; gap: 0.6rem; margin: 0.6rem 0 0; padding: 0; list-style: none; }
+.grant-list li { display: grid; gap: 0.35rem; justify-items: start; }
+.grant-list strong { font-weight: 600; word-break: break-word; }
+
+/* The invitee's banner above the file (mock `invite-ready`): who invited
+   them and until when, with Keep access beside it. */
+.invite-banner {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem 1.25rem;
+  padding: 0.75rem 1.25rem; background: var(--surface);
+  border-bottom: 1px solid var(--rule); border-left: 3px solid var(--patina);
+  font-size: 0.9rem;
+}
+.invite-banner p { margin: 0; min-width: 0; }
+.invite-banner .note { flex-basis: 100%; font-size: 0.8rem; color: var(--ink-soft); }
+.invite-banner .action.primary { align-self: center; }
+@media (max-width: 34rem) {
+  .invite-banner { padding: 0.6rem 0.75rem; }
 }
 
 /* ---------- dialogs: revoke and delete ---------- */

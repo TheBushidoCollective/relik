@@ -54,6 +54,17 @@ export function describeVersions(versions: readonly number[]): string {
   return `${versions.slice(0, -1).join(', ')} and ${versions[versions.length - 1]}`;
 }
 
+/** A version list with its noun, singular or plural: "version 4", "versions 2 and 3". */
+export function versionsPhrase(versions: readonly number[]): string {
+  return `${versions.length === 1 ? 'version' : 'versions'} ${describeVersions(versions)}`;
+}
+
+/** The same at the start of a sentence: "Version 4", "Versions 2 and 3". */
+export function versionsSentence(versions: readonly number[]): string {
+  const phrase = versionsPhrase(versions);
+  return `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}`;
+}
+
 const KIND_LABEL: Readonly<Record<AccessEventJSON['kind'], string>> = {
   request: 'Access requested',
   grant: 'Access granted',

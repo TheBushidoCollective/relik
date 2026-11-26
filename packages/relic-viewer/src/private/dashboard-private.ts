@@ -11,7 +11,11 @@ import {
   identityFingerprint,
 } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
-import { accessLogSection, formatUtcDay } from './access-log.ts';
+import {
+  accessLogSection,
+  formatUtcDay,
+  versionsPhrase,
+} from './access-log.ts';
 import { deviceApprovalSection, devicesSection } from './devices.ts';
 import {
   h,
@@ -439,7 +443,7 @@ function sharedRow(relic: SharedRelic): HTMLElement {
       h(
         'span',
         { class: 'row-meta' },
-        `From ${relic.owner.email} \u00b7 versions ${relic.readable_versions.join(', ')} \u00b7 expires ${formatUtcDay(relic.expires_at)}`
+        `From ${relic.owner.email} \u00b7 ${versionsPhrase(relic.readable_versions)} \u00b7 expires ${formatUtcDay(relic.expires_at)}`
       )
     )
   );

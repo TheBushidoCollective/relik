@@ -13,10 +13,11 @@ import {
 } from '@relic/format/private';
 import { copyText } from '../popover.ts';
 import type { ViewerDeps } from '../viewer.ts';
-import { describeVersions, formatUtcDay } from './access-log.ts';
+import { formatUtcDay, versionsSentence } from './access-log.ts';
 import {
   fingerprintGroups,
   h,
+  icon,
   problemMessage,
   setChildren,
   waiting,
@@ -125,7 +126,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
 
   const versionsHost = h('div', { class: 'version-picks' });
   const lifetimeInput = h('input', {
-    class: 'input',
+    class: 'compose-input is-mono',
     id: 'lt-days',
     'data-lifetime-days': true,
     inputmode: 'numeric',
@@ -151,7 +152,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     )
   );
   const addInput = h('input', {
-    class: 'input',
+    class: 'compose-input',
     type: 'text',
     inputmode: 'email',
     autocomplete: 'email',
@@ -275,21 +276,22 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
       'button',
       {
         type: 'button',
-        class: 'btn is-small',
+        class: 'btn is-small is-icon',
         'data-remove-row': true,
         'aria-label': `Remove ${row.email}`,
+        title: 'Remove',
         onclick: () => {
           rows.splice(index, 1);
           paintRows();
         },
       },
-      'Remove'
+      icon('cross')
     );
     if (row.kind === 'reader') {
       return h(
         'li',
         { 'data-share-row': true, 'data-share-state': 'reader' },
-        h('span', { class: 'row-dot' }),
+        h('span', { class: 'row-dot' }, icon('check')),
         h(
           'div',
           { class: 'row-main' },
@@ -308,7 +310,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
       return h(
         'li',
         { 'data-share-row': true, 'data-share-state': 'self' },
-        h('span', { class: 'row-dot' }),
+        h('span', { class: 'row-dot' }, icon('user')),
         h(
           'div',
           { class: 'row-main' },
@@ -322,7 +324,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
       return h(
         'li',
         { 'data-share-row': true, 'data-share-state': 'unverified' },
-        h('span', { class: 'row-dot' }),
+        h('span', { class: 'row-dot' }, icon('warn')),
         h(
           'div',
           { class: 'row-main' },
@@ -366,15 +368,19 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
           { class: 'row-end' },
           h(
             'span',
-            { class: invited ? 'row-kind is-patina' : 'row-kind is-patina' },
+            { class: 'row-kind is-patina' },
             invited ? 'Accepted' : 'Key'
           ),
           remove
         ),
         h(
           'div',
-          { class: 'row-extra', 'data-fingerprint': 'recipient' },
-          ...fingerprintGroups(formatFingerprint(row.fingerprint))
+          { class: 'row-extra' },
+          h(
+            'p',
+            { class: 'fingerprint is-small', 'data-fingerprint': 'recipient' },
+            ...fingerprintGroups(formatFingerprint(row.fingerprint))
+          )
         )
       );
     }
@@ -499,7 +505,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
           h(
             'span',
             { class: 'row-meta' },
-            `Open until ${formatUtcDay(link.expiresAt)}. Versions ${describeVersions(link.versions)}.`
+            `Open until ${formatUtcDay(link.expiresAt)}. ${versionsSentence(link.versions)}.`
           ),
           h('p', { class: 'link-text', 'data-link-text': true }, link.url),
           h(
@@ -556,7 +562,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
           h(
             'span',
             { class: 'row-meta' },
-            `Open until ${formatUtcDay(item.expiresAt)}. Versions ${describeVersions(item.versions)}.`
+            `Open until ${formatUtcDay(item.expiresAt)}. ${versionsSentence(item.versions)}.`
           ),
           h('p', { class: 'link-gone' }, 'This link is no longer shown.')
         )
@@ -773,6 +779,8 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     },
     fill(emails) {
       addInput.value = emails.join(', ');
+      // Invite again fills a field far up the panel; focus brings it into view.
+      addInput.focus();
     },
   };
 }

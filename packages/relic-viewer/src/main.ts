@@ -11552,12 +11552,26 @@ export function renderReady(
   let activeView = view;
   const versionStore = versionsFor(relicId, view, deps);
 
+  /**
+   * Swaps the band for a rebuilt one. A control a page decorator added to the
+   * band (`data-band-extra`, the private owner's Access control) belongs to
+   * the page rather than to one build of the band, so it moves across:
+   * without this, the first count to land took the owner's Access away.
+   */
+  const swapBar = (current: HTMLElement, replacement: HTMLElement): void => {
+    for (const extra of Array.from(current.children)) {
+      if (extra.getAttribute('data-band-extra') !== null) {
+        replacement.append(extra);
+      }
+    }
+    current.replaceWith(replacement);
+    bar = replacement;
+  };
+
   /** Swaps in a band carrying the new counts, while this page still shows it. */
   const replaceBar = (): void => {
     if (bar === undefined || bar.isConnected !== true) return;
-    const replacement = barFor(false);
-    bar.replaceWith(replacement);
-    bar = replacement;
+    swapBar(bar, barFor(false));
   };
 
   const refreshDecisionTally = (shown: ReadyView): void => {
@@ -11753,9 +11767,7 @@ export function renderReady(
         (count) => {
           commentCount = count;
           if (bar === undefined) return;
-          const replacement = barFor(false);
-          bar.replaceWith(replacement);
-          bar = replacement;
+          swapBar(bar, barFor(false));
         },
         (version) => {
           void showVersion(version);

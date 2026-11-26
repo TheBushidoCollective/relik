@@ -841,7 +841,7 @@ export async function applyGrants(
         invite.email,
         inviteNoticeMail({
           ownerAddress: owner.email,
-          expiresAt: iso(invite.expiresAt),
+          expiresAt: invite.expiresAt,
         })
       );
     } catch {

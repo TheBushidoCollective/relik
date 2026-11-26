@@ -17,10 +17,10 @@ import { openContentStore } from '../content.ts';
 import { entryView, openFolderRelic } from '../folder-relic.ts';
 import { readSession, requestMagicLink } from '../comments.ts';
 import { keylessLink } from '../copy-link.ts';
-import { PrivateApiError, privateApi } from './fingerprint-input.ts';
+import { icon, PrivateApiError, privateApi } from './fingerprint-input.ts';
 import { renderPrivateDashboard } from './dashboard-private.ts';
 import { openAccessPanel } from './owner-panel.ts';
-import { describeVersions, formatUtcDay } from './access-log.ts';
+import { formatUtcDay, versionsPhrase } from './access-log.ts';
 import {
   claimInvitation,
   inviteVersionKey,
@@ -145,8 +145,8 @@ const STAGES_HTML = `
     <div class="signin" id="signin-form">
       <form class="signin-form" id="signin-email-form">
         <label class="compose-field"><span>Email address</span><input class="compose-input" type="email" id="signin-email" autocomplete="email" placeholder="you@example.com" required></label>
-        <button type="submit" class="action primary">Request access</button>
-        <p class="card-fine">Relik emails you a code to confirm the address. Then the owner is asked.</p>
+        <button type="submit" class="action primary" id="signin-submit">Request access</button>
+        <p class="card-fine" id="signin-fine">Relik emails you a code to confirm the address. Then the owner is asked.</p>
       </form>
       <form class="signin-form" id="signin-code-form" hidden>
         <label class="compose-field"><span>Code from the email</span><input class="compose-input code-input" inputmode="numeric" autocomplete="one-time-code" id="signin-code" maxlength="6"></label>
@@ -173,13 +173,14 @@ const STAGES_HTML = `
 <div class="stage" data-for="invite-key-missing" hidden>
   <div class="card is-refusal">
     <h1 class="card-title" tabindex="-1">This invitation link is incomplete</h1>
-    <p class="card-body">The part of the link after the # is missing. Open the link from the email again.</p>
+    <p class="card-body">This invitation link is incomplete. Open the link from the email again.</p>
   </div>
 </div>
 
 <div class="stage" data-for="invite-wrong-address" hidden>
   <div class="card is-refusal">
-    <h1 class="card-title" tabindex="-1">Not for this address</h1>
+    <h1 class="card-title" tabindex="-1">This invitation doesn't open here</h1>
+    <p class="card-meta" data-signed-in></p>
     <p class="card-body">This invitation doesn't open for <span data-invite-address></span>. Sign in with the address it was sent to.</p>
     <div class="card-actions"><button type="button" class="action primary" data-action="invite-signin-again">Sign in with another address</button></div>
   </div>
@@ -187,24 +188,29 @@ const STAGES_HTML = `
 
 <div class="stage" data-for="invite-claimed" hidden>
   <div class="card">
-    <h1 class="card-title" tabindex="-1">Access kept</h1>
-    <p class="card-body">You'll keep access to versions <span data-invite-versions></span>. When <span data-invite-owner></span> confirms, you'll also get later versions.</p>
-    <div class="card-actions"><button type="button" class="action primary" data-action="invite-open">Open the file</button></div>
+    <h1 class="card-title" tabindex="-1">You kept access</h1>
+    <p class="card-meta" data-signed-in></p>
+    <p class="fp-caption" id="fp-claimed-caption">Your fingerprint</p>
+    <p class="fingerprint" data-fingerprint="invitee" aria-labelledby="fp-claimed-caption"></p>
+    <p class="fp-instruction">You'll keep access to <span data-invite-versions></span>. When <span data-invite-owner></span> confirms, you'll also get later versions.</p>
+    <div class="card-actions"><button type="button" class="action primary" data-action="invite-open">Open the relik</button></div>
   </div>
 </div>
 
 <div class="stage" data-for="invite-expired" hidden>
   <div class="card is-refusal">
     <h1 class="card-title" tabindex="-1">This invitation expired</h1>
+    <p class="card-meta" data-signed-in></p>
     <p class="card-body">This invitation expired on <span data-invite-date></span>. Ask <span data-invite-owner></span> to send a new one.</p>
-    <div class="card-actions"><button type="button" class="btn" data-action="invite-request">Ask for access</button></div>
+    <div class="card-actions" data-invite-keyed hidden><button type="button" class="action primary" data-action="invite-request">Request access</button></div>
+    <p class="card-note" data-invite-keyed hidden>Shown because this address already has a private-share key.</p>
   </div>
 </div>
 
 <div class="stage" data-for="invite-withdrawn" hidden>
   <div class="card is-refusal">
     <h1 class="card-title" tabindex="-1">This invitation was withdrawn</h1>
-    <p class="card-body"><span data-invite-owner></span> withdrew this invitation.</p>
+    <p class="card-body"><span data-invite-owner="start"></span> withdrew this invitation.</p>
   </div>
 </div>
 
@@ -688,7 +694,7 @@ class PrivateReader {
       this.invitation = invitation;
       const { open } = invitation;
       if (open.status === 'expired') {
-        this.inviteStage('invite-expired', open.owner.email, open.expires_at);
+        await this.inviteExpired(open.owner.email, open.expires_at);
       } else if (open.status === 'revoked') {
         this.inviteStage('invite-withdrawn', open.owner.email);
       } else if (open.status === 'claimed') {
@@ -726,7 +732,7 @@ class PrivateReader {
         return;
       }
       if (error.code === 'invite_expired') {
-        this.inviteStage('invite-expired', '');
+        void this.inviteExpired('');
         return;
       }
       if (error.code === 'invite_revoked') {
@@ -741,6 +747,30 @@ class PrivateReader {
     this.inviteStage('invite-damaged', '');
   }
 
+  /**
+   * The expired card. Request access is offered only to an address that
+   * already has a private-share key (plan 3.8): without one there is nothing
+   * to sign the request with.
+   */
+  private async inviteExpired(owner: string, date?: string): Promise<void> {
+    let keyed = false;
+    try {
+      const state = await privateKeysOf(this.mount.deps).loadIdentityState(
+        this.mount.deps
+      );
+      keyed = state.identity !== null;
+    } catch {
+      // Unknown is treated as no key: the card then offers nothing it can't do.
+    }
+    const stage = this.stage('invite-expired');
+    for (const element of stage.querySelectorAll<HTMLElement>(
+      '[data-invite-keyed]'
+    )) {
+      element.hidden = !keyed;
+    }
+    this.inviteStage('invite-expired', owner, date);
+  }
+
   /** Sets the owner, date and version copy on an invitee stage, then shows it. */
   private inviteStage(
     stage: ReaderStage,
@@ -748,9 +778,14 @@ class PrivateReader {
     date?: string,
     versions?: string
   ): void {
-    const ownerText = owner === '' ? 'The owner' : owner;
     for (const element of this.host.querySelectorAll('[data-invite-owner]')) {
-      element.textContent = ownerText;
+      // An owner Relik could not name opens one card's sentence and sits inside the rest.
+      element.textContent =
+        owner !== ''
+          ? owner
+          : element.getAttribute('data-invite-owner') === 'start'
+            ? 'The owner'
+            : 'the owner';
     }
     for (const element of this.host.querySelectorAll('[data-invite-date]')) {
       element.textContent = date === undefined ? '' : formatUtcDay(date);
@@ -778,20 +813,27 @@ class PrivateReader {
     const title = stage.querySelector<HTMLElement>('.card-title');
     const meta = stage.querySelector<HTMLElement>('.card-meta');
     const body = stage.querySelector<HTMLElement>('.card-body p');
+    const submit = stage.querySelector<HTMLElement>('#signin-submit');
+    const fine = stage.querySelector<HTMLElement>('#signin-fine');
     if (title) {
       title.textContent = invite
         ? "You're invited to a private relik"
         : 'This relik is private';
     }
-    if (meta) {
-      meta.textContent = invite
-        ? 'Use the code. If you use the link in that email instead, open this invitation again afterwards.'
-        : 'Its link carries no key.';
-    }
+    // An invitee asks the owner for nothing here: the code only proves the address.
+    if (meta) meta.hidden = invite;
     if (body) {
       body.textContent = invite
         ? 'This invitation opens only for the address it was sent to. Sign in with that address. Relik emails it a code.'
         : 'Only people the owner lets in can open it. Enter your email address to ask the owner for access.';
+    }
+    if (submit) {
+      submit.textContent = invite ? 'Email me a code' : 'Request access';
+    }
+    if (fine) {
+      fine.textContent = invite
+        ? 'Use the code. If you use the link in that email instead, open this invitation again afterwards.'
+        : 'Relik emails you a code to confirm the address. Then the owner is asked.';
     }
   }
 
@@ -816,7 +858,7 @@ class PrivateReader {
       invitation,
       currentVersion: sealed ?? target,
     };
-    const newer = sealed !== null && sealed > target;
+    const newer = sealed !== null && sealed > target ? sealed : undefined;
     this.mountReady(
       await this.readyView(opened, target, undefined, invite),
       (page) => this.decorateInvite(page, invitation, listed, newer)
@@ -828,21 +870,15 @@ class PrivateReader {
     page: HTMLElement,
     invitation: VerifiedInvitation,
     listed: readonly number[],
-    newer: boolean
+    newer: number | undefined
   ): void {
     const { open } = invitation;
     const owner = open.owner.email;
     const banner = document.createElement('section');
-    banner.className = 'panel-notice';
+    banner.className = 'invite-banner';
     banner.setAttribute('data-invite-banner', '');
     const text = document.createElement('p');
-    text.textContent = `${owner} invited you. You can open ${describeVersions(listed)} until ${formatUtcDay(open.expires_at)}.`;
-    banner.append(text);
-    if (newer) {
-      const note = document.createElement('p');
-      note.textContent = `A newer version exists. Ask ${owner} to share with you to open it.`;
-      banner.append(note);
-    }
+    text.textContent = `${owner} invited you. You can open ${versionsPhrase(listed)} until ${formatUtcDay(open.expires_at)}.`;
     const keep = document.createElement('button');
     keep.type = 'button';
     keep.className = 'action primary';
@@ -853,7 +889,14 @@ class PrivateReader {
     keep.addEventListener('click', () => {
       void this.keepAccess(keep, invitation);
     });
-    banner.append(keep);
+    banner.append(text, keep);
+    if (newer !== undefined) {
+      // A later version is reached through Keep access and the owner's confirm, not a new request.
+      const note = document.createElement('p');
+      note.className = 'note';
+      note.textContent = `Version ${newer} is newer than this invitation. Keep access, and once ${owner} confirms you, you'll get it too.`;
+      banner.append(note);
+    }
     const bar = page.querySelector<HTMLElement>('.bar');
     if (bar === null) page.prepend(banner);
     else bar.after(banner);
@@ -929,11 +972,23 @@ class PrivateReader {
       );
       this.inviteRef = undefined;
       this.invitation = undefined;
+      // The invitee reads this to the owner, who checks it before Confirm.
+      const plate = this.stage('invite-claimed').querySelector(
+        '[data-fingerprint="invitee"]'
+      );
+      if (plate !== null) {
+        setFingerprint(
+          plate,
+          formatFingerprint(
+            await identityFingerprint(identity.identityId, email)
+          )
+        );
+      }
       this.inviteStage(
         'invite-claimed',
         open.owner.email,
         undefined,
-        describeVersions(listed)
+        versionsPhrase(listed)
       );
     } catch (error) {
       if (error instanceof PrivateApiError && error.code === 'invite_claimed') {
@@ -1409,13 +1464,17 @@ class PrivateReader {
     count.id = 'request-count';
     this.requestCount = count;
     const button = document.createElement('button');
+    button.type = 'button';
     button.className = 'action';
+    // The band is rebuilt as counts land; this marks the control to carry across.
+    button.setAttribute('data-band-extra', '');
     button.setAttribute('data-action', 'open-access-panel');
     button.setAttribute('aria-expanded', 'false');
     button.setAttribute('aria-controls', 'access-panel');
     const label = document.createElement('span');
     label.textContent = 'Access';
-    button.append(label, count);
+    // The glyph keeps the control visible when narrow widths drop its label.
+    button.append(icon('users'), label, count);
     button.addEventListener('click', () => {
       void this.openOwnerPanel();
     });

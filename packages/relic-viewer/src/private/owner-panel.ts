@@ -187,7 +187,11 @@ export function openAccessPanel(
   const invitations = createInvitationsSection({
     relicId: ctx.relicId,
     deps: ctx.deps,
-    onChanged: ctx.onChanged,
+    // A confirmed claimant moves to Readers, so the whole panel reloads.
+    onChanged: () => {
+      ctx.onChanged();
+      void refresh('', true);
+    },
     inviteAgain: (email) => share.fill([email]),
   });
   const deleteOpen = h(
