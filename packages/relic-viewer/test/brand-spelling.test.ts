@@ -78,7 +78,7 @@ describe('the product is spelled Relik wherever a person reads it', () => {
       'x.ts',
       [
         "const a = 'Publish a relic';",
-        'const b = `Your ${n} relics`;',
+        `const b = \`Your \${n} relics\`;`,
         "const c = 'relic_id';",
         "const d = 'relic-mcp is the package';",
         "const e = 'relic/fp/v1';",

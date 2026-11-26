@@ -814,7 +814,7 @@ async function fetchAndDecryptRelic(
   const privateState = await loadPrivatePublishState(relicId);
   const state =
     privateState === undefined ? await loadPublishState(relicId) : undefined;
-  if (privateState === undefined && (!state || !state.key)) {
+  if (privateState === undefined && !state?.key) {
     return {
       ok: false,
       error:

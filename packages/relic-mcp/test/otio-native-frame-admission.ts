@@ -3083,8 +3083,7 @@ export async function runAdmissionProof(
       .map((caseName) => ({
         caseName,
         filePath: join(options.fixturesDir, caseName),
-        // biome-ignore lint/suspicious/noNonNullAssertedOptionalChain: the oracle file lists every static case name by construction
-        oracleEntry: oracle.files![caseName]!,
+        oracleEntry: oracle.files?.[caseName]!,
       }))
       .concat([
         {
