@@ -79,6 +79,7 @@ import {
   readableVersions,
   recipientCoverage,
   recipientKeys,
+  removeWrapsUpTo,
   requireRead,
   standingOf,
   type ServedWrap,
@@ -631,7 +632,11 @@ export async function applyGrants(
   const writtenGrants = new Map<string, GrantRow>();
   const writtenInviteRows: InviteRow[] = [];
 
-  /** Undo only grant rows still owned by this attestation. */
+  /**
+   * Undoes only the grant and invitation rows this attestation wrote. Wraps are
+   * never removed on failure: a wrap with no live grant row serves nothing, and
+   * the next grant or revocation of that key replaces or sweeps it by epoch.
+   */
   const rollback = async () => {
     const nonce = verified.attestation.nonce;
     for (const granteeId of created) {
@@ -654,6 +659,11 @@ export async function applyGrants(
     }
   };
 
+  // The epoch this call commits at. Every wrap it writes carries that epoch,
+  // and the commit below requires the epoch to be unchanged, so a stamp is
+  // either the committed epoch or the call fails.
+  const epochAtStart = row.accessEpoch ?? 0;
+  const commitEpoch = epochAtStart + 1;
   try {
     for (const wrap of wraps) {
       if (inviteKeys.has(wrap.recipientKeyId)) continue;
@@ -665,8 +675,17 @@ export async function applyGrants(
         ct: wrap.ct,
         createdAt: env.now,
         source: 'grant',
+        epoch: commitEpoch,
       };
-      await env.store.putWrap(record);
+      // A wrap an earlier epoch wrote is stale, and a sweep of that epoch's
+      // revocation may take it, so it is replaced. A wrap already at this epoch
+      // is kept; it opens the same version key.
+      if (!(await env.store.putWrap(record))) {
+        await env.store.replaceWrapIf(
+          record,
+          (current) => (current.epoch ?? 0) < commitEpoch
+        );
+      }
     }
 
     for (const p of planned) {
@@ -752,25 +771,32 @@ export async function applyGrants(
     }
 
     if (planned.length > 0) {
-      await env.store.updateRelic(row.id, (cur) => {
+      // A grant that replaces a revoked one fences the grantee's invitations
+      // made before this commit, so a claim a revocation left behind stays
+      // revoked. The fence is written in this same compare-and-swap.
+      const fence = { epoch: commitEpoch, nonce: verified.attestation.nonce };
+      const fences: Record<string, typeof fence> = {};
+      for (const p of planned) {
+        if (p.prior?.revokedAt !== undefined) fences[p.grantee.email] = fence;
+      }
+      const committed = await env.store.updateRelic(row.id, (cur) => {
         const sealed = cur.sealedVersion;
         if (
           sealed === undefined ||
-          planned.some((p) => !p.versions.includes(sealed))
+          planned.some((p) => !p.versions.includes(sealed)) ||
+          (cur.accessEpoch ?? 0) !== epochAtStart
         ) {
           throw new ProblemError('grant_stale_version', {
             current_version: cur.version,
           });
         }
-        return { ...cur, accessEpoch: (cur.accessEpoch ?? 0) + 1 };
+        return {
+          ...cur,
+          accessEpoch: commitEpoch,
+          accessFence: { ...cur.accessFence, ...fences },
+        };
       });
-    }
-    if (writtenInviteRows.length > 0) {
-      const latest = await env.store.getRelic(row.id);
-      if (latest === undefined) throw new ProblemError('relic_removed');
-      if (writtenInviteRows.some((invite) => invitationRevokedByEpoch(latest, invite))) {
-        throw new ProblemError('invite_revoked');
-      }
+      if (committed === undefined) throw new ProblemError('relic_removed');
     }
   } catch (error) {
     await rollback().catch((rollbackError: unknown) => {
@@ -1029,10 +1055,24 @@ export async function listGrants(
 // ---------------------------------------------------------------- revocation
 
 /**
- * The grant is marked first, then the relik CAS advances its epoch and fences
- * invitations made before that change. Failed CAS restores only this call's
- * grant mark. After a successful CAS, invitation and wrap cleanup is best
- * effort; the committed fence remains authoritative if cleanup fails.
+ * Revokes one grantee in three steps. Each step is safe to stop after.
+ *
+ * 1. Marks the grant revoked, so every access check refuses at once. A grant
+ *    an earlier attempt marked but never committed is marked again, so a retry
+ *    finishes that revocation.
+ * 2. Commits in one compare-and-swap on the relik row. The version moves, the
+ *    access epoch advances, and the grantee's fence records the new epoch and
+ *    this attestation's nonce. The epoch must be the one this request read, so
+ *    a concurrent grant or revocation fails this request closed.
+ * 3. Revokes the grantee's invitations the fence covers and removes the
+ *    grantee's wraps written at or before the commit epoch. Both are best
+ *    effort: the revoked grant and the fence already refuse access, and a wrap
+ *    a later regrant wrote carries a later epoch.
+ *
+ * When the commit errors, its response may have been lost after the write. The
+ * stored fence decides: if it carries this nonce, the revocation is complete and
+ * the request succeeds. The grant is restored only when the epoch never moved.
+ * Any other failure leaves the grant revoked.
  */
 export async function revokeAccess(
   env: PrivateEnv,
@@ -1073,9 +1113,7 @@ export async function revokeAccess(
 
   const granteeId = String(rev['grantee_identity_id']);
   const grant = await env.store.getGrant(row.id, granteeId);
-  if (grant === undefined || grant.revokedAt !== undefined) {
-    throw new ProblemError('grant_not_found');
-  }
+  if (grant === undefined) throw new ProblemError('grant_not_found');
   const grantee = await env.store.getIdentity(granteeId);
   if (grantee === undefined) throw new ProblemError('grant_not_found');
 
@@ -1095,40 +1133,56 @@ export async function revokeAccess(
   }
 
   const newVersion = row.version + 1;
-  const current = await env.store.getRelic(row.id);
+  const snapshot = await env.store.getRelic(row.id);
   if (
-    current === undefined ||
-    current.version !== row.version ||
-    current.sealedVersion !== row.version
+    snapshot === undefined ||
+    snapshot.version !== row.version ||
+    snapshot.sealedVersion !== row.version
   ) {
     throw new ProblemError('version_conflict');
   }
+  const epochAtStart = snapshot.accessEpoch ?? 0;
+  const commitEpoch = epochAtStart + 1;
+  const nonce = verified.attestation.nonce;
+  // This grant's revocation already committed: nothing is left to do.
+  if (
+    grant.revokedAt !== undefined &&
+    grant.revocation !== undefined &&
+    snapshot.accessFence?.[grantee.email]?.nonce === grant.revocation.nonce
+  ) {
+    throw new ProblemError('grant_not_found');
+  }
 
-  // Claims stay intact until the epoch CAS commits. The relik row then fences
-  // every older invitation for this address, including concurrent claims.
+  // 1. Mark. The grant's attestation nonce pins which grant this is: a regrant
+  //    replaces the row, and a mark against the replacement refuses.
   const marked = await env.store.updateGrant(row.id, granteeId, (current) => {
-    if (
-      current.revokedAt !== undefined ||
-      current.attestation.nonce !== grant.attestation.nonce
-    ) {
+    if (current.attestation.nonce !== grant.attestation.nonce) {
       throw new ProblemError('grant_not_found');
     }
     return { ...current, revokedAt: env.now, revocation: verified.attestation };
   });
   if (marked === undefined) throw new ProblemError('grant_not_found');
+
+  // 2. Commit. One compare-and-swap on the relik row; the epoch must be the
+  //    one read above.
+  let committed: RelicRow | undefined;
+  let failure: unknown;
   try {
-    const moved = await env.store.updateRelic(row.id, (cur) => {
-      if (cur.version !== row.version || cur.sealedVersion !== row.version) {
+    committed = await env.store.updateRelic(row.id, (cur) => {
+      if (
+        cur.version !== row.version ||
+        cur.sealedVersion !== row.version ||
+        (cur.accessEpoch ?? 0) !== epochAtStart
+      ) {
         throw new ProblemError('version_conflict');
       }
-      const nextEpoch = (cur.accessEpoch ?? 0) + 1;
       return {
         ...cur,
         version: newVersion,
-        accessEpoch: nextEpoch,
-        inviteRevokedBeforeEpoch: {
-          ...cur.inviteRevokedBeforeEpoch,
-          [grantee.email]: nextEpoch,
+        accessEpoch: commitEpoch,
+        accessFence: {
+          ...cur.accessFence,
+          [grantee.email]: { epoch: commitEpoch, nonce },
         },
         rendererClass: input.rendererClass as RelicRow['rendererClass'],
         declaredSizeBytes: declared,
@@ -1139,46 +1193,72 @@ export async function revokeAccess(
         noticePending: true,
       };
     });
-    if (moved === undefined) throw new ProblemError('relic_removed');
   } catch (error) {
-    await env.store.updateGrant(row.id, granteeId, (current) =>
-      current.revocation?.nonce === verified.attestation.nonce ? grant : current
-    );
-    throw error;
+    failure = error;
   }
-  // Cleanup is best effort: the committed cutoff is the authorization gate.
-  try {
-    const committed = await env.store.getRelic(row.id);
-    if (committed !== undefined) {
-      for (const invite of await env.store.listInvites(row.id)) {
-        if (
-          invite.invitedEmail !== grantee.email ||
-          !invitationRevokedByEpoch(committed, invite)
-        ) continue;
-        await env.store.updateInvite(row.id, invite.inviteId, (current) => {
-          if (
-            current.status === 'revoked' ||
-            !invitationRevokedByEpoch(committed, current)
-          ) return current;
-          return {
-            ...current,
-            status: 'revoked',
-            wraps: [],
-            claimWraps: [],
-            revokedAt: env.now,
-          };
-        });
+  if (committed === undefined) {
+    // The write failed, or the row is gone. A lost response can hide a commit
+    // that did land, so the stored fence decides, not the error.
+    let stored: RelicRow | undefined;
+    let readable = true;
+    try {
+      stored = await env.store.getRelic(row.id);
+    } catch {
+      readable = false;
+    }
+    if (
+      readable &&
+      stored !== undefined &&
+      stored.accessFence?.[grantee.email]?.nonce === nonce
+    ) {
+      committed = stored;
+    } else {
+      if (
+        readable &&
+        stored !== undefined &&
+        (stored.accessEpoch ?? 0) === epochAtStart
+      ) {
+        // No commit moved the epoch, so the grant returns to its prior state.
+        await env.store.updateGrant(row.id, granteeId, (current) =>
+          current.revocation?.nonce === nonce ? grant : current
+        );
       }
+      throw failure ?? new ProblemError('relic_removed');
+    }
+  }
+  const landed: RelicRow = committed;
+
+  // 3. Cleanup. The revoked grant and the fence already refuse access; these
+  //    only remove what the revocation covers.
+  try {
+    for (const invite of await env.store.listInvites(row.id)) {
+      if (
+        invite.invitedEmail !== grantee.email ||
+        !invitationRevokedByEpoch(landed, invite)
+      ) {
+        continue;
+      }
+      await env.store.updateInvite(row.id, invite.inviteId, (current) =>
+        current.status === 'revoked' ||
+        !invitationRevokedByEpoch(landed, current)
+          ? current
+          : {
+              ...current,
+              status: 'revoked',
+              wraps: [],
+              claimWraps: [],
+              revokedAt: env.now,
+            }
+      );
     }
   } catch (error) {
     console.error('relic: revoked invitation cleanup failed:', error);
   }
   try {
     if (!(await recipientKeys(env, row, owner)).includes(grantee.kemKeyId)) {
-      await env.store.deleteWraps(row.id, { recipientKeyId: grantee.kemKeyId });
+      await removeWrapsUpTo(env, row.id, grantee.kemKeyId, commitEpoch);
     }
   } catch (error) {
-    // Cleanup cannot undo the revocation or strand its republish upload.
     console.error('relic: revoked wrap sweep failed:', error);
   }
   const updated = await env.store.getRelic(row.id);
@@ -1564,6 +1644,7 @@ export async function completeSeal(
       ct: w.ct,
       createdAt: env.now,
       source: 'seal',
+      epoch: statement.access_epoch,
     };
     await env.store.putWrap(wrapRow);
     written.push(wrapRow);

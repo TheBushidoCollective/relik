@@ -124,8 +124,15 @@ export interface RelicRow {
   readonly privateErasureAt?: number;
   /** Bumped by every grant and revocation. A seal or grant that read an older value loses. */
   readonly accessEpoch?: number | undefined;
-  /** Revocation cutoff per normalized invited address, committed with the epoch. */
-  readonly inviteRevokedBeforeEpoch?: Readonly<Record<string, number>> | undefined;
+  /**
+   * Per normalized grantee address: the latest revocation or regrant that
+   * fenced the address's invitations, the access epoch it committed at, and the
+   * nonce of its attestation. Written in the same compare-and-swap as the
+   * epoch, so the fence and the epoch never disagree.
+   */
+  readonly accessFence?:
+    | Readonly<Record<string, { readonly epoch: number; readonly nonce: string }>>
+    | undefined;
   /** The highest version whose seal the server recorded. It is provisional until the owner-epoch recheck passes. */
   readonly sealedVersion?: number | undefined;
   /** Versions the owner deleted. The row keeps the number so it is never reused. */
@@ -377,6 +384,8 @@ export interface WrapRow {
   readonly ct: string;
   readonly createdAt: number;
   readonly source: 'seal' | 'grant' | 'backfill';
+  /** The access epoch the write committed at. Absent reads as 0. */
+  readonly epoch?: number | undefined;
 }
 export interface SealRow {
   readonly relicId: string;
@@ -1038,6 +1047,25 @@ export interface RelicStore {
     relicId: string,
     filter: { readonly version?: number; readonly recipientKeyId?: string }
   ): Promise<number>;
+  /**
+   * Replaces the wrap at this row's name when `matches` holds for the wrap
+   * there now. Create-only writes use `putWrap`.
+   */
+  replaceWrapIf(
+    row: WrapRow,
+    matches: (current: WrapRow) => boolean
+  ): Promise<boolean>;
+  /**
+   * Deletes the wrap at this name when `matches` holds for it. A concurrent
+   * write makes the delete judge the wrap again, so a wrap is removed only
+   * after it was judged.
+   */
+  deleteWrapIf(
+    relicId: string,
+    version: number,
+    recipientKeyId: string,
+    matches: (current: WrapRow) => boolean
+  ): Promise<boolean>;
   /** Create-only. */
   putSeal(row: SealRow): Promise<boolean>;
   getSeal(relicId: string, version: number): Promise<SealRow | undefined>;
@@ -2164,6 +2192,30 @@ export class MemoryStore implements RelicStore {
       removed += 1;
     }
     return removed;
+  }
+
+  async replaceWrapIf(
+    row: WrapRow,
+    matches: (current: WrapRow) => boolean
+  ): Promise<boolean> {
+    const k = compositeKey(row.relicId, String(row.version), row.recipientKeyId);
+    const current = this.wraps.get(k);
+    if (current === undefined || !matches(current)) return false;
+    this.wraps.set(k, row);
+    return true;
+  }
+
+  async deleteWrapIf(
+    relicId: string,
+    version: number,
+    recipientKeyId: string,
+    matches: (current: WrapRow) => boolean
+  ): Promise<boolean> {
+    const k = compositeKey(relicId, String(version), recipientKeyId);
+    const current = this.wraps.get(k);
+    if (current === undefined || !matches(current)) return false;
+    this.wraps.delete(k);
+    return true;
   }
 
   async putSeal(row: SealRow): Promise<boolean> {

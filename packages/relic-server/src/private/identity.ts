@@ -580,6 +580,7 @@ export async function backfillWraps(
       ct: wrap.ct,
       createdAt: env.now,
       source: 'backfill',
+      epoch: row.accessEpoch ?? 0,
     });
     if (created) stored++;
     else skipped++;

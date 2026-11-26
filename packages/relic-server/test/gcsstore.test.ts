@@ -8,6 +8,7 @@ import {
   MemoryStore,
   type PasskeyCredential,
   type RelicRow,
+  type RelicStore,
 } from '../src/store.ts';
 import { fakeGcs, storeOn } from './fake-gcs.ts';
 import {
@@ -2418,4 +2419,73 @@ test('a claimed invitation receives the relik lifetime and keeps it after revoca
   expect(gcs.objects.get(path)?.customTime).toBe(
     new Date(NOW + 40 * DAY).toISOString()
   );
+});
+
+describe('conditional wrap primitives', () => {
+  test.each(['memory', 'gcs'] as const)(
+    'replaces only an older wrap and deletes only a judged one (%s)',
+    async (backend) => {
+      const store: RelicStore =
+        backend === 'memory' ? new MemoryStore() : storeOn(fakeGcs());
+      await store.putRelic(privateRelic());
+      await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
+      expect(
+        await store.replaceWrapIf(
+          { ...wrap(RECIPIENT_A, 1), enc: 'later', epoch: 3 },
+          (current) => (current.epoch ?? 0) < 1
+        )
+      ).toBe(false);
+      expect(
+        await store.replaceWrapIf(
+          { ...wrap(RECIPIENT_A, 1), enc: 'later', epoch: 3 },
+          (current) => (current.epoch ?? 0) < 3
+        )
+      ).toBe(true);
+      expect(
+        await store.deleteWrapIf(
+          RELIC_ID,
+          1,
+          RECIPIENT_A,
+          (current) => (current.epoch ?? 0) <= 1
+        )
+      ).toBe(false);
+      expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.enc).toBe('later');
+      expect(
+        await store.deleteWrapIf(
+          RELIC_ID,
+          1,
+          RECIPIENT_A,
+          (current) => (current.epoch ?? 0) <= 3
+        )
+      ).toBe(true);
+      expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toBeUndefined();
+    }
+  );
+
+  test('a delete that loses a race to a replacement judges the replacement, not the wrap it read', async () => {
+    const fake = fakeGcs();
+    const store = storeOn(fake);
+    await store.putRelic(privateRelic());
+    await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
+    fake.beforeNextDelete(
+      `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`,
+      async () => {
+        expect(
+          await store.replaceWrapIf(
+            { ...wrap(RECIPIENT_A, 1), enc: 'later', epoch: 3 },
+            (current) => (current.epoch ?? 0) < 3
+          )
+        ).toBe(true);
+      }
+    );
+    expect(
+      await store.deleteWrapIf(
+        RELIC_ID,
+        1,
+        RECIPIENT_A,
+        (current) => (current.epoch ?? 0) <= 1
+      )
+    ).toBe(false);
+    expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.enc).toBe('later');
+  });
 });

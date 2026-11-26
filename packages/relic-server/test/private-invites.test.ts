@@ -2529,7 +2529,12 @@ test.each(['plain', 'cancel', 'regrant'] as const)(
     expect(interleaved).toBe(true);
     expect(result.status).toBe(409);
     expect(result.body['code']).toBe('version_conflict');
-    expect((await store.getRelic(RELIC_ID))?.inviteRevokedBeforeEpoch).toBeUndefined();
+    const fence = (await store.getRelic(RELIC_ID))?.accessFence?.[reader.email];
+    if (interleaving === 'regrant') {
+      expect(fence?.epoch).toBe(2);
+    } else {
+      expect(fence).toBeUndefined();
+    }
     expect((await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt)
       .toBeUndefined();
     expect((await store.getInvite(RELIC_ID, spare.inviteId))?.status).toBe('open');
@@ -2541,7 +2546,7 @@ test.each(['plain', 'cancel', 'regrant'] as const)(
         `/api/relics/${RELIC_ID}/versions/1/key`,
         post({}, reader.cookie)
       )).status
-    ).toBe(interleaving === 'cancel' ? 403 : 200);
+    ).toBe(interleaving === 'plain' ? 200 : 403);
     expect(
       (await send(
         `/api/relics/${RELIC_ID}/versions/2/key`,
@@ -2612,7 +2617,7 @@ test('a committed revocation fences old claims despite concurrent regrant and fa
   expect((await store.getInvite(RELIC_ID, first.inviteId))?.status).toBe('claimed');
   expect((await store.getInvite(RELIC_ID, first.inviteId))?.claimWraps).toHaveLength(1);
   expect((await store.getInvite(RELIC_ID, spare.inviteId))?.status).toBe('open');
-  expect((await store.getRelic(RELIC_ID))?.inviteRevokedBeforeEpoch?.[reader.email])
+  expect((await store.getRelic(RELIC_ID))?.accessFence?.[reader.email]?.nonce)
     .toBeDefined();
   expect(
     (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
@@ -2846,4 +2851,220 @@ test('a claim crossing a committed revocation cannot authorize its wrap', async 
     (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
       .status
   ).toBe(403);
+});
+
+describe('revocation fence, crash recovery and the wrap sweep', () => {
+  test('a regrant after a revocation that crashed before its commit fences the claim it left behind', async () => {
+    const { owner, reader, versionKey } = await partialGrantFixture(true);
+    await store.updateGrant(RELIC_ID, reader.identityId!, (current) => ({
+      ...current,
+      revokedAt: now,
+      revocation: attestation(),
+    }));
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
+        .status
+    ).toBe(403);
+    const grant = await grantStatementFor(owner, reader, [2]);
+    const regranted = await send(
+      `/api/relics/${RELIC_ID}/grants`,
+      post(
+        {
+          attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+          wraps: [await wrap(reader.keys!.kemPublicKey, versionKey, 2)],
+        },
+        owner.cookie
+      )
+    );
+    expect(regranted.status).toBe(201);
+    expect((await store.getRelic(RELIC_ID))?.accessFence?.[reader.email]?.epoch).toBe(2);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
+        .status
+    ).toBe(403);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
+        .status
+    ).toBe(200);
+  });
+
+  test('a revocation retried after a crash before its commit completes', async () => {
+    const { owner, reader } = await partialGrantFixture(true);
+    await store.updateGrant(RELIC_ID, reader.identityId!, (current) => ({
+      ...current,
+      revokedAt: now,
+      revocation: attestation(),
+    }));
+    const retried = await send(
+      `/api/relics/${RELIC_ID}/revocations`,
+      post(await revokeAtVersionTwo(owner, reader), owner.cookie)
+    );
+    expect(retried.status).toBe(200);
+    const grant = await store.getGrant(RELIC_ID, reader.identityId!);
+    expect((await store.getRelic(RELIC_ID))?.accessFence?.[reader.email]?.nonce).toBe(
+      grant?.revocation?.nonce
+    );
+    for (const version of [1, 2]) {
+      expect(
+        (await send(`/api/relics/${RELIC_ID}/versions/${version}/key`, post({}, reader.cookie)))
+          .status
+      ).toBe(403);
+    }
+  });
+
+  test('an error after the revocation commits keeps the mark, completes the revocation, and sweeps the wrap', async () => {
+    const { owner, reader } = await partialGrantFixture(true);
+    const readerKey = (await store.getIdentity(reader.identityId!))!.kemKeyId;
+    const real = store.updateRelic.bind(store);
+    let armed = true;
+    store.updateRelic = async (id, change) => {
+      const next = await real(id, change);
+      if (armed && id === RELIC_ID) {
+        armed = false;
+        throw new Error('response lost after the commit');
+      }
+      return next;
+    };
+    const revoked = await send(
+      `/api/relics/${RELIC_ID}/revocations`,
+      post(await revokeAtVersionTwo(owner, reader), owner.cookie)
+    );
+    expect(armed).toBe(false);
+    expect(revoked.status).toBe(200);
+    expect(revoked.body['republish']).toBeDefined();
+    const grant = await store.getGrant(RELIC_ID, reader.identityId!);
+    expect(grant?.revokedAt).toBeDefined();
+    const relic = await store.getRelic(RELIC_ID);
+    expect(relic?.accessEpoch).toBe(2);
+    expect(relic?.accessFence?.[reader.email]?.nonce).toBe(grant?.revocation?.nonce);
+    expect(await store.getWrap(RELIC_ID, 2, readerKey)).toBeUndefined();
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
+        .status
+    ).toBe(403);
+  });
+
+  test('a grant committed between a revocation’s mark and its commit fails the revocation closed, and a retry completes it', async () => {
+    const { owner, reader, versionKey } = await partialGrantFixture(true);
+    const other = await person('grace@example.com');
+    await registerIdentity(other);
+    const real = store.updateRelic.bind(store);
+    let armed = true;
+    store.updateRelic = async (id, change) => {
+      if (armed && id === RELIC_ID) {
+        armed = false;
+        const grant = await grantStatementFor(owner, other, [2]);
+        const granted = await send(
+          `/api/relics/${RELIC_ID}/grants`,
+          post(
+            {
+              attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+              wraps: [await wrap(other.keys!.kemPublicKey, versionKey, 2)],
+            },
+            owner.cookie
+          )
+        );
+        expect(granted.status).toBe(201);
+      }
+      return real(id, change);
+    };
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/revocations`,
+      post(await revokeAtVersionTwo(owner, reader), owner.cookie)
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body['code']).toBe('version_conflict');
+    expect((await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt).toBeDefined();
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
+        .status
+    ).toBe(403);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, other.cookie)))
+        .status
+    ).toBe(200);
+    const retried = await send(
+      `/api/relics/${RELIC_ID}/revocations`,
+      post(await revokeAtVersionTwo(owner, reader), owner.cookie)
+    );
+    expect(retried.status).toBe(200);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
+        .status
+    ).toBe(403);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, other.cookie)))
+        .status
+    ).toBe(200);
+  });
+
+  test('a regrant that writes its wrap between a revocation’s listing and its delete keeps the regrant’s wrap', async () => {
+    const { owner, reader, versionKey } = await partialGrantFixture(true);
+    const readerKey = (await store.getIdentity(reader.identityId!))!.kemKeyId;
+    const real = store.deleteWrapIf.bind(store);
+    const seen: { status?: number; wrap?: { enc: string; ct: string } } = {};
+    store.deleteWrapIf = async (relicId, version, recipientKeyId, matches) => {
+      if (seen.status === undefined && recipientKeyId === readerKey) {
+        const grant = await grantStatementFor(owner, reader, [2]);
+        const wrapped = await wrap(reader.keys!.kemPublicKey, versionKey, 2);
+        seen.wrap = wrapped;
+        const regranted = await send(
+          `/api/relics/${RELIC_ID}/grants`,
+          post(
+            {
+              attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+              wraps: [wrapped],
+            },
+            owner.cookie
+          )
+        );
+        seen.status = regranted.status;
+      }
+      return real(relicId, version, recipientKeyId, matches);
+    };
+    const revoked = await send(
+      `/api/relics/${RELIC_ID}/revocations`,
+      post(await revokeAtVersionTwo(owner, reader), owner.cookie)
+    );
+    expect(revoked.status).toBe(200);
+    expect(seen.status).toBe(201);
+    const key = await send(
+      `/api/relics/${RELIC_ID}/versions/2/key`,
+      post({}, reader.cookie)
+    );
+    expect(key.status).toBe(200);
+    const served = key.body['wrap'] as { enc: string; ct: string };
+    expect(served.enc).toBe(seen.wrap!.enc);
+    expect(served.ct).toBe(seen.wrap!.ct);
+    expect((await store.getWrap(RELIC_ID, 2, readerKey))?.epoch).toBe(3);
+  });
+
+  test('a grant for a version other than the sealed one is refused before any row or wrap is written', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const { versionKey } = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    await store.updateRelic(RELIC_ID, (row) => ({
+      ...row,
+      version: 2,
+      sealedVersion: 2,
+    }));
+    const grant = await grantStatementFor(owner, reader, [1]);
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/grants`,
+      post(
+        {
+          attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+          wraps: [await wrap(reader.keys!.kemPublicKey, versionKey, 1)],
+        },
+        owner.cookie
+      )
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body['code']).toBe('grant_stale_version');
+    expect(await store.getGrant(RELIC_ID, reader.identityId!)).toBeUndefined();
+    const readerKey = (await store.getIdentity(reader.identityId!))!.kemKeyId;
+    expect(await store.getWrap(RELIC_ID, 1, readerKey)).toBeUndefined();
+  });
 });

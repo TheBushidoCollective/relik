@@ -1215,12 +1215,12 @@ async function revocationRequest(owner: Person, reader: Person) {
 
 /** Makes the next wrap sweep throw, as a failed storage write would. Returns the restore. */
 function failNextSweep(): () => void {
-  const real = store.deleteWraps.bind(store);
-  store.deleteWraps = async () => {
+  const real = store.deleteWrapIf.bind(store);
+  store.deleteWrapIf = async () => {
     throw new Error('store unavailable');
   };
   return () => {
-    store.deleteWraps = real;
+    store.deleteWrapIf = real;
   };
 }
 

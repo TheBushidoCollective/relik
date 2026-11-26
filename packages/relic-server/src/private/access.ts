@@ -131,21 +131,53 @@ export async function sweepWrapsFor(
 ): Promise<void> {
   for (const owned of await env.store.listOwnedRelics(owner.identityId)) {
     const row = await env.store.getRelic(owned.relicId);
+    // Read before the recipient set: a grant that commits after this read has
+    // a later epoch, so its wraps survive the sweep.
+    const epoch = row?.accessEpoch ?? 0;
     const current = new Set(
       row === undefined ? [] : await recipientKeys(env, row, owner)
     );
-    // Claimed invitation wraps live on invitation rows, not in m/wrap.
     for (const keyId of keyIds) {
       if (current.has(keyId)) continue;
-      await env.store.deleteWraps(owned.relicId, { recipientKeyId: keyId });
+      await removeWrapsUpTo(env, owned.relicId, keyId, epoch);
     }
   }
 }
 
-/** The relik row makes revocation durable even if invitation cleanup fails. */
-export function invitationRevokedByEpoch(row: RelicRow, invite: InviteRow): boolean {
-  const cutoff = row.inviteRevokedBeforeEpoch?.[invite.invitedEmail];
-  return cutoff !== undefined && (invite.createdAccessEpoch ?? 0) < cutoff;
+/**
+ * Deletes the wraps one key holds on a relic that were written at or before
+ * `epoch`. A wrap written later belongs to a grant or seal that committed after
+ * the caller read the epoch, and survives. Every delete is conditional on the
+ * wrap it judged, so a write that lands during the sweep is judged again.
+ */
+export async function removeWrapsUpTo(
+  env: PrivateEnv,
+  relicId: string,
+  recipientKeyId: string,
+  epoch: number
+): Promise<void> {
+  for (const wrap of await env.store.listWraps(relicId)) {
+    if (wrap.recipientKeyId !== recipientKeyId) continue;
+    await env.store.deleteWrapIf(
+      relicId,
+      wrap.version,
+      recipientKeyId,
+      (current) => (current.epoch ?? 0) <= epoch
+    );
+  }
+}
+
+/**
+ * An invitation is fenced when its address has a fence committed after the
+ * invitation was created. The fence is written with the epoch, so the two
+ * cannot disagree.
+ */
+export function invitationRevokedByEpoch(
+  row: RelicRow,
+  invite: InviteRow
+): boolean {
+  const fence = row.accessFence?.[invite.invitedEmail];
+  return fence !== undefined && (invite.createdAccessEpoch ?? 0) < fence.epoch;
 }
 
 /** The index is only a hint: each referenced invitation must still authorize. */

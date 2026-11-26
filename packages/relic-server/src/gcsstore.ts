@@ -2123,6 +2123,55 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       return doomed.length;
     },
 
+    /**
+     * Replaces the wrap at this row's name when `matches` holds for the wrap
+     * there now. The write is conditional on the generation read, so a write
+     * that lands in between is judged again.
+     */
+    async replaceWrapIf(
+      row: WrapRow,
+      matches: (current: WrapRow) => boolean
+    ): Promise<boolean> {
+      const name = key(
+        'wrap',
+        row.relicId,
+        String(row.version),
+        `${row.recipientKeyId}.json`
+      );
+      const customTime = await privateCustomTime(row.relicId);
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<WrapRow>(name);
+        if (current === undefined || !matches(current.value)) return false;
+        if (await put(name, row, current.generation, customTime)) return true;
+      }
+      throw new Error(`gcs wrap lost ${casAttempts} compare-and-swap races`);
+    },
+
+    /**
+     * Deletes the wrap at this name when `matches` holds for it. The delete is
+     * conditional on the generation it judged, so a concurrent write makes it
+     * judge again and no wrap is removed unjudged.
+     */
+    async deleteWrapIf(
+      relicId: string,
+      version: number,
+      recipientKeyId: string,
+      matches: (current: WrapRow) => boolean
+    ): Promise<boolean> {
+      const name = key(
+        'wrap',
+        relicId,
+        String(version),
+        `${recipientKeyId}.json`
+      );
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<WrapRow>(name);
+        if (current === undefined || !matches(current.value)) return false;
+        if (await remove(name, current.generation)) return true;
+      }
+      throw new Error(`gcs wrap lost ${casAttempts} compare-and-swap races`);
+    },
+
     async putSeal(row: SealRow): Promise<boolean> {
       return put(
         key('seal', row.relicId, `${row.version}.json`),
