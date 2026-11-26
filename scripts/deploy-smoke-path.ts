@@ -214,6 +214,7 @@ try {
   );
   const mutatedSource = deploySource
     .replace(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: this is shell text in the script under test, not a JavaScript template
       'scratch="$(mktemp -d "${TMPDIR:-/tmp}/relik-deploy-smoke.XXXXXXXX")"',
       'scratch="$TMPDIR/relik-deploy-smoke.shared"'
     )
