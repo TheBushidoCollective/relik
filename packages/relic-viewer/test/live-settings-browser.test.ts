@@ -15,9 +15,10 @@ test('settings control follows access and disabled suggestions never mount', asy
   const profile = join(tmpdir(), `relik-settings-profile-${id}`);
   const main = resolve(import.meta.dir, '../src/main.ts');
   const content = resolve(import.meta.dir, '../src/content.ts');
+  const composer = resolve(import.meta.dir, '../src/signing/composer.ts');
   await writeFile(
     entry,
-    `export {renderReady, buildThread} from ${JSON.stringify(main)}; export {contentFromBytes} from ${JSON.stringify(content)};`
+    `export {renderReady, buildThread} from ${JSON.stringify(main)}; export {contentFromBytes} from ${JSON.stringify(content)}; export {openSigningComposer} from ${JSON.stringify(composer)};`
   );
   const build = await Bun.build({
     entrypoints: [entry],
@@ -73,7 +74,7 @@ test('settings control follows access and disabled suggestions never mount', asy
   const js = await build.outputs[0]!.text();
   const result = Promise.withResolvers<string>();
   const page = `<!doctype html><script type="module">
-    import {renderReady,buildThread,contentFromBytes} from '/entry.js';
+    import {renderReady,buildThread,contentFromBytes,openSigningComposer} from '/entry.js';
     const check=(ok,message)=>{if(!ok)throw Error(message)};
     const frame=()=>{const {promise,resolve}=Promise.withResolvers();requestAnimationFrame(resolve);return promise};
     const until=async(fn,message)=>{for(let i=0;i<300&&!fn();i++)await frame();check(fn(),message)};
@@ -106,6 +107,31 @@ test('settings control follows access and disabled suggestions never mount', asy
         await frame();await frame();await frame();
         check(!calls.some(url=>url.includes('/decisions/list')||url.includes('/comments')),'view-only mounted collaboration: '+calls.join(','));
         check(!document.querySelector('#comment-thread'),'view-only rendered comment thread');
+      }
+      {
+        const stage=document.createElement('main');document.body.append(stage);
+        const deps={serviceOrigin:location.origin,locationHref:location.href,fetch:async()=>Response.json({results:[]})};
+        const panel=openSigningComposer({deps,relicId:id,version:1,digest:'0'.repeat(64),content:base.content,signingKey:key,private:true,grants:[{email:'a@example.test',identityId:'a'.repeat(64)}],pdf:false,stage,shareUrl:base.shareUrl,onSent(){}});
+        const email=panel.querySelector('input[type=email]');email.value='a@example.test';
+        const send=Array.from(panel.querySelectorAll('button')).find(b=>b.textContent==='Review and send');send.click();
+        await frame();await frame();check(send.textContent==='Send with passkey','private review missing');
+        email.value='b@example.test';email.dispatchEvent(new Event('input',{bubbles:true}));
+        check(send.textContent==='Review and send','editing private signer did not invalidate review');
+        panel.remove();stage.remove();
+      }
+      {
+        const calls=[];
+        const stage=document.createElement('main');document.body.append(stage);
+        const deps={serviceOrigin:location.origin,locationHref:location.href,fetch:async(url)=>{calls.push(String(url));return Response.json({results:[]})}};
+        const panel=openSigningComposer({deps,relicId:id,version:1,digest:'0'.repeat(64),content:base.content,signingKey:key,private:false,grants:[],pdf:false,stage,shareUrl:base.shareUrl,onSent(){}});
+        const email=panel.querySelector('input[type=email]');email.value='a@example.test';email.dispatchEvent(new Event('input',{bubbles:true}));
+        const send=Array.from(panel.querySelectorAll('button')).find(b=>b.textContent==='Review and send');send.click();
+        await frame();await frame();
+        check(!calls.some(url=>url.includes('/grants/lookup')),'public signing called private lookup');
+        check(send.textContent==='Send with passkey','public signing did not reach review');
+        email.value='b@example.test';email.dispatchEvent(new Event('input',{bubbles:true}));
+        check(send.textContent==='Review and send','editing signer did not invalidate review');
+        panel.remove();stage.remove();
       }
       for (const enabled of [false,true]) {
         globalThis.mounts=0;
