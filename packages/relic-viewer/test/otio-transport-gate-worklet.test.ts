@@ -121,7 +121,7 @@ test('native render clock certifies promotions and silences a held ramp', async 
     );
     expect(trace?.cachedCurrentFrame).toBe(0);
     expect(trace?.certifiedFrame).toBe(0);
-    expect((trace?.clockFrameA as number[]).length).toBe(128);
+    expect((trace?.clockFrameA as number[] | undefined)?.length).toBe(128);
     send({
       type: 'install-bank',
       requestId: 2,

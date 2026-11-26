@@ -1003,7 +1003,7 @@ describe('what an agent is told before it calls anything', () => {
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       deps
     );
-    const { tools } = response?.result as {
+    const { tools } = response!.result as {
       tools: Array<{
         name: string;
         inputSchema: { properties: Record<string, unknown> };
