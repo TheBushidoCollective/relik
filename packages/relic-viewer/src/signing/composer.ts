@@ -70,7 +70,8 @@ export async function resolveSigners(
           scope.deps,
           scope.relicId,
           unknown,
-          new Set(scope.grants.map((grant) => grant.identityId))
+          new Set(scope.grants.map((grant) => grant.identityId)),
+          scope.owner?.identityId
         );
   const signers: { email: string; identity_id: string | null }[] = [];
   const grants: GrantTarget[] = [];

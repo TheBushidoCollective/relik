@@ -99,6 +99,14 @@ test('settings control follows access and disabled suggestions never mount', asy
     try {
       await checkControl('public',true,true); await checkControl('public',false,true); await checkControl('public',false,false);
       await checkControl('private',true,true); await checkControl('private',false,true); await checkControl('private',false,false);
+      {
+        const calls=[];
+        const deps={serviceOrigin:location.origin,locationHref:location.href,keyVault:{remember(){},recall(){},forget(){}},fetch:async(url)=>{calls.push(String(url));return Response.json({email:null})}};
+        renderReady({...base,route:'markdown',access:'private',viewOnly:true,keyFor:async()=>key},id,location.origin,deps);
+        await frame();await frame();await frame();
+        check(!calls.some(url=>url.includes('/decisions/list')||url.includes('/comments')),'view-only mounted collaboration: '+calls.join(','));
+        check(!document.querySelector('#comment-thread'),'view-only rendered comment thread');
+      }
       for (const enabled of [false,true]) {
         globalThis.mounts=0;
         const deps={serviceOrigin:location.origin,locationHref:location.href,keyVault:{remember(){},recall(){},forget(){}},fetch:async(url)=>url.endsWith('/api/auth/session')?Response.json({email:null}):Response.json([])};

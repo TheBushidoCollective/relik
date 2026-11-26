@@ -2908,6 +2908,14 @@ describe('the invitee reads an address-bound invitation', () => {
     expect(assertions).toBe(1);
   });
 
+  test('reopening a claimed invitation as the same identity resumes normal access', async () => {
+    const relicId = freshRelicId();
+    const inv = await invitationFor(relicId, 'claimed');
+    inv.open['claimed_by_identity_id'] = inv.world.readerId;
+    const { fetch } = inviteeService(inv, relicId, { signedIn: true });
+    const { root } = await mountReader(inviteeDeps(inv, relicId, fetch, `#${inviteFragment(inv.d)}`, () => {}), relicId);
+    expect(stateOf(root)).toBe('unlock');
+  });
   test('Keep access claims the listed version with a signed invite_claim re-wrapped to the reader', async () => {
     const relicId = freshRelicId();
     const inv = await invitationFor(relicId);

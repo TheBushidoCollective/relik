@@ -689,6 +689,13 @@ class PrivateReader {
       } else if (open.status === 'revoked') {
         this.inviteStage('invite-withdrawn', open.owner.email);
       } else if (open.status === 'claimed') {
+        const state = await privateKeysOf(this.mount.deps).loadIdentityState(this.mount.deps);
+        if (state.identity !== null && state.identity.identity_id === open.claimed_by_identity_id) {
+          this.inviteRef = undefined;
+          this.invitation = undefined;
+          await this.route();
+          return;
+        }
         this.inviteStage('invite-used', open.owner.email);
       } else {
         await this.showInviteReady(invitation);

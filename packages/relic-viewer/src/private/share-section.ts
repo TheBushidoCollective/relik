@@ -115,6 +115,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
   let grantable: number[] = [];
   let expiresAt = 0;
   let admitted: ReadonlySet<string> = new Set();
+  let ownerId: string | undefined;
   let lifetimeText = String(INVITE_DAYS_DEFAULT);
   let busy = false;
   let links: InviteLink[] = [];
@@ -636,7 +637,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     addButton.disabled = true;
     setChildren(addError, '');
     try {
-      const found = await lookupShares(deps, relicId, unique, admitted);
+      const found = await lookupShares(deps, relicId, unique, admitted, ownerId);
       for (const row of found) {
         rows.push({
           row,
@@ -742,6 +743,7 @@ export function createShareSection(options: ShareSectionOptions): ShareSection {
     links: linksHost,
     update(data) {
       admitted = data.admitted;
+      ownerId = data.access.owner?.identity.identity_id;
       expiresAt = Date.parse(data.access.expires_at);
       currentVersion = data.access.sealed_version ?? 0;
       grantable = [];
