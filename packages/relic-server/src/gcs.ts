@@ -560,11 +560,17 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       // the object's size rather than bounding it, and a signed PUT would
       // otherwise ignore the declared length entirely.
       //
+      // Only `content-length` is signed. A create-only precondition
+      // (`x-goog-if-generation-match: 0`) was signed here until this hotfix,
+      // and GCS refused every upload from clients that send only
+      // `content-length`. Without it a still-valid grant can replace an object
+      // written under the same key; that protection needs a server-side
+      // replacement given a decision, not a signed header.
+      //
       // No `x-goog-meta-*` is signed, because nothing needs custom object
       // metadata and anything content-descriptive is barred from living there.
       const headers = {
         'content-length': String(contentLength),
-        'x-goog-if-generation-match': '0',
         ...(customTime === undefined
           ? {}
           : { 'x-goog-custom-time': new Date(customTime).toISOString() }),
