@@ -1952,8 +1952,9 @@ async function run(): Promise<void> {
       'confirmation changed the claimed invitation wraps'
     );
     assert.equal(
-      (await store.getInviteClaimIndex(relicId, inviteeIdentity.identityId))
-        ?.inviteIds.includes(inviteOne),
+      (
+        await store.getInviteClaimIndex(relicId, inviteeIdentity.identityId)
+      )?.inviteIds.includes(inviteOne),
       true,
       'confirmation removed the claim index'
     );
@@ -2078,7 +2079,10 @@ async function run(): Promise<void> {
     );
     const removedIdentity = await identityOf(env, inviteeThree);
     const removedKem = hexOf(await kemKeyIdOf(removedIdentity.kemPublicKey));
-    const claimBeforeRemoval = await store.getInvite(relicId, toRemove.inviteId);
+    const claimBeforeRemoval = await store.getInvite(
+      relicId,
+      toRemove.inviteId
+    );
     assert.ok(claimBeforeRemoval, 'the invitation to remove is missing');
     const removedClaimWraps = claimBeforeRemoval.claimWraps;
     assert.ok(removedClaimWraps?.length, 'claim wraps are missing');
@@ -2402,7 +2406,8 @@ async function run(): Promise<void> {
       undefined
     );
     assert.deepEqual(
-      (await store.getInvite(relicId, alreadyReaderInvite.inviteId))?.claimWraps,
+      (await store.getInvite(relicId, alreadyReaderInvite.inviteId))
+        ?.claimWraps,
       [],
       'an already-authorized reader received claim wraps'
     );

@@ -960,14 +960,25 @@ describe('backfill and coverage', () => {
     const reader = await person('reader@example.com');
     await registerIdentity(reader);
     const device = { keys: sealed.deviceKeys, deviceId: sealed.deviceId };
-    const second = await sealVersionTwo(owner, device, await openVersionTwo(), []);
+    const second = await sealVersionTwo(
+      owner,
+      device,
+      await openVersionTwo(),
+      []
+    );
     expect(second.status).toBe(200);
     expect((await grantTo(owner, reader, [2], second.key)).status).toBe(201);
     const readerKey = (await store.getIdentity(reader.identityId!))!.kemKeyId;
     const coverage = async () =>
       send('/api/identity/relics?coverage=1', { cookie: owner.cookie });
-    expect((await coverage()).body['owned']).toMatchObject([{ coverage_gaps: [] }]);
-    const uncovered = await wrap(reader.keys!.kemPublicKey, sealed.versionKey, 1);
+    expect((await coverage()).body['owned']).toMatchObject([
+      { coverage_gaps: [] },
+    ]);
+    const uncovered = await wrap(
+      reader.keys!.kemPublicKey,
+      sealed.versionKey,
+      1
+    );
     const backfill = await send(
       '/api/identity/backfill',
       post({ wraps: [{ relic_id: RELIC_ID, ...uncovered }] }, owner.cookie)
@@ -988,10 +999,14 @@ describe('backfill and coverage', () => {
       post({ publish_token: sealed.publishToken, recipient_key_id: readerKey })
     );
     expect(publisherRead.status).toBe(403);
-    await store.deleteWraps(RELIC_ID, { recipientKeyId: readerKey, version: 2 });
-    expect((await coverage()).body['owned']).toMatchObject([{ coverage_gaps: [2] }]);
+    await store.deleteWraps(RELIC_ID, {
+      recipientKeyId: readerKey,
+      version: 2,
+    });
+    expect((await coverage()).body['owned']).toMatchObject([
+      { coverage_gaps: [2] },
+    ]);
   });
-
 });
 
 describe('grant lookup', () => {
@@ -1140,8 +1155,12 @@ describe('grant authority', () => {
     );
     expect(denied.status).toBe(403);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(200);
   });
 
@@ -1335,18 +1354,32 @@ describe('the interleaved grant and seal race', () => {
     ).toBeUndefined();
     for (const version of [1, 2]) {
       expect(
-        (await send(`/api/relics/${RELIC_ID}/versions/${version}/key`, post({}, reader.cookie)))
-          .status
+        (
+          await send(
+            `/api/relics/${RELIC_ID}/versions/${version}/key`,
+            post({}, reader.cookie)
+          )
+        ).status
       ).toBe(403);
     }
-    expect((await grantTo(owner, reader, [2], sealedFirst!.key)).status).toBe(201);
+    expect((await grantTo(owner, reader, [2], sealedFirst!.key)).status).toBe(
+      201
+    );
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/1/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(403);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(200);
   });
 });
@@ -1359,12 +1392,18 @@ test('a former recovery holder only reads versions covered by their grant', asyn
   await registerIdentity(holder);
   expect((await designate(owner, holder)).status).toBe(200);
   const holderRecord = (await store.getIdentity(holder.identityId!))!;
-  const recoveryWrap = await wrap(holder.keys!.kemPublicKey, sealed.versionKey, 1);
+  const recoveryWrap = await wrap(
+    holder.keys!.kemPublicKey,
+    sealed.versionKey,
+    1
+  );
   expect(
-    (await send(
-      '/api/identity/backfill',
-      post({ wraps: [{ relic_id: RELIC_ID, ...recoveryWrap }] }, owner.cookie)
-    )).status
+    (
+      await send(
+        '/api/identity/backfill',
+        post({ wraps: [{ relic_id: RELIC_ID, ...recoveryWrap }] }, owner.cookie)
+      )
+    ).status
   ).toBe(200);
   const device = { keys: sealed.deviceKeys, deviceId: sealed.deviceId };
   const second = await sealVersionTwo(owner, device, await openVersionTwo(), [
@@ -1374,12 +1413,20 @@ test('a former recovery holder only reads versions covered by their grant', asyn
   expect((await grantTo(owner, holder, [2], second.key)).status).toBe(201);
   expect((await designate(owner, undefined)).status).toBe(200);
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, holder.cookie)))
-      .status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, holder.cookie)
+      )
+    ).status
   ).toBe(403);
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, holder.cookie)))
-      .status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/2/key`,
+        post({}, holder.cookie)
+      )
+    ).status
   ).toBe(200);
 });
 
@@ -1389,7 +1436,9 @@ test('a later seal remains readable to an existing grantee', async () => {
   const sealed = await sealedPrivateRelic(owner);
   const reader = await person('reader@example.com');
   await registerIdentity(reader);
-  expect((await grantTo(owner, reader, [1], sealed.versionKey)).status).toBe(201);
+  expect((await grantTo(owner, reader, [1], sealed.versionKey)).status).toBe(
+    201
+  );
   const readerRecord = (await store.getIdentity(reader.identityId!))!;
   const device = { keys: sealed.deviceKeys, deviceId: sealed.deviceId };
   const second = await sealVersionTwo(owner, device, await openVersionTwo(), [
@@ -1398,8 +1447,12 @@ test('a later seal remains readable to an existing grantee', async () => {
   expect(second.status).toBe(200);
   for (const version of [1, 2]) {
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/${version}/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/${version}/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(200);
   }
 });
@@ -1410,7 +1463,9 @@ test('a failed revocation epoch move restores the grant without deleting its wra
   const sealed = await sealedPrivateRelic(owner);
   const reader = await person('reader@example.com');
   await registerIdentity(reader);
-  expect((await grantTo(owner, reader, [1], sealed.versionKey)).status).toBe(201);
+  expect((await grantTo(owner, reader, [1], sealed.versionKey)).status).toBe(
+    201
+  );
   store.beforeUpdate = async () => {
     await store.updateRelic(RELIC_ID, (current) => ({
       ...current,
@@ -1420,10 +1475,16 @@ test('a failed revocation epoch move restores the grant without deleting its wra
   const failed = await revokeGrant(owner, reader);
   expect(failed.status).toBe(409);
   expect(failed.body['code']).toBe('version_conflict');
-  expect((await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt).toBeUndefined();
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-      .status
+    (await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt
+  ).toBeUndefined();
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, reader.cookie)
+      )
+    ).status
   ).toBe(200);
 });
 

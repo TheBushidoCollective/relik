@@ -38,8 +38,10 @@ export interface ServedWrap {
 
 /** Grants include their selected versions and all subsequently sealed versions. */
 export function grantCovers(grant: GrantRow, version: number): boolean {
-  return grant.versions.length > 0 &&
-    (grant.versions.includes(version) || version > Math.max(...grant.versions));
+  return (
+    grant.versions.length > 0 &&
+    (grant.versions.includes(version) || version > Math.max(...grant.versions))
+  );
 }
 export interface Standing {
   readonly role: AccessRole;
@@ -193,7 +195,8 @@ export async function claimedInvitations(
   const live: InviteRow[] = [];
   const revoked: InviteRow[] = [];
   for (const invite of rows) {
-    if (invite === undefined || invite.claimantIdentityId !== identityId) continue;
+    if (invite === undefined || invite.claimantIdentityId !== identityId)
+      continue;
     if (invite.status === 'revoked' || invitationRevokedByEpoch(row, invite)) {
       revoked.push(invite);
     } else if (invite.status === 'claimed') {
@@ -251,7 +254,8 @@ async function wrapForStanding(
     const wrap = await env.store.getWrap(row.id, version, me.kemKeyId);
     if (wrap !== undefined) return wrap;
   }
-  if (standing.role !== 'invited' && standing.role !== 'grantee') return undefined;
+  if (standing.role !== 'invited' && standing.role !== 'grantee')
+    return undefined;
   for (const claim of claims) {
     if (!claim.versions.includes(version)) continue;
     const wrap = claim.claimWraps?.find((item) => item.version === version);
@@ -334,7 +338,9 @@ export async function requireRead(
     });
   }
   const wrap =
-    me === undefined ? undefined : await servedWrap(env, row, owner, me, version);
+    me === undefined
+      ? undefined
+      : await servedWrap(env, row, owner, me, version);
   if (wrap === undefined) {
     throw new ProblemError('private_access_denied', { relic_id: row.id });
   }

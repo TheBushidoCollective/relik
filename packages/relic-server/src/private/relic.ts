@@ -944,10 +944,9 @@ async function ownerInviteJson(
       signed?.statement ?? {},
       signed?.identitySignature ?? ''
     ),
-    status:
-      invitationRevokedByEpoch(relic, row)
-        ? 'revoked'
-        : row.status === 'open' && row.expiresAt <= env.now
+    status: invitationRevokedByEpoch(relic, row)
+      ? 'revoked'
+      : row.status === 'open' && row.expiresAt <= env.now
         ? 'expired'
         : row.status === 'claimed' &&
             grant !== undefined &&
@@ -966,7 +965,9 @@ export async function listInvitations(
 ): Promise<InviteJSON[]> {
   const { row } = await ownedPrivate(env, email, relicId);
   const invites = await env.store.listInvites(row.id);
-  return Promise.all(invites.map((invite) => ownerInviteJson(env, invite, row)));
+  return Promise.all(
+    invites.map((invite) => ownerInviteJson(env, invite, row))
+  );
 }
 
 export async function revokeInvitation(
@@ -2085,7 +2086,8 @@ export async function claimInvitation(
     for (const version of invite.versions) {
       if (
         grantCovers(grant, version) &&
-        (await env.store.getWrap(row.id, version, identity.kemKeyId)) !== undefined
+        (await env.store.getWrap(row.id, version, identity.kemKeyId)) !==
+          undefined
       ) {
         covered.add(version);
       }

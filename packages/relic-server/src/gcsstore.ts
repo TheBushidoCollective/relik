@@ -2274,7 +2274,6 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       await removeGrant(relicId, granteeIdentityId);
     },
 
-
     async deleteGrantIf(
       relicId: string,
       granteeIdentityId: string,
@@ -2370,9 +2369,12 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           identityId,
           inviteIds: [...(current?.value.inviteIds ?? []), inviteId],
         };
-        if (await put(name, next, current?.generation ?? '0', customTime)) return;
+        if (await put(name, next, current?.generation ?? '0', customTime))
+          return;
       }
-      throw new Error(`gcs invite claim index lost ${casAttempts} compare-and-swap races`);
+      throw new Error(
+        `gcs invite claim index lost ${casAttempts} compare-and-swap races`
+      );
     },
 
     async getInviteClaimIndex(

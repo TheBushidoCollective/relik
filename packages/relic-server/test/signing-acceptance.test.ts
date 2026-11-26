@@ -508,7 +508,10 @@ test('a grant that applies stays when the request it came with is refused, and t
   await f.store.deleteWraps(RELIC_ID, { recipientKeyId: reader!.kemKeyId });
   const grantStatement = {
     at: NOW,
-    fingerprint_typed: await identityFingerprint(f.first.identityId, f.first.email),
+    fingerprint_typed: await identityFingerprint(
+      f.first.identityId,
+      f.first.email
+    ),
     grantee_email: f.first.email,
     grantee_identity_id: f.first.identityId,
     owner_identity_id: f.owner.identityId,
@@ -516,11 +519,14 @@ test('a grant that applies stays when the request it came with is refused, and t
     versions: [1],
   };
   const signature = await signStatement(
-    async (bytes) => new Uint8Array(await crypto.subtle.sign(
-      { name: 'ECDSA', hash: 'SHA-256' },
-      f.owner.keys.sig.privateKey,
-      bytes as BufferSource
-    )),
+    async (bytes) =>
+      new Uint8Array(
+        await crypto.subtle.sign(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          f.owner.keys.sig.privateKey,
+          bytes as BufferSource
+        )
+      ),
     statementBytes('grant', grantStatement)
   );
   const encrypted = await wrapVersionKey({
@@ -530,10 +536,26 @@ test('a grant that applies stays when the request it came with is refused, and t
     key: randomBytes(16),
   });
   // The second signer has no grant, so the request is refused after the first grant applied.
-  await f.open('parallel', true, false, 1, [f.first, f.second], undefined, 409, {
-    grants: [{ statement: grantStatement, identity_signature: signature }],
-    wraps: [{ recipient_key_id: encrypted.recipientKeyId, version: 1, enc: encrypted.enc, ct: encrypted.ct }],
-  });
+  await f.open(
+    'parallel',
+    true,
+    false,
+    1,
+    [f.first, f.second],
+    undefined,
+    409,
+    {
+      grants: [{ statement: grantStatement, identity_signature: signature }],
+      wraps: [
+        {
+          recipient_key_id: encrypted.recipientKeyId,
+          version: 1,
+          enc: encrypted.enc,
+          ct: encrypted.ct,
+        },
+      ],
+    }
+  );
   expect(await f.store.getGrant(RELIC_ID, f.first.identityId)).toBeDefined();
 });
 

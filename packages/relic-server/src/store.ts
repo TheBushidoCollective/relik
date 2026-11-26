@@ -131,7 +131,9 @@ export interface RelicRow {
    * epoch, so the fence and the epoch never disagree.
    */
   readonly accessFence?:
-    | Readonly<Record<string, { readonly epoch: number; readonly nonce: string }>>
+    | Readonly<
+        Record<string, { readonly epoch: number; readonly nonce: string }>
+      >
     | undefined;
   /** The highest version whose seal the server recorded. It is provisional until the owner-epoch recheck passes. */
   readonly sealedVersion?: number | undefined;
@@ -438,15 +440,19 @@ export interface InviteRow {
     readonly ct: string;
   }[];
   /** Wraps to the claimant's identity, committed atomically with the claim. */
-  readonly claimWraps?: readonly {
-    readonly version: number;
-    readonly enc: string;
-    readonly ct: string;
-  }[] | undefined;
-  readonly claim?: {
-    readonly statement: Record<string, unknown>;
-    readonly identitySignature: string;
-  } | undefined;
+  readonly claimWraps?:
+    | readonly {
+        readonly version: number;
+        readonly enc: string;
+        readonly ct: string;
+      }[]
+    | undefined;
+  readonly claim?:
+    | {
+        readonly statement: Record<string, unknown>;
+        readonly identitySignature: string;
+      }
+    | undefined;
   /** The owner's attested grant tap. Its single statement is the `invite` statement. */
   readonly attestation: StoredAttestation;
   readonly claimedAt?: number | undefined;
@@ -2198,7 +2204,11 @@ export class MemoryStore implements RelicStore {
     row: WrapRow,
     matches: (current: WrapRow) => boolean
   ): Promise<boolean> {
-    const k = compositeKey(row.relicId, String(row.version), row.recipientKeyId);
+    const k = compositeKey(
+      row.relicId,
+      String(row.version),
+      row.recipientKeyId
+    );
     const current = this.wraps.get(k);
     if (current === undefined || !matches(current)) return false;
     this.wraps.set(k, row);

@@ -686,7 +686,8 @@ async function claimFor(
 ): Promise<void> {
   const inviteId =
     (await store.listInvites(RELIC_ID)).find(
-      (invite) => invite.invitedEmail === invitee.email && invite.status === 'open'
+      (invite) =>
+        invite.invitedEmail === invitee.email && invite.status === 'open'
     )?.inviteId ?? invitee.identityId!;
   if ((await store.getInvite(RELIC_ID, inviteId)) === undefined) {
     await store.putInvite({
@@ -779,7 +780,10 @@ describe('the invited role (decision D14)', () => {
     const invitee = await person('ada@example.com');
     await registerIdentity(invitee);
     await claimFor(invitee, owner, [1]);
-    const index = await store.getInviteClaimIndex(RELIC_ID, invitee.identityId!);
+    const index = await store.getInviteClaimIndex(
+      RELIC_ID,
+      invitee.identityId!
+    );
     expect(index).toBeDefined();
     await store.updateInvite(RELIC_ID, index!.inviteIds[0]!, (current) => ({
       ...current,
@@ -818,7 +822,8 @@ describe('the invited role (decision D14)', () => {
     );
     expect(response.status).toBe(201);
     expect(
-      (await store.getInviteClaimIndex(RELIC_ID, invitee.identityId!))?.inviteIds
+      (await store.getInviteClaimIndex(RELIC_ID, invitee.identityId!))
+        ?.inviteIds
     ).toHaveLength(1);
     const access = await send(`/api/relics/${RELIC_ID}/access`, {
       cookie: invitee.cookie,
@@ -1405,14 +1410,20 @@ test('cancellation wins the claim CAS and a second invitation can be claimed', a
     ),
   };
   expect(
-    (await send(
-      `/api/relics/${RELIC_ID}/invites/${second.inviteId}/claim`,
-      post(secondBody, invitee.cookie)
-    )).status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/invites/${second.inviteId}/claim`,
+        post(secondBody, invitee.cookie)
+      )
+    ).status
   ).toBe(201);
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, invitee.cookie)))
-      .status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, invitee.cookie)
+      )
+    ).status
   ).toBe(200);
 });
 
@@ -1570,16 +1581,20 @@ test('multiple claimed invitations union their versions through a narrower confi
   const second = await inviteFor(owner, invitee.email, [2]);
   const secondId = await inviteIdOf(second.pair.publicKey);
   expect(
-    (await send(
-      `/api/relics/${RELIC_ID}/grants`,
-      post(
-        {
-          attestation: await attest(owner, 'grant', RELIC_ID, [second.statement]),
-          wraps: [await wrap(second.pair.publicKey, versionKey, 2)],
-        },
-        owner.cookie
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/grants`,
+        post(
+          {
+            attestation: await attest(owner, 'grant', RELIC_ID, [
+              second.statement,
+            ]),
+            wraps: [await wrap(second.pair.publicKey, versionKey, 2)],
+          },
+          owner.cookie
+        )
       )
-    )).status
+    ).status
   ).toBe(201);
   await registerIdentity(invitee);
   const claim = async (inviteId: string, version: number) => {
@@ -1613,16 +1628,18 @@ test('multiple claimed invitations union their versions through a narrower confi
   expect(access.body['me']).toMatchObject({ readable_versions: [1, 2] });
   const grant = await grantStatementFor(owner, invitee, [2]);
   expect(
-    (await send(
-      `/api/relics/${RELIC_ID}/grants`,
-      post(
-        {
-          attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
-          wraps: [await wrap(invitee.keys!.kemPublicKey, versionKey, 2)],
-        },
-        owner.cookie
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/grants`,
+        post(
+          {
+            attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+            wraps: [await wrap(invitee.keys!.kemPublicKey, versionKey, 2)],
+          },
+          owner.cookie
+        )
       )
-    )).status
+    ).status
   ).toBe(201);
   const confirmed = await send(`/api/relics/${RELIC_ID}/access`, {
     cookie: invitee.cookie,
@@ -1633,10 +1650,12 @@ test('multiple claimed invitations union their versions through a narrower confi
   });
   for (const version of [1, 2]) {
     expect(
-      (await send(
-        `/api/relics/${RELIC_ID}/versions/${version}/key`,
-        post({}, invitee.cookie)
-      )).status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/${version}/key`,
+          post({}, invitee.cookie)
+        )
+      ).status
     ).toBe(200);
   }
 });
@@ -1769,12 +1788,12 @@ test('a different claimant wins the CAS without inheriting the losing claim', as
   expect(winnerStatus).toBe(201);
   expect(loser.status).toBe(409);
   expect(loser.body['code']).toBe('invite_claimed');
-  expect((await store.getInviteClaimIndex(RELIC_ID, firstId))?.inviteIds).toEqual([
-    inviteId,
-  ]);
-  expect((await store.getInviteClaimIndex(RELIC_ID, secondId))?.inviteIds).toEqual([
-    inviteId,
-  ]);
+  expect(
+    (await store.getInviteClaimIndex(RELIC_ID, firstId))?.inviteIds
+  ).toEqual([inviteId]);
+  expect(
+    (await store.getInviteClaimIndex(RELIC_ID, secondId))?.inviteIds
+  ).toEqual([inviteId]);
   expect((await store.getInvite(RELIC_ID, inviteId))?.claimantIdentityId).toBe(
     secondId
   );
@@ -1892,10 +1911,12 @@ test('removing a claim cannot delete a concurrent confirmation wrap', async () =
     if (!interleaved && args[1] === invitee.identityId) {
       interleaved = true;
       expect(
-        (await send(
-          `/api/relics/${RELIC_ID}/grants`,
-          post(grantBody, owner.cookie)
-        )).status
+        (
+          await send(
+            `/api/relics/${RELIC_ID}/grants`,
+            post(grantBody, owner.cookie)
+          )
+        ).status
       ).toBe(201);
     }
     return prior;
@@ -1907,11 +1928,16 @@ test('removing a claim cannot delete a concurrent confirmation wrap', async () =
   expect(interleaved).toBe(true);
   expect(removed.status).toBe(200);
   expect((await store.getInvite(RELIC_ID, inviteId))?.status).toBe('revoked');
-  expect((await store.getGrant(RELIC_ID, invitee.identityId!))?.revokedAt)
-    .toBeUndefined();
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, invitee.cookie)))
-      .status
+    (await store.getGrant(RELIC_ID, invitee.identityId!))?.revokedAt
+  ).toBeUndefined();
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, invitee.cookie)
+      )
+    ).status
   ).toBe(200);
 });
 
@@ -2070,16 +2096,28 @@ test.each(['grant', 'seal', 'backfill'] as const)(
     );
     expect(granted.status).toBe(201);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/1/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(403);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/mint`, post({ version: 1 }, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/mint`,
+          post({ version: 1 }, reader.cookie)
+        )
+      ).status
     ).toBe(403);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(200);
     const access = await send(`/api/relics/${RELIC_ID}/access`, {
       cookie: reader.cookie,
@@ -2289,7 +2327,6 @@ test('a losing batch cannot remove the winning grant wrap', async () => {
   expect(Buffer.from(opened)).toEqual(Buffer.from(versionKey));
 });
 
-
 test('the access log names the invited address on invitation events', async () => {
   const owner = await person('owner@example.com');
   await registerIdentity(owner);
@@ -2371,7 +2408,9 @@ async function partialGrantFixture(claimFirst: boolean) {
   };
   const claimPath = `/api/relics/${RELIC_ID}/invites/${first.inviteId}/claim`;
   if (claimFirst) {
-    expect((await send(claimPath, post(claim, reader.cookie))).status).toBe(201);
+    expect((await send(claimPath, post(claim, reader.cookie))).status).toBe(
+      201
+    );
   }
   const seal = (await store.getSeal(RELIC_ID, 1))!;
   await store.putSeal({ ...seal, version: 2 });
@@ -2386,10 +2425,12 @@ async function partialGrantFixture(claimFirst: boolean) {
     wraps: [await wrap(reader.keys!.kemPublicKey, versionKey, 2)],
   };
   expect(
-    (await send(
-      `/api/relics/${RELIC_ID}/grants`,
-      post(grantBody, owner.cookie)
-    )).status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/grants`,
+        post(grantBody, owner.cookie)
+      )
+    ).status
   ).toBe(201);
   return { owner, reader, first, spare, versionKey, claim, claimPath };
 }
@@ -2428,13 +2469,19 @@ test('claiming an older invitation keeps versions outside an existing grant', as
   const { reader, first, claim, claimPath, versionKey } =
     await partialGrantFixture(false);
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-      .status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, reader.cookie)
+      )
+    ).status
   ).toBe(403);
   const result = await send(claimPath, post(claim, reader.cookie));
   expect(result.status).toBe(201);
   expect(result.body['status']).toBe('claimed');
-  expect((await store.getInvite(RELIC_ID, first.inviteId))?.claimWraps).toHaveLength(1);
+  expect(
+    (await store.getInvite(RELIC_ID, first.inviteId))?.claimWraps
+  ).toHaveLength(1);
   expect(
     (await store.getInviteClaimIndex(RELIC_ID, reader.identityId!))?.inviteIds
   ).toEqual([first.inviteId]);
@@ -2478,8 +2525,12 @@ test('claiming an older invitation keeps versions outside an existing grant', as
     readable_versions: [1, 2],
   });
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
-      .status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/2/key`,
+        post({}, reader.cookie)
+      )
+    ).status
   ).toBe(200);
 });
 
@@ -2501,18 +2552,22 @@ test.each(['plain', 'cancel', 'regrant'] as const)(
         interleaved = true;
         if (interleaving === 'cancel') {
           expect(
-            (await send(
-              `/api/relics/${RELIC_ID}/invites/${first.inviteId}/revoke`,
-              post({}, owner.cookie)
-            )).status
+            (
+              await send(
+                `/api/relics/${RELIC_ID}/invites/${first.inviteId}/revoke`,
+                post({}, owner.cookie)
+              )
+            ).status
           ).toBe(200);
         }
         if (interleaving === 'regrant') {
           expect(
-            (await send(
-              `/api/relics/${RELIC_ID}/grants`,
-              post(regrant, owner.cookie)
-            )).status
+            (
+              await send(
+                `/api/relics/${RELIC_ID}/grants`,
+                post(regrant, owner.cookie)
+              )
+            ).status
           ).toBe(201);
         }
         await update(id, (current) => ({
@@ -2535,23 +2590,34 @@ test.each(['plain', 'cancel', 'regrant'] as const)(
     } else {
       expect(fence).toBeUndefined();
     }
-    expect((await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt)
-      .toBeUndefined();
-    expect((await store.getInvite(RELIC_ID, spare.inviteId))?.status).toBe('open');
-    const original = await store.getInvite(RELIC_ID, first.inviteId);
-    expect(original?.status).toBe(interleaving === 'cancel' ? 'revoked' : 'claimed');
-    expect(original?.claimWraps).toHaveLength(interleaving === 'cancel' ? 0 : 1);
     expect(
-      (await send(
-        `/api/relics/${RELIC_ID}/versions/1/key`,
-        post({}, reader.cookie)
-      )).status
+      (await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt
+    ).toBeUndefined();
+    expect((await store.getInvite(RELIC_ID, spare.inviteId))?.status).toBe(
+      'open'
+    );
+    const original = await store.getInvite(RELIC_ID, first.inviteId);
+    expect(original?.status).toBe(
+      interleaving === 'cancel' ? 'revoked' : 'claimed'
+    );
+    expect(original?.claimWraps).toHaveLength(
+      interleaving === 'cancel' ? 0 : 1
+    );
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/1/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(interleaving === 'plain' ? 200 : 403);
     expect(
-      (await send(
-        `/api/relics/${RELIC_ID}/versions/2/key`,
-        post({}, reader.cookie)
-      )).status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(200);
   }
 );
@@ -2569,17 +2635,21 @@ test('a storage failure before revocation commit retains the claimed wrap', asyn
     return update(id, change);
   };
   await expect(
-    send(
-      `/api/relics/${RELIC_ID}/revocations`,
-      post(revocation, owner.cookie)
-    )
+    send(`/api/relics/${RELIC_ID}/revocations`, post(revocation, owner.cookie))
   ).rejects.toThrow('epoch write unavailable');
-  expect((await store.getInvite(RELIC_ID, first.inviteId))?.claimWraps).toHaveLength(1);
-  expect((await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt)
-    .toBeUndefined();
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-      .status
+    (await store.getInvite(RELIC_ID, first.inviteId))?.claimWraps
+  ).toHaveLength(1);
+  expect(
+    (await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt
+  ).toBeUndefined();
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, reader.cookie)
+      )
+    ).status
   ).toBe(200);
 });
 
@@ -2598,10 +2668,12 @@ test('a committed revocation fences old claims despite concurrent regrant and fa
     if (!interleaved && relicId === RELIC_ID) {
       interleaved = true;
       expect(
-        (await send(
-          `/api/relics/${RELIC_ID}/grants`,
-          post(regrant, owner.cookie)
-        )).status
+        (
+          await send(
+            `/api/relics/${RELIC_ID}/grants`,
+            post(regrant, owner.cookie)
+          )
+        ).status
       ).toBe(201);
       throw new Error('invitation cleanup unavailable');
     }
@@ -2614,24 +2686,41 @@ test('a committed revocation fences old claims despite concurrent regrant and fa
   store.listInvites = list;
   expect(interleaved).toBe(true);
   expect(result.status).toBe(200);
-  expect((await store.getInvite(RELIC_ID, first.inviteId))?.status).toBe('claimed');
-  expect((await store.getInvite(RELIC_ID, first.inviteId))?.claimWraps).toHaveLength(1);
-  expect((await store.getInvite(RELIC_ID, spare.inviteId))?.status).toBe('open');
-  expect((await store.getRelic(RELIC_ID))?.accessFence?.[reader.email]?.nonce)
-    .toBeDefined();
+  expect((await store.getInvite(RELIC_ID, first.inviteId))?.status).toBe(
+    'claimed'
+  );
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-      .status
+    (await store.getInvite(RELIC_ID, first.inviteId))?.claimWraps
+  ).toHaveLength(1);
+  expect((await store.getInvite(RELIC_ID, spare.inviteId))?.status).toBe(
+    'open'
+  );
+  expect(
+    (await store.getRelic(RELIC_ID))?.accessFence?.[reader.email]?.nonce
+  ).toBeDefined();
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, reader.cookie)
+      )
+    ).status
   ).toBe(403);
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
-      .status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/2/key`,
+        post({}, reader.cookie)
+      )
+    ).status
   ).toBe(200);
   expect(
-    (await send(
-      `/api/relics/${RELIC_ID}/versions/1/key`,
-      post({ invite_id: spare.inviteId }, reader.cookie)
-    )).status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({ invite_id: spare.inviteId }, reader.cookie)
+      )
+    ).status
   ).toBe(403);
   const opened = await send(
     `/api/relics/${RELIC_ID}/invites/${spare.inviteId}/open`,
@@ -2644,17 +2733,21 @@ test('a committed revocation fences old claims despite concurrent regrant and fa
   // An invitation created from a stale pre-revocation snapshot is fenced too.
   const oldOpen = (await store.getInvite(RELIC_ID, spare.inviteId))!;
   const lateInviteId = 'f'.repeat(64);
-  expect(await store.putInvite({ ...oldOpen, inviteId: lateInviteId })).toBe(true);
+  expect(await store.putInvite({ ...oldOpen, inviteId: lateInviteId })).toBe(
+    true
+  );
   const late = await send(
     `/api/relics/${RELIC_ID}/invites/${lateInviteId}/open`,
     post({}, reader.cookie)
   );
   expect(late.body['status']).toBe('revoked');
   expect(
-    (await send(
-      `/api/relics/${RELIC_ID}/versions/1/key`,
-      post({ invite_id: lateInviteId }, reader.cookie)
-    )).status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({ invite_id: lateInviteId }, reader.cookie)
+      )
+    ).status
   ).toBe(403);
 });
 
@@ -2673,33 +2766,39 @@ test('a partially covered invitation stores only its uncovered identity wraps', 
   const invite = await inviteFor(owner, reader.email, [1, 2]);
   const inviteId = await inviteIdOf(invite.pair.publicKey);
   expect(
-    (await send(
-      `/api/relics/${RELIC_ID}/grants`,
-      post(
-        {
-          attestation: await attest(owner, 'grant', RELIC_ID, [invite.statement]),
-          wraps: [
-            await wrap(invite.pair.publicKey, versionKey, 1),
-            await wrap(invite.pair.publicKey, versionKey, 2),
-          ],
-        },
-        owner.cookie
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/grants`,
+        post(
+          {
+            attestation: await attest(owner, 'grant', RELIC_ID, [
+              invite.statement,
+            ]),
+            wraps: [
+              await wrap(invite.pair.publicKey, versionKey, 1),
+              await wrap(invite.pair.publicKey, versionKey, 2),
+            ],
+          },
+          owner.cookie
+        )
       )
-    )).status
+    ).status
   ).toBe(201);
   await registerIdentity(reader);
   const grant = await grantStatementFor(owner, reader, [2]);
   expect(
-    (await send(
-      `/api/relics/${RELIC_ID}/grants`,
-      post(
-        {
-          attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
-          wraps: [await wrap(reader.keys!.kemPublicKey, versionKey, 2)],
-        },
-        owner.cookie
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/grants`,
+        post(
+          {
+            attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+            wraps: [await wrap(reader.keys!.kemPublicKey, versionKey, 2)],
+          },
+          owner.cookie
+        )
       )
-    )).status
+    ).status
   ).toBe(201);
   const statement = {
     at: now,
@@ -2726,8 +2825,11 @@ test('a partially covered invitation stores only its uncovered identity wraps', 
     )
   );
   expect(result.status).toBe(201);
-  expect((await store.getInvite(RELIC_ID, inviteId))?.claimWraps?.map((w) => w.version))
-    .toEqual([1]);
+  expect(
+    (await store.getInvite(RELIC_ID, inviteId))?.claimWraps?.map(
+      (w) => w.version
+    )
+  ).toEqual([1]);
   const access = await send(`/api/relics/${RELIC_ID}/access`, {
     cookie: reader.cookie,
   });
@@ -2745,20 +2847,25 @@ test.each([false, true])(
     await registerIdentity(reader);
     const grant = await grantStatementFor(owner, reader, [1]);
     expect(
-      (await send(
-        `/api/relics/${RELIC_ID}/grants`,
-        post(
-          {
-            attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
-            wraps: [await wrap(reader.keys!.kemPublicKey, versionKey, 1)],
-          },
-          owner.cookie
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/grants`,
+          post(
+            {
+              attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+              wraps: [await wrap(reader.keys!.kemPublicKey, versionKey, 1)],
+            },
+            owner.cookie
+          )
         )
-      )).status
+      ).status
     ).toBe(201);
     const readerKey = (await store.getIdentity(reader.identityId!))!.kemKeyId;
     if (missingWrap) {
-      await store.deleteWraps(RELIC_ID, { version: 1, recipientKeyId: readerKey });
+      await store.deleteWraps(RELIC_ID, {
+        version: 1,
+        recipientKeyId: readerKey,
+      });
     }
     const statement = {
       at: now,
@@ -2782,12 +2889,19 @@ test.each([false, true])(
       )
     );
     expect(claimed.status).toBe(missingWrap ? 201 : 200);
-    expect(claimed.body['status']).toBe(missingWrap ? 'claimed' : 'already_reader');
-    expect((await store.getInvite(RELIC_ID, inviteId))?.claimWraps)
-      .toHaveLength(missingWrap ? 1 : 0);
+    expect(claimed.body['status']).toBe(
+      missingWrap ? 'claimed' : 'already_reader'
+    );
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-        .status
+      (await store.getInvite(RELIC_ID, inviteId))?.claimWraps
+    ).toHaveLength(missingWrap ? 1 : 0);
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/1/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(200);
   }
 );
@@ -2846,10 +2960,16 @@ test('a claim crossing a committed revocation cannot authorize its wrap', async 
   const result = await pending;
   expect(result.status).toBe(410);
   expect(result.body['code']).toBe('invite_revoked');
-  expect((await store.getInvite(RELIC_ID, spare.inviteId))?.status).toBe('claimed');
+  expect((await store.getInvite(RELIC_ID, spare.inviteId))?.status).toBe(
+    'claimed'
+  );
   expect(
-    (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-      .status
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, reader.cookie)
+      )
+    ).status
   ).toBe(403);
 });
 
@@ -2862,8 +2982,12 @@ describe('revocation fence, crash recovery and the wrap sweep', () => {
       revocation: attestation(),
     }));
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/1/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(403);
     const grant = await grantStatementFor(owner, reader, [2]);
     const regranted = await send(
@@ -2877,14 +3001,24 @@ describe('revocation fence, crash recovery and the wrap sweep', () => {
       )
     );
     expect(regranted.status).toBe(201);
-    expect((await store.getRelic(RELIC_ID))?.accessFence?.[reader.email]?.epoch).toBe(2);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, reader.cookie)))
-        .status
+      (await store.getRelic(RELIC_ID))?.accessFence?.[reader.email]?.epoch
+    ).toBe(2);
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/1/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(403);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(200);
   });
 
@@ -2901,13 +3035,17 @@ describe('revocation fence, crash recovery and the wrap sweep', () => {
     );
     expect(retried.status).toBe(200);
     const grant = await store.getGrant(RELIC_ID, reader.identityId!);
-    expect((await store.getRelic(RELIC_ID))?.accessFence?.[reader.email]?.nonce).toBe(
-      grant?.revocation?.nonce
-    );
+    expect(
+      (await store.getRelic(RELIC_ID))?.accessFence?.[reader.email]?.nonce
+    ).toBe(grant?.revocation?.nonce);
     for (const version of [1, 2]) {
       expect(
-        (await send(`/api/relics/${RELIC_ID}/versions/${version}/key`, post({}, reader.cookie)))
-          .status
+        (
+          await send(
+            `/api/relics/${RELIC_ID}/versions/${version}/key`,
+            post({}, reader.cookie)
+          )
+        ).status
       ).toBe(403);
     }
   });
@@ -2936,11 +3074,17 @@ describe('revocation fence, crash recovery and the wrap sweep', () => {
     expect(grant?.revokedAt).toBeDefined();
     const relic = await store.getRelic(RELIC_ID);
     expect(relic?.accessEpoch).toBe(2);
-    expect(relic?.accessFence?.[reader.email]?.nonce).toBe(grant?.revocation?.nonce);
+    expect(relic?.accessFence?.[reader.email]?.nonce).toBe(
+      grant?.revocation?.nonce
+    );
     expect(await store.getWrap(RELIC_ID, 2, readerKey)).toBeUndefined();
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(403);
   });
 
@@ -2974,14 +3118,24 @@ describe('revocation fence, crash recovery and the wrap sweep', () => {
     );
     expect(refused.status).toBe(409);
     expect(refused.body['code']).toBe('version_conflict');
-    expect((await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt).toBeDefined();
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
-        .status
+      (await store.getGrant(RELIC_ID, reader.identityId!))?.revokedAt
+    ).toBeDefined();
+    expect(
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(403);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, other.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, other.cookie)
+        )
+      ).status
     ).toBe(200);
     const retried = await send(
       `/api/relics/${RELIC_ID}/revocations`,
@@ -2989,12 +3143,20 @@ describe('revocation fence, crash recovery and the wrap sweep', () => {
     );
     expect(retried.status).toBe(200);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, reader.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, reader.cookie)
+        )
+      ).status
     ).toBe(403);
     expect(
-      (await send(`/api/relics/${RELIC_ID}/versions/2/key`, post({}, other.cookie)))
-        .status
+      (
+        await send(
+          `/api/relics/${RELIC_ID}/versions/2/key`,
+          post({}, other.cookie)
+        )
+      ).status
     ).toBe(200);
   });
 

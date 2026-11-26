@@ -2449,7 +2449,9 @@ describe('conditional wrap primitives', () => {
           (current) => (current.epoch ?? 0) <= 1
         )
       ).toBe(false);
-      expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.enc).toBe('later');
+      expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.enc).toBe(
+        'later'
+      );
       expect(
         await store.deleteWrapIf(
           RELIC_ID,
