@@ -191,8 +191,8 @@ test('invite key stays in the link and opens each returned wrap', async () => {
 test('an invitation key is never written to storage or sent in a body', async () => {
   const writes: string[] = [];
   const originals = {
-    local: globalThis.localStorage,
-    session: globalThis.sessionStorage,
+    local: Object.getOwnPropertyDescriptor(globalThis, 'localStorage'),
+    session: Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage'),
   };
   const recorder = {
     setItem: (key: string) => writes.push(key),
@@ -249,13 +249,17 @@ test('an invitation key is never written to storage or sent in a body', async ()
     expect(writes).toEqual([]);
     for (const body of bodies) expect(body).not.toContain(fragment);
   } finally {
-    Object.defineProperty(globalThis, 'localStorage', {
-      value: originals.local,
-      configurable: true,
-    });
-    Object.defineProperty(globalThis, 'sessionStorage', {
-      value: originals.session,
-      configurable: true,
-    });
+    restoreGlobal('localStorage', originals.local);
+    restoreGlobal('sessionStorage', originals.session);
   }
 });
+
+// A property that did not exist before the test must not exist after it: a
+// present-but-undefined storage global changes what later tests observe.
+function restoreGlobal(
+  name: string,
+  descriptor: PropertyDescriptor | undefined
+): void {
+  if (descriptor === undefined) Reflect.deleteProperty(globalThis, name);
+  else Object.defineProperty(globalThis, name, descriptor);
+}
