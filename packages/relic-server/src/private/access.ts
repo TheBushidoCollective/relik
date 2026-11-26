@@ -142,22 +142,31 @@ export async function sweepWrapsFor(
   }
 }
 
+/** The relik row makes revocation durable even if invitation cleanup fails. */
+export function invitationRevokedByEpoch(row: RelicRow, invite: InviteRow): boolean {
+  const cutoff = row.inviteRevokedBeforeEpoch?.[invite.invitedEmail];
+  return cutoff !== undefined && (invite.createdAccessEpoch ?? 0) < cutoff;
+}
+
 /** The index is only a hint: each referenced invitation must still authorize. */
 export async function claimedInvitations(
   env: PrivateEnv,
-  relicId: string,
+  row: RelicRow,
   identityId: string
 ): Promise<{ live: InviteRow[]; revoked: InviteRow[] }> {
-  const index = await env.store.getInviteClaimIndex(relicId, identityId);
+  const index = await env.store.getInviteClaimIndex(row.id, identityId);
   const rows = await Promise.all(
-    (index?.inviteIds ?? []).map((id) => env.store.getInvite(relicId, id))
+    (index?.inviteIds ?? []).map((id) => env.store.getInvite(row.id, id))
   );
   const live: InviteRow[] = [];
   const revoked: InviteRow[] = [];
   for (const invite of rows) {
     if (invite === undefined || invite.claimantIdentityId !== identityId) continue;
-    if (invite.status === 'claimed') live.push(invite);
-    else if (invite.status === 'revoked') revoked.push(invite);
+    if (invite.status === 'revoked' || invitationRevokedByEpoch(row, invite)) {
+      revoked.push(invite);
+    } else if (invite.status === 'claimed') {
+      live.push(invite);
+    }
   }
   return { live, revoked };
 }
@@ -179,7 +188,7 @@ export async function standingOf(
     return { role: 'grantee', grant };
   }
   if (grant !== undefined) return { role: 'revoked', grant };
-  const claims = await claimedInvitations(env, row.id, me.identityId);
+  const claims = await claimedInvitations(env, row, me.identityId);
   if (claims.live.length > 0) return { role: 'invited' };
   if (claims.revoked.length > 0) return { role: 'revoked' };
   const request = await env.store.getAccessRequest(row.id, me.identityId);
@@ -230,7 +239,7 @@ export async function servedWrap(
   const standing = await standingOf(env, row, owner, me);
   const claims =
     standing.role === 'invited' || standing.role === 'grantee'
-      ? (await claimedInvitations(env, row.id, me.identityId)).live
+      ? (await claimedInvitations(env, row, me.identityId)).live
       : [];
   return wrapForStanding(env, row, me, standing, claims, version);
 }
@@ -247,7 +256,7 @@ export async function readableVersions(
   const standing = await standingOf(env, row, owner, me);
   const claims =
     standing.role === 'invited' || standing.role === 'grantee'
-      ? (await claimedInvitations(env, row.id, me.identityId)).live
+      ? (await claimedInvitations(env, row, me.identityId)).live
       : [];
   const candidates = new Set(
     (await env.store.listWraps(row.id))

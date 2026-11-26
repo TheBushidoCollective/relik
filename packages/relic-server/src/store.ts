@@ -124,6 +124,8 @@ export interface RelicRow {
   readonly privateErasureAt?: number;
   /** Bumped by every grant and revocation. A seal or grant that read an older value loses. */
   readonly accessEpoch?: number | undefined;
+  /** Revocation cutoff per normalized invited address, committed with the epoch. */
+  readonly inviteRevokedBeforeEpoch?: Readonly<Record<string, number>> | undefined;
   /** The highest version whose seal the server recorded. It is provisional until the owner-epoch recheck passes. */
   readonly sealedVersion?: number | undefined;
   /** Versions the owner deleted. The row keeps the number so it is never reused. */
@@ -417,6 +419,8 @@ export interface InviteRow {
   readonly versions: readonly number[];
   readonly expiresAt: number;
   readonly createdAt: number;
+  /** The relik access epoch observed when this invitation was created. */
+  readonly createdAccessEpoch?: number | undefined;
   readonly status: 'open' | 'claimed' | 'revoked';
   /** Wraps of the listed versions to the invite key. Empty once claimed or revoked. */
   readonly wraps: readonly {

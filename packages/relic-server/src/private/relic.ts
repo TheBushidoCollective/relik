@@ -71,6 +71,8 @@ import {
 } from './identity.ts';
 import {
   isDeleted,
+  grantCovers,
+  invitationRevokedByEpoch,
   logAccess,
   ownerRecord,
   publishTokenOk,
@@ -502,7 +504,10 @@ export async function applyGrants(
   }
   if (plannedInvites.length > 0) {
     const open = (await env.store.listInvites(row.id)).filter(
-      (invite) => invite.status === 'open' && invite.expiresAt > now
+      (invite) =>
+        invite.status === 'open' &&
+        invite.expiresAt > now &&
+        !invitationRevokedByEpoch(row, invite)
     ).length;
     if (open + plannedInvites.length > env.config.privateInvitesMaxOpen) {
       throw new ProblemError('invite_limit_reached');
@@ -731,6 +736,7 @@ export async function applyGrants(
         versions: [...invite.versions],
         expiresAt: invite.expiresAt,
         createdAt: env.now,
+        createdAccessEpoch: row.accessEpoch ?? 0,
         status: 'open',
         claimWraps: [],
         wraps: wraps
@@ -758,6 +764,13 @@ export async function applyGrants(
         }
         return { ...cur, accessEpoch: (cur.accessEpoch ?? 0) + 1 };
       });
+    }
+    if (writtenInviteRows.length > 0) {
+      const latest = await env.store.getRelic(row.id);
+      if (latest === undefined) throw new ProblemError('relic_removed');
+      if (writtenInviteRows.some((invite) => invitationRevokedByEpoch(latest, invite))) {
+        throw new ProblemError('invite_revoked');
+      }
     }
   } catch (error) {
     await rollback().catch((rollbackError: unknown) => {
@@ -883,7 +896,8 @@ export function inviteJson(
 
 async function ownerInviteJson(
   env: PrivateEnv,
-  row: InviteRow
+  row: InviteRow,
+  relic: RelicRow
 ): Promise<InviteJSON> {
   const signed = row.attestation.statements.find(
     (item) =>
@@ -905,7 +919,9 @@ async function ownerInviteJson(
       signed?.identitySignature ?? ''
     ),
     status:
-      row.status === 'open' && row.expiresAt <= env.now
+      invitationRevokedByEpoch(relic, row)
+        ? 'revoked'
+        : row.status === 'open' && row.expiresAt <= env.now
         ? 'expired'
         : row.status === 'claimed' &&
             grant !== undefined &&
@@ -924,7 +940,7 @@ export async function listInvitations(
 ): Promise<InviteJSON[]> {
   const { row } = await ownedPrivate(env, email, relicId);
   const invites = await env.store.listInvites(row.id);
-  return Promise.all(invites.map((invite) => ownerInviteJson(env, invite)));
+  return Promise.all(invites.map((invite) => ownerInviteJson(env, invite, row)));
 }
 
 export async function revokeInvitation(
@@ -936,7 +952,9 @@ export async function revokeInvitation(
   const { row, owner } = await ownedPrivate(env, email, relicId);
   const invite = await env.store.getInvite(row.id, inviteId);
   if (invite === undefined) throw new ProblemError('invite_not_found');
-  if (invite.status !== 'revoked' && invite.claimantIdentityId !== undefined) {
+  const alreadyRevoked =
+    invite.status === 'revoked' || invitationRevokedByEpoch(row, invite);
+  if (!alreadyRevoked && invite.claimantIdentityId !== undefined) {
     const grant = await env.store.getGrant(row.id, invite.claimantIdentityId);
     if (grant !== undefined && grant.revokedAt === undefined)
       throw new ProblemError('grant_exists');
@@ -957,7 +975,7 @@ export async function revokeInvitation(
     };
   });
   if (revoked === undefined) throw new ProblemError('invite_not_found');
-  if (invite.status !== 'revoked') {
+  if (!alreadyRevoked) {
     await logAccess(env, owner.identityId, row.id, 'revoke', {
       actorIdentityId: owner.identityId,
       subjectEmail: revoked.invitedEmail,
@@ -966,7 +984,7 @@ export async function revokeInvitation(
         : { subjectIdentityId: revoked.claimantIdentityId }),
     });
   }
-  return ownerInviteJson(env, revoked);
+  return ownerInviteJson(env, revoked, row);
 }
 
 /** The invitation's public key as P-256 SEC1 bytes, or undefined when it is not a point on the curve. */
@@ -1011,10 +1029,10 @@ export async function listGrants(
 // ---------------------------------------------------------------- revocation
 
 /**
- * Revokes one grantee. The grant is marked revoked first, so every access
- * check refuses at once; then the epoch moves and the next version opens
- * under CAS; then the grantee's wraps are deleted. A failed epoch move puts
- * the grant back, because deleting wraps is the one step that cannot undo.
+ * The grant is marked first, then the relik CAS advances its epoch and fences
+ * invitations made before that change. Failed CAS restores only this call's
+ * grant mark. After a successful CAS, invitation and wrap cleanup is best
+ * effort; the committed fence remains authoritative if cleanup fails.
  */
 export async function revokeAccess(
   env: PrivateEnv,
@@ -1086,18 +1104,8 @@ export async function revokeAccess(
     throw new ProblemError('version_conflict');
   }
 
-  // Withdraw claims first, then remove grant authority before moving the epoch.
-  for (const invite of await env.store.listInvites(row.id)) {
-    await env.store.updateInvite(row.id, invite.inviteId, (current) => {
-      const matches =
-        (current.status === 'claimed' &&
-          current.claimantIdentityId === granteeId) ||
-        (current.status === 'open' && current.invitedEmail === grantee.email);
-      return matches
-        ? { ...current, status: 'revoked', wraps: [], claimWraps: [], revokedAt: env.now }
-        : current;
-    });
-  }
+  // Claims stay intact until the epoch CAS commits. The relik row then fences
+  // every older invitation for this address, including concurrent claims.
   const marked = await env.store.updateGrant(row.id, granteeId, (current) => {
     if (
       current.revokedAt !== undefined ||
@@ -1109,14 +1117,19 @@ export async function revokeAccess(
   });
   if (marked === undefined) throw new ProblemError('grant_not_found');
   try {
-    await env.store.updateRelic(row.id, (cur) => {
+    const moved = await env.store.updateRelic(row.id, (cur) => {
       if (cur.version !== row.version || cur.sealedVersion !== row.version) {
         throw new ProblemError('version_conflict');
       }
+      const nextEpoch = (cur.accessEpoch ?? 0) + 1;
       return {
         ...cur,
         version: newVersion,
-        accessEpoch: (cur.accessEpoch ?? 0) + 1,
+        accessEpoch: nextEpoch,
+        inviteRevokedBeforeEpoch: {
+          ...cur.inviteRevokedBeforeEpoch,
+          [grantee.email]: nextEpoch,
+        },
         rendererClass: input.rendererClass as RelicRow['rendererClass'],
         declaredSizeBytes: declared,
         publishedAt: undefined,
@@ -1126,11 +1139,39 @@ export async function revokeAccess(
         noticePending: true,
       };
     });
+    if (moved === undefined) throw new ProblemError('relic_removed');
   } catch (error) {
     await env.store.updateGrant(row.id, granteeId, (current) =>
       current.revocation?.nonce === verified.attestation.nonce ? grant : current
     );
     throw error;
+  }
+  // Cleanup is best effort: the committed cutoff is the authorization gate.
+  try {
+    const committed = await env.store.getRelic(row.id);
+    if (committed !== undefined) {
+      for (const invite of await env.store.listInvites(row.id)) {
+        if (
+          invite.invitedEmail !== grantee.email ||
+          !invitationRevokedByEpoch(committed, invite)
+        ) continue;
+        await env.store.updateInvite(row.id, invite.inviteId, (current) => {
+          if (
+            current.status === 'revoked' ||
+            !invitationRevokedByEpoch(committed, current)
+          ) return current;
+          return {
+            ...current,
+            status: 'revoked',
+            wraps: [],
+            claimWraps: [],
+            revokedAt: env.now,
+          };
+        });
+      }
+    }
+  } catch (error) {
+    console.error('relic: revoked invitation cleanup failed:', error);
   }
   try {
     if (!(await recipientKeys(env, row, owner)).includes(grantee.kemKeyId)) {
@@ -1752,6 +1793,13 @@ async function heldInvitation(
   if (found === undefined || found.invitedEmail !== normalizeEmail(email)) {
     throw new ProblemError(refusal, { relic_id: row.id });
   }
+  if (invitationRevokedByEpoch(row, found)) {
+    return {
+      row,
+      owner,
+      invite: { ...found, status: 'revoked', wraps: [], claimWraps: [] },
+    };
+  }
   const live = found.status === 'open' && found.expiresAt > env.now;
   if (!live && found.wraps.length > 0) {
     const cleared = await env.store.updateInvite(row.id, inviteId, (r) => ({
@@ -1917,7 +1965,8 @@ export async function claimInvitation(
   const invite = await env.store.getInvite(row.id, inviteId);
   if (invite === undefined || invite.invitedEmail !== normalizeEmail(email))
     throw new ProblemError('invite_not_found');
-  if (invite.status === 'revoked') throw new ProblemError('invite_revoked');
+  if (invite.status === 'revoked' || invitationRevokedByEpoch(row, invite))
+    throw new ProblemError('invite_revoked');
   if (invite.status === 'open' && invite.expiresAt <= env.now)
     throw new ProblemError('invite_expired');
   const identity = await currentIdentity(env, email);
@@ -1950,7 +1999,21 @@ export async function claimInvitation(
   )
     refuseStatement('signature');
   const grant = await env.store.getGrant(row.id, identity.identityId);
-  const alreadyReader = grant !== undefined && grant.revokedAt === undefined;
+  const covered = new Set<number>();
+  if (grant !== undefined && grant.revokedAt === undefined) {
+    for (const version of invite.versions) {
+      if (
+        grantCovers(grant, version) &&
+        (await env.store.getWrap(row.id, version, identity.kemKeyId)) !== undefined
+      ) {
+        covered.add(version);
+      }
+    }
+  }
+  const alreadyReader =
+    grant !== undefined &&
+    grant.revokedAt === undefined &&
+    covered.size === invite.versions.length;
   if (invite.status === 'claimed') {
     if (invite.claimantIdentityId !== identity.identityId)
       throw new ProblemError('invite_claimed');
@@ -2002,10 +2065,15 @@ export async function claimInvitation(
         identitySignature: body['identity_signature'] as string,
       },
       wraps: [],
-      claimWraps: wraps.map(({ version, enc, ct }) => ({ version, enc, ct })),
+      claimWraps: wraps
+        .filter(({ version }) => !covered.has(version))
+        .map(({ version, enc, ct }) => ({ version, enc, ct })),
     };
   });
   if (claimed === undefined) throw new ProblemError('invite_not_found');
+  const currentRelic = await liveRelic(env, row.id);
+  if (invitationRevokedByEpoch(currentRelic, claimed))
+    throw new ProblemError('invite_revoked');
   if ((await currentIdentity(env, email))?.identityId !== identity.identityId) {
     throw new ProblemError('identity_changed');
   }

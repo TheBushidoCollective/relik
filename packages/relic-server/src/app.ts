@@ -1,6 +1,10 @@
 import { PRIVATE_CARD } from './card.ts';
 import { privateActivityMail } from './mail.ts';
-import { readableVersions, standingOf } from './private/access.ts';
+import {
+  invitationRevokedByEpoch,
+  readableVersions,
+  standingOf,
+} from './private/access.ts';
 /**
  * The app server.
  *
@@ -1441,6 +1445,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
                         (invite) =>
                           invite.invitedEmail === address &&
                           invite.status === 'open' &&
+                          !invitationRevokedByEpoch(row, invite) &&
                           invite.expiresAt > now
                       )
                       .map((invite) => ({
