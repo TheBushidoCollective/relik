@@ -12,7 +12,7 @@ import {
 import { compareFolderFiles } from '../src/folder-compare.ts';
 import { contentFromBytes } from '../src/content.ts';
 import { createVersionStore } from '../src/version-store.ts';
-import { type ReadyView, type ViewerDeps } from '../src/viewer.ts';
+import type { ReadyView, ViewerDeps } from '../src/viewer.ts';
 
 type InjectFailure = (
   stage: 'mint' | 'download',
