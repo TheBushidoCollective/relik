@@ -38,7 +38,7 @@ import {
   type DeviceEnrollmentRow,
   type DeviceRecord,
   type GrantRow,
-  type InviteClaimRow,
+  type InviteClaimIndex,
   type InviteRow,
   type IdentityRecord,
   type KemHolder,
@@ -2173,7 +2173,14 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           customTime
         );
       } catch (error) {
-        await remove(grantName);
+        const current = await get<GrantRow>(grantName);
+        if (
+          current !== undefined &&
+          current.value.attestation.nonce === row.attestation.nonce &&
+          current.value.revokedAt === undefined
+        ) {
+          await remove(grantName, current.generation);
+        }
         throw error;
       }
       return true;
@@ -2218,6 +2225,17 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       await removeGrant(relicId, granteeIdentityId);
     },
 
+
+    async deleteGrantIf(
+      relicId: string,
+      granteeIdentityId: string,
+      matches: (r: GrantRow) => boolean
+    ): Promise<boolean> {
+      const name = key('grant', relicId, `${granteeIdentityId}.json`);
+      const current = await get<GrantRow>(name);
+      if (current === undefined || !matches(current.value)) return false;
+      return remove(name, current.generation);
+    },
     async deleteGrantsForRelic(relicId: string): Promise<number> {
       const prefixUnder = `${key('grant', relicId)}/`;
       const names = await listObjectNames(prefixUnder);
@@ -2289,50 +2307,35 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       return names.length;
     },
 
-    async putInviteClaim(row: InviteClaimRow): Promise<boolean> {
-      return put(
-        key('invite-claim', row.relicId, `${row.identityId}.json`),
-        row,
-        '0',
-        await privateCustomTime(row.relicId)
-      );
+    async addInviteClaimIndex(
+      relicId: string,
+      identityId: string,
+      inviteId: string
+    ): Promise<void> {
+      const name = key('invite-claim', relicId, `${identityId}.json`);
+      const customTime = await privateCustomTime(relicId);
+      for (let attempt = 0; attempt < casAttempts; attempt++) {
+        const current = await get<InviteClaimIndex>(name);
+        if (current?.value.inviteIds.includes(inviteId)) return;
+        const next: InviteClaimIndex = {
+          relicId,
+          identityId,
+          inviteIds: [...(current?.value.inviteIds ?? []), inviteId],
+        };
+        if (await put(name, next, current?.generation ?? '0', customTime)) return;
+      }
+      throw new Error(`gcs invite claim index lost ${casAttempts} compare-and-swap races`);
     },
 
-    async getInviteClaim(
+    async getInviteClaimIndex(
       relicId: string,
       identityId: string
-    ): Promise<InviteClaimRow | undefined> {
+    ): Promise<InviteClaimIndex | undefined> {
       return (
-        await get<InviteClaimRow>(
+        await get<InviteClaimIndex>(
           key('invite-claim', relicId, `${identityId}.json`)
         )
       )?.value;
-    },
-
-    async listInviteClaims(
-      relicId: string
-    ): Promise<readonly InviteClaimRow[]> {
-      return list<InviteClaimRow>(`${key('invite-claim', relicId)}/`);
-    },
-
-    async updateInviteClaim(
-      relicId: string,
-      identityId: string,
-      change: (r: InviteClaimRow) => InviteClaimRow
-    ): Promise<InviteClaimRow | undefined> {
-      return mutateDoc(
-        key('invite-claim', relicId, `${identityId}.json`),
-        change,
-        await privateCustomTime(relicId),
-        'invite claim'
-      );
-    },
-
-    async deleteInviteClaim(
-      relicId: string,
-      identityId: string
-    ): Promise<void> {
-      await remove(key('invite-claim', relicId, `${identityId}.json`));
     },
 
     async deleteInviteClaimsForRelic(relicId: string): Promise<number> {

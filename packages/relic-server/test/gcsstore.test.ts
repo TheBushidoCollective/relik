@@ -47,7 +47,7 @@ function row(overrides: Partial<RelicRow> = {}): RelicRow {
   };
 }
 
-test('invitation lifetimes retain their own expiry while claim rows extend under a prefix', async () => {
+test('invitation lifetimes retain their expiry while claim indexes extend under a prefix', async () => {
   const gcs = fakeGcs();
   const store = gcsStore({
     bucket: 'relics',
@@ -71,17 +71,8 @@ test('invitation lifetimes retain their own expiry while claim rows extend under
     wraps: [],
     attestation: attestation(),
   });
-  await store.putInviteClaim({
-    relicId: RELIC_ID,
-    identityId: GRANTEE_ID,
-    ownerIdentityId: OWNER_ID,
-    inviteIds: [inviteId],
-    state: 'committed',
-    versions: [1],
-    claimedAt: NOW,
-    claim: { statement: {}, identitySignature: '' },
-  });
-  await store.putWrap({ ...wrap(RECIPIENT_A, 1), source: 'claim' });
+  await store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, inviteId);
+  await store.putWrap(wrap(RECIPIENT_A, 1));
   const invitePath = `tenant/m/invite/${RELIC_ID}/${inviteId}.json`;
   const claimPath = `tenant/m/invite-claim/${RELIC_ID}/${GRANTEE_ID}.json`;
   const wrapPath = `tenant/m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
@@ -137,17 +128,8 @@ test('operator deletion removes invitation, claim and wrap objects under a prefi
     wraps: [],
     attestation: attestation(),
   });
-  await store.putInviteClaim({
-    relicId: RELIC_ID,
-    identityId: GRANTEE_ID,
-    ownerIdentityId: OWNER_ID,
-    inviteIds: [inviteId],
-    state: 'committed',
-    versions: [1],
-    claimedAt: NOW,
-    claim: { statement: {}, identitySignature: '' },
-  });
-  await store.putWrap({ ...wrap(RECIPIENT_A, 1), source: 'claim' });
+  await store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, inviteId);
+  await store.putWrap(wrap(RECIPIENT_A, 1));
   const storage = new MemoryStorage();
   storage.put(RELIC_ID, new Uint8Array([1, 2, 3]));
   const app = createApp({
@@ -164,8 +146,59 @@ test('operator deletion removes invitation, claim and wrap objects under a prefi
   );
   expect(response.status).toBe(200);
   expect(await store.listInvites(RELIC_ID)).toEqual([]);
-  expect(await store.listInviteClaims(RELIC_ID)).toEqual([]);
+  expect(await store.getInviteClaimIndex(RELIC_ID, GRANTEE_ID)).toBeUndefined();
   expect(await store.listWraps(RELIC_ID)).toEqual([]);
+});
+
+test.each(['memory', 'gcs'] as const)(
+  'conditional grant rollback and claim index on %s',
+  async (backend) => {
+    const fake = fakeGcs();
+    const store = backend === 'memory' ? new MemoryStore() : storeOn(fake);
+    await store.putRelic(privateRelic());
+    await store.putGrant(grant());
+    expect(await store.deleteGrantIf(RELIC_ID, GRANTEE_ID, () => false)).toBe(
+      false
+    );
+    expect(await store.getGrant(RELIC_ID, GRANTEE_ID)).toBeDefined();
+    expect(await store.deleteGrantIf(RELIC_ID, GRANTEE_ID, () => true)).toBe(
+      true
+    );
+    expect(await store.getGrant(RELIC_ID, GRANTEE_ID)).toBeUndefined();
+    expect(await store.listGrantsForGrantee(GRANTEE_ID)).toEqual([]);
+    if (backend === 'gcs') {
+      expect(
+        fake.objects.has(`m/grant-by-grantee/${GRANTEE_ID}/${RELIC_ID}.json`)
+      ).toBe(true);
+    }
+    await Promise.all([
+      store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, '1'.repeat(64)),
+      store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, '2'.repeat(64)),
+      store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, '1'.repeat(64)),
+    ]);
+    const index = await store.getInviteClaimIndex(RELIC_ID, GRANTEE_ID);
+    expect([...(index?.inviteIds ?? [])].sort()).toEqual([
+      '1'.repeat(64),
+      '2'.repeat(64),
+    ]);
+  }
+);
+
+test('a failed grant index write does not erase a concurrently revoked row', async () => {
+  const fake = fakeGcs();
+  const store = storeOn(fake);
+  await store.putRelic(privateRelic());
+  const index = `m/grant-by-grantee/${GRANTEE_ID}/${RELIC_ID}.json`;
+  fake.beforeNextUpload(index, async () => {
+    await store.updateGrant(RELIC_ID, GRANTEE_ID, (current) => ({
+      ...current,
+      revokedAt: NOW,
+      revocation: attestation(),
+    }));
+    throw new Error('index unavailable');
+  });
+  await expect(store.putGrant(grant())).rejects.toThrow('index unavailable');
+  expect((await store.getGrant(RELIC_ID, GRANTEE_ID))?.revokedAt).toBe(NOW);
 });
 
 describe('gcsStore', () => {

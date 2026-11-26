@@ -575,21 +575,32 @@ test.each(['memory', 'gcs'] as const)(
         require_opened: true,
         signers: [{ email: 'reader@example.com', identity_id: GRANTEE_ID }],
       });
-    await store.putInviteClaim({
+    const inviteId = 'a'.repeat(64);
+    await store.addInviteClaimIndex(RELIC_ID, GRANTEE_ID, inviteId);
+    await store.putInvite({
       relicId: RELIC_ID,
-      identityId: GRANTEE_ID,
+      inviteId,
       ownerIdentityId: OWNER_ID,
-      inviteIds: ['a'.repeat(64)],
+      invitedEmail: 'reader@example.com',
+      invitePublicKey: 'public',
       versions: [1],
+      expiresAt: NOW + 86400000,
+      createdAt: NOW,
+      status: 'claimed',
+      claimantIdentityId: GRANTEE_ID,
       claimedAt: NOW,
-      state: 'committed',
-      claim: { statement: {}, identitySignature: '' },
+      wraps: [],
+      claimWraps: [{ version: 1, enc: 'enc', ct: 'ct' }],
+      attestation: attestation(),
     });
-    await store.putWrap({ ...wrap(RECIPIENT_B, 1), source: 'claim' });
     const noGrant = await a.fetch(post(await request()));
     expect((await noGrant.json()).code).toBe('signer_without_access');
-    await store.deleteWraps(RELIC_ID, { recipientKeyId: RECIPIENT_B });
-    await store.deleteInviteClaim(RELIC_ID, GRANTEE_ID);
+    await store.updateInvite(RELIC_ID, inviteId, (current) => ({
+      ...current,
+      status: 'revoked',
+      revokedAt: NOW,
+      claimWraps: [],
+    }));
     await store.putGrant(grant());
     const noWrap = await a.fetch(post(await request()));
     expect((await noWrap.json()).code).toBe('signer_without_access');

@@ -25,6 +25,7 @@ import type {
   IdentityRecord,
   PasskeyRecord,
   RecoveryDesignation,
+  RelicRow,
   SessionRow,
 } from '../store.ts';
 import {
@@ -39,7 +40,7 @@ import {
 import { verifyAttestation, type VerifiedAttestation } from './attest.ts';
 import {
   readableVersions,
-  recipientKeys,
+  recipientCoverage,
   isDeleted,
   sweepWrapsFor,
 } from './access.ts';
@@ -539,7 +540,10 @@ export async function backfillWraps(
   const owned = new Set(
     (await env.store.listOwnedRelics(owner.identityId)).map((o) => o.relicId)
   );
-  const recipientsByRelic = new Map<string, Set<string>>();
+  const recipientsByRelic = new Map<
+    string,
+    ReadonlyMap<string, (version: number) => boolean>
+  >();
   let stored = 0;
   let skipped = 0;
   for (const item of input.wraps as unknown[]) {
@@ -560,10 +564,10 @@ export async function backfillWraps(
     }
     let recipients = recipientsByRelic.get(row.id);
     if (recipients === undefined) {
-      recipients = new Set(await recipientKeys(env, row, owner));
+      recipients = await recipientCoverage(env, row, owner);
       recipientsByRelic.set(row.id, recipients);
     }
-    if (!recipients.has(wrap.recipientKeyId)) {
+    if (recipients.get(wrap.recipientKeyId)?.(wrap.version) !== true) {
       throw new ProblemError('invalid_wrap', {
         detail: 'Not a current recipient.',
       });
@@ -695,15 +699,11 @@ export async function ownedAndShared(
  */
 async function coverageGaps(
   env: PrivateEnv,
-  row: {
-    readonly id: string;
-    readonly sealedVersion?: number | undefined;
-    readonly deletedVersions?: readonly number[] | undefined;
-  },
+  row: RelicRow,
   owner: IdentityRecord
 ): Promise<number[]> {
   const sealed = row.sealedVersion ?? 0;
-  const current = await recipientKeys(env, row as never, owner);
+  const current = await recipientCoverage(env, row, owner);
   const gaps: number[] = [];
   for (let version = 1; version <= sealed; version++) {
     if (row.deletedVersions?.includes(version)) continue;
@@ -711,7 +711,9 @@ async function coverageGaps(
     const have = new Set(
       (await env.store.listWraps(row.id, version)).map((w) => w.recipientKeyId)
     );
-    const missing = current.filter((k) => !have.has(k));
+    const missing = [...current].filter(
+      ([key, covers]) => covers(version) && !have.has(key)
+    );
     if (missing.length > 0) {
       gaps.push(version);
     }

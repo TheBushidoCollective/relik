@@ -75,9 +75,11 @@ import {
   ownerRecord,
   publishTokenOk,
   readableVersions,
+  recipientCoverage,
   recipientKeys,
   requireRead,
   standingOf,
+  type ServedWrap,
 } from './access.ts';
 import { ownerParty } from './context.ts';
 import { verifyOwnerBind } from './devices.ts';
@@ -617,88 +619,36 @@ export async function applyGrants(
     }
   }
 
-  const granteeByKey = new Map(
-    planned.map((p) => [p.grantee.kemKeyId, p.grantee.identityId] as const)
-  );
   const inviteKeys = new Set(plannedInvites.map((p) => p.inviteId));
-  const writtenWraps: WrapRow[] = [];
   const created: string[] = [];
   const createdInvites: string[] = [];
   const replaced: { granteeId: string; prior: GrantRow }[] = [];
   const writtenGrants = new Map<string, GrantRow>();
   const writtenInviteRows: InviteRow[] = [];
 
-  /** Whether a live grant of this relic, read now, covers a version for a grantee. */
-  const covers = async (granteeId: string, version: number) => {
-    const live = await env.store.getGrant(row.id, granteeId);
-    return (
-      live !== undefined &&
-      live.revokedAt === undefined &&
-      live.versions.includes(version)
-    );
-  };
-
-  /**
-   * Undoes what this call wrote and nothing it did not write.
-   *
-   * A grant row this call created is removed, and a revoked row it replaced
-   * is restored. A wrap this call wrote is removed, unless another role keeps
-   * its key current or a live grant covers its version. A wrap that was
-   * already there (`putWrap` returned false) is never removed: a wrap for the
-   * same version and key opens the same content whoever wrote it. An
-   * invitation row this call created is removed with its wraps. When a seal
-   * raced this call (`sealRace`), a key left with no live grant also loses
-   * the wraps the seal made for it.
-   */
-  const rollback = async (sealRace: boolean) => {
+  /** Undo only grant rows still owned by this attestation. */
+  const rollback = async () => {
+    const nonce = verified.attestation.nonce;
     for (const granteeId of created) {
-      await env.store.deleteGrant(row.id, granteeId);
+      await env.store.deleteGrantIf(
+        row.id,
+        granteeId,
+        (current) =>
+          current.attestation.nonce === nonce && current.revokedAt === undefined
+      );
     }
     for (const r of replaced) {
-      await env.store.updateGrant(row.id, r.granteeId, () => r.prior);
+      await env.store.updateGrant(row.id, r.granteeId, (current) =>
+        current.attestation.nonce === nonce && current.revokedAt === undefined
+          ? r.prior
+          : current
+      );
     }
     for (const inviteId of createdInvites) {
       await env.store.deleteInvite(row.id, inviteId);
     }
-    const keptElsewhere = new Map<string, boolean>();
-    for (const p of planned) {
-      const keys = await recipientKeys(env, row, owner, {
-        exceptGrantee: p.grantee.identityId,
-      });
-      const claim = await env.store.getInviteClaim(
-        row.id,
-        p.grantee.identityId
-      );
-      keptElsewhere.set(
-        p.grantee.kemKeyId,
-        keys.includes(p.grantee.kemKeyId) ||
-          (claim !== undefined && claim.revokedAt === undefined)
-      );
-    }
-    for (const wrap of writtenWraps) {
-      if (keptElsewhere.get(wrap.recipientKeyId) === true) continue;
-      const granteeId = granteeByKey.get(wrap.recipientKeyId);
-      if (granteeId !== undefined && (await covers(granteeId, wrap.version))) {
-        continue;
-      }
-      await env.store.deleteWraps(row.id, {
-        version: wrap.version,
-        recipientKeyId: wrap.recipientKeyId,
-      });
-    }
-    if (sealRace) {
-      for (const p of planned) {
-        if (keptElsewhere.get(p.grantee.kemKeyId) === true) continue;
-        const live = await env.store.getGrant(row.id, p.grantee.identityId);
-        if (live !== undefined && live.revokedAt === undefined) continue;
-        await env.store.deleteWraps(row.id, {
-          recipientKeyId: p.grantee.kemKeyId,
-        });
-      }
-    }
   };
 
-  let epochStarted = false;
   try {
     for (const wrap of wraps) {
       if (inviteKeys.has(wrap.recipientKeyId)) continue;
@@ -711,7 +661,7 @@ export async function applyGrants(
         createdAt: env.now,
         source: 'grant',
       };
-      if (await env.store.putWrap(record)) writtenWraps.push(record);
+      await env.store.putWrap(record);
     }
 
     for (const p of planned) {
@@ -738,8 +688,7 @@ export async function applyGrants(
           : {}),
       };
       if (p.prior === undefined) {
-        // A concurrent grant to this grantee may have won. Its row and its
-        // wraps stay; this call's own wraps are rolled back above.
+        // A concurrent grant may have won; leave its row and wraps intact.
         if (!(await env.store.putGrant(grantRow))) {
           throw new ProblemError('grant_exists', {
             grantee_identity_id: granteeId,
@@ -767,22 +716,6 @@ export async function applyGrants(
         }
         replaced.push({ granteeId, prior });
       }
-      for (const version of p.versions) {
-        if (await env.store.getWrap(row.id, version, p.grantee.kemKeyId))
-          continue;
-        const wrap = wraps.find(
-          (item) =>
-            item.version === version &&
-            item.recipientKeyId === p.grantee.kemKeyId
-        );
-        if (wrap === undefined) throw new ProblemError('invalid_wrap');
-        await env.store.putWrap({
-          ...wrap,
-          relicId: row.id,
-          createdAt: env.now,
-          source: 'grant',
-        });
-      }
       writtenGrants.set(granteeId, grantRow);
     }
 
@@ -799,6 +732,7 @@ export async function applyGrants(
         expiresAt: invite.expiresAt,
         createdAt: env.now,
         status: 'open',
+        claimWraps: [],
         wraps: wraps
           .filter((w) => w.recipientKeyId === invite.inviteId)
           .map((w) => ({ version: w.version, enc: w.enc, ct: w.ct })),
@@ -812,7 +746,6 @@ export async function applyGrants(
     }
 
     if (planned.length > 0) {
-      epochStarted = true;
       await env.store.updateRelic(row.id, (cur) => {
         const sealed = cur.sealedVersion;
         if (
@@ -827,7 +760,7 @@ export async function applyGrants(
       });
     }
   } catch (error) {
-    await rollback(epochStarted).catch((rollbackError: unknown) => {
+    await rollback().catch((rollbackError: unknown) => {
       console.error('relic: grant rollback failed:', rollbackError);
     });
     throw error;
@@ -836,8 +769,6 @@ export async function applyGrants(
   const grants: GrantWireJSON[] = [];
   for (const p of planned) {
     const granteeId = p.grantee.identityId;
-    // A grant confirms a claimed invitation, and supersedes its claim row (plan 3.2).
-    await env.store.deleteInviteClaim(row.id, granteeId);
     if (p.pending) {
       await env.store
         .updateAccessRequest(row.id, granteeId, (r) => ({
@@ -992,18 +923,7 @@ export async function listInvitations(
   relicId: string
 ): Promise<InviteJSON[]> {
   const { row } = await ownedPrivate(env, email, relicId);
-  const invites = [...(await env.store.listInvites(row.id))];
-  const present = new Set(invites.map((invite) => invite.inviteId));
-  for (const claim of await env.store.listInviteClaims(row.id)) {
-    if (claim.state !== 'committed' || claim.invitation === undefined) continue;
-    const snapshot = claim.invitation;
-    if (present.has(snapshot.inviteId)) continue;
-    invites.push({
-      ...snapshot,
-      status: claim.revokedAt === undefined ? 'claimed' : 'revoked',
-      revokedAt: claim.revokedAt,
-    });
-  }
+  const invites = await env.store.listInvites(row.id);
   return Promise.all(invites.map((invite) => ownerInviteJson(env, invite)));
 }
 
@@ -1014,76 +934,29 @@ export async function revokeInvitation(
   inviteId: string
 ): Promise<InviteJSON> {
   const { row, owner } = await ownedPrivate(env, email, relicId);
-  const storedInvite = await env.store.getInvite(row.id, inviteId);
-  const claim =
-    storedInvite === undefined
-      ? (await env.store.listInviteClaims(row.id)).find(
-          (item) =>
-            item.state === 'committed' &&
-            item.inviteIds.includes(inviteId) &&
-            item.invitation !== undefined
-        )
-      : undefined;
-  const invite =
-    storedInvite ??
-    (claim?.invitation === undefined
-      ? undefined
-      : {
-          ...claim.invitation,
-          status:
-            claim.revokedAt === undefined
-              ? ('claimed' as const)
-              : ('revoked' as const),
-          revokedAt: claim.revokedAt,
-        });
+  const invite = await env.store.getInvite(row.id, inviteId);
   if (invite === undefined) throw new ProblemError('invite_not_found');
   if (invite.status !== 'revoked' && invite.claimantIdentityId !== undefined) {
     const grant = await env.store.getGrant(row.id, invite.claimantIdentityId);
     if (grant !== undefined && grant.revokedAt === undefined)
       throw new ProblemError('grant_exists');
   }
-  const revoked =
-    invite.status === 'revoked' || storedInvite === undefined
-      ? {
-          ...invite,
-          status: 'revoked' as const,
-          wraps: [],
-          revokedAt: invite.revokedAt ?? env.now,
-        }
-      : await env.store.updateInvite(row.id, inviteId, (current) => {
-          if (
-            current.status !== invite.status ||
-            current.claimantIdentityId !== invite.claimantIdentityId
-          ) {
-            throw new ProblemError('invite_claimed');
-          }
-          return {
-            ...current,
-            status: 'revoked',
-            wraps: [],
-            revokedAt: env.now,
-          };
-        });
-  if (revoked === undefined) throw new ProblemError('invite_not_found');
-  if (revoked.claimantIdentityId !== undefined) {
-    const claimant = await env.store.getIdentity(revoked.claimantIdentityId);
-    await env.store.updateInviteClaim(
-      row.id,
-      revoked.claimantIdentityId,
-      (claim) => ({
-        ...claim,
-        revokedAt: env.now,
-      })
-    );
+  const revoked = await env.store.updateInvite(row.id, inviteId, (current) => {
     if (
-      claimant !== undefined &&
-      !(await recipientKeys(env, row, owner)).includes(claimant.kemKeyId)
+      current.status !== invite.status ||
+      current.claimantIdentityId !== invite.claimantIdentityId
     ) {
-      await env.store.deleteWraps(row.id, {
-        recipientKeyId: claimant.kemKeyId,
-      });
+      throw new ProblemError('invite_claimed');
     }
-  }
+    return {
+      ...current,
+      status: 'revoked',
+      wraps: [],
+      claimWraps: [],
+      revokedAt: current.revokedAt ?? env.now,
+    };
+  });
+  if (revoked === undefined) throw new ProblemError('invite_not_found');
   if (invite.status !== 'revoked') {
     await logAccess(env, owner.identityId, row.id, 'revoke', {
       actorIdentityId: owner.identityId,
@@ -1213,21 +1086,28 @@ export async function revokeAccess(
     throw new ProblemError('version_conflict');
   }
 
-  // Wraps go first, then the grant is marked, then the version moves. A failed
-  // sweep leaves the grant standing, and the owner retries the whole revocation.
-  // A failed move puts the grant back. A key another role still keeps current
-  // (a recovery holder, say) keeps its wraps (PS2-07).
-  const keptElsewhere = (
-    await recipientKeys(env, row, owner, { exceptGrantee: granteeId })
-  ).includes(grantee.kemKeyId);
-  if (!keptElsewhere) {
-    await env.store.deleteWraps(row.id, { recipientKeyId: grantee.kemKeyId });
+  // Withdraw claims first, then remove grant authority before moving the epoch.
+  for (const invite of await env.store.listInvites(row.id)) {
+    await env.store.updateInvite(row.id, invite.inviteId, (current) => {
+      const matches =
+        (current.status === 'claimed' &&
+          current.claimantIdentityId === granteeId) ||
+        (current.status === 'open' && current.invitedEmail === grantee.email);
+      return matches
+        ? { ...current, status: 'revoked', wraps: [], claimWraps: [], revokedAt: env.now }
+        : current;
+    });
   }
-  await env.store.updateGrant(row.id, granteeId, (g) => ({
-    ...g,
-    revokedAt: env.now,
-    revocation: verified.attestation,
-  }));
+  const marked = await env.store.updateGrant(row.id, granteeId, (current) => {
+    if (
+      current.revokedAt !== undefined ||
+      current.attestation.nonce !== grant.attestation.nonce
+    ) {
+      throw new ProblemError('grant_not_found');
+    }
+    return { ...current, revokedAt: env.now, revocation: verified.attestation };
+  });
+  if (marked === undefined) throw new ProblemError('grant_not_found');
   try {
     await env.store.updateRelic(row.id, (cur) => {
       if (cur.version !== row.version || cur.sealedVersion !== row.version) {
@@ -1247,8 +1127,18 @@ export async function revokeAccess(
       };
     });
   } catch (error) {
-    await env.store.updateGrant(row.id, granteeId, () => grant);
+    await env.store.updateGrant(row.id, granteeId, (current) =>
+      current.revocation?.nonce === verified.attestation.nonce ? grant : current
+    );
     throw error;
+  }
+  try {
+    if (!(await recipientKeys(env, row, owner)).includes(grantee.kemKeyId)) {
+      await env.store.deleteWraps(row.id, { recipientKeyId: grantee.kemKeyId });
+    }
+  } catch (error) {
+    // Cleanup cannot undo the revocation or strand its republish upload.
+    console.error('relic: revoked wrap sweep failed:', error);
   }
   const updated = await env.store.getRelic(row.id);
   await logAccess(env, owner.identityId, row.id, 'revoke', {
@@ -1422,7 +1312,7 @@ export async function deliverKey(
   }
 
   let me: IdentityRecord | undefined;
-  let wrap: WrapRow | undefined;
+  let wrap: ServedWrap | undefined;
   if (caller.kind === 'session') {
     me = await currentIdentity(env, caller.email);
     if (me === undefined)
@@ -1435,10 +1325,11 @@ export async function deliverKey(
     if (typeof caller.recipientKeyId !== 'string') {
       throw new ProblemError('private_access_denied', { relic_id: row.id });
     }
-    // Only a current recipient's wrap is handed out. A wrap a racing seal left
-    // for a key since removed (a revoked device, a replaced holder) is refused.
+    // A current recipient may only fetch versions its role covers.
     if (
-      !(await recipientKeys(env, row, owner)).includes(caller.recipientKeyId)
+      (await recipientCoverage(env, row, owner)).get(caller.recipientKeyId)?.(
+        version
+      ) !== true
     ) {
       throw new ProblemError('private_access_denied', { relic_id: row.id });
     }
@@ -1803,18 +1694,15 @@ export async function deleteRelic(
         ...current,
         versions,
         wraps: current.wraps.filter((wrap) => !list.includes(wrap.version)),
+        claimWraps: current.claimWraps?.filter(
+          (wrap) => !list.includes(wrap.version)
+        ),
         status:
           current.status === 'open' && versions.length === 0
             ? 'revoked'
             : current.status,
       };
     });
-  }
-  for (const claim of await env.store.listInviteClaims(row.id)) {
-    await env.store.updateInviteClaim(row.id, claim.identityId, (current) => ({
-      ...current,
-      versions: current.versions.filter((version) => !list.includes(version)),
-    }));
   }
   for (const version of list) {
     await env.store.deleteWraps(row.id, { version });
@@ -2006,7 +1894,7 @@ export async function deliverInviteKey(
   };
 }
 
-/** A claim is authorized only after the invitation CAS and claim finalization. */
+/** The invitation CAS commits both the claim and its identity wraps. */
 export async function claimInvitation(
   env: PrivateEnv,
   relicId: string,
@@ -2026,7 +1914,7 @@ export async function claimInvitation(
     refuseStatement('shape');
   const row = privateRow(await liveRelic(env, relicId));
   const owner = await ownerRecord(env, row);
-  let invite = await env.store.getInvite(row.id, inviteId);
+  const invite = await env.store.getInvite(row.id, inviteId);
   if (invite === undefined || invite.invitedEmail !== normalizeEmail(email))
     throw new ProblemError('invite_not_found');
   if (invite.status === 'revoked') throw new ProblemError('invite_revoked');
@@ -2062,170 +1950,77 @@ export async function claimInvitation(
   )
     refuseStatement('signature');
   const grant = await env.store.getGrant(row.id, identity.identityId);
-  if (
-    invite.status === 'claimed' &&
-    invite.claimantIdentityId !== identity.identityId
-  )
-    throw new ProblemError('invite_claimed');
-  if (
-    invite.status === 'open' &&
-    grant !== undefined &&
-    grant.revokedAt === undefined
-  ) {
-    await env.store.updateInvite(row.id, inviteId, (current) => {
-      if (current.status !== 'open') throw new ProblemError('invite_claimed');
-      return {
-        ...current,
-        status: 'claimed',
-        claimantIdentityId: identity.identityId,
-        claimedAt: env.now,
-        wraps: [],
-      };
-    });
-    await logAccess(env, owner.identityId, row.id, 'claim', {
-      actorIdentityId: identity.identityId,
-      actorEmail: identity.email,
-      subjectIdentityId: identity.identityId,
-      subjectEmail: identity.email,
-    });
-    return { status: 'already_reader' };
+  const alreadyReader = grant !== undefined && grant.revokedAt === undefined;
+  if (invite.status === 'claimed') {
+    if (invite.claimantIdentityId !== identity.identityId)
+      throw new ProblemError('invite_claimed');
+    return alreadyReader
+      ? { status: 'already_reader' }
+      : { status: 'claimed', versions: invite.versions };
   }
+  const wraps = alreadyReader
+    ? []
+    : (body['wraps'] as unknown[]).map(parseWrapItem);
   if (
-    invite.status === 'claimed' &&
-    grant !== undefined &&
-    grant.revokedAt === undefined
-  )
-    return { status: 'already_reader' };
-  const existing = await env.store.getInviteClaim(row.id, identity.identityId);
-  if (
-    existing !== undefined &&
-    (!existing.inviteIds.includes(inviteId) || existing.revokedAt !== undefined)
-  )
-    throw new ProblemError('invite_claimed', { reason: 'claim_exists' });
-  if (invite.status === 'claimed' && existing === undefined)
-    throw new ProblemError('invite_claimed');
-  if (invite.status === 'claimed' && existing?.state === 'committed')
-    return { status: 'claimed', versions: invite.versions };
-  const wraps = (body['wraps'] as unknown[]).map(parseWrapItem);
-  if (
-    wraps.length !== invite.versions.length ||
-    new Set(wraps.map((w) => w.version)).size !== wraps.length ||
-    wraps.some(
-      (w) =>
-        w.recipientKeyId !== identity.kemKeyId ||
-        !invite!.versions.includes(w.version) ||
-        (w.relicId !== undefined && w.relicId !== row.id)
-    )
-  )
+    !alreadyReader &&
+    (wraps.length !== invite.versions.length ||
+      new Set(wraps.map((w) => w.version)).size !== wraps.length ||
+      wraps.some(
+        (w) =>
+          w.recipientKeyId !== identity.kemKeyId ||
+          !invite.versions.includes(w.version) ||
+          (w.relicId !== undefined && w.relicId !== row.id)
+      ))
+  ) {
     throw new ProblemError('invalid_wrap');
-  for (const wrap of wraps)
-    await env.store.putWrap({
-      ...wrap,
-      relicId: row.id,
-      createdAt: env.now,
-      source: 'claim',
-    });
-  if (existing === undefined) {
-    await env.store.putInviteClaim({
-      relicId: row.id,
-      identityId: identity.identityId,
-      ownerIdentityId: owner.identityId,
-      inviteIds: [inviteId],
-      invitation: {
-        ...invite,
-        status: 'claimed',
-        wraps: [],
-        claimantIdentityId: identity.identityId,
-        claimedAt: env.now,
-      },
-      versions: [...invite.versions],
+  }
+  if (!alreadyReader) {
+    await env.store.addInviteClaimIndex(row.id, identity.identityId, inviteId);
+  }
+
+  let transitioned = false;
+  const claimed = await env.store.updateInvite(row.id, inviteId, (current) => {
+    // This callback may be retried after another instance wins a CAS.
+    transitioned = false;
+    if (current.status === 'revoked') throw new ProblemError('invite_revoked');
+    if (current.status === 'claimed') {
+      if (current.claimantIdentityId !== identity.identityId)
+        throw new ProblemError('invite_claimed');
+      return current;
+    }
+    if (current.expiresAt <= env.now) throw new ProblemError('invite_expired');
+    if (JSON.stringify(current.versions) !== JSON.stringify(statement.versions))
+      refuseStatement('claim');
+    transitioned = true;
+    return {
+      ...current,
+      status: 'claimed',
+      claimantIdentityId: identity.identityId,
       claimedAt: env.now,
-      state: 'pending',
       claim: {
         statement: statement as unknown as Record<string, unknown>,
         identitySignature: body['identity_signature'] as string,
       },
-    });
-  }
-  const pending = await env.store.getInviteClaim(row.id, identity.identityId);
-  if (
-    pending === undefined ||
-    !pending.inviteIds.includes(inviteId) ||
-    pending.revokedAt !== undefined
-  )
-    throw new ProblemError('invite_claimed', { reason: 'claim_exists' });
-  if (invite.status === 'open') {
-    try {
-      const updated = await env.store.updateInvite(
-        row.id,
-        inviteId,
-        (current) => {
-          if (current.status !== 'open' || current.expiresAt <= env.now)
-            throw new ProblemError('invite_claimed');
-          return {
-            ...current,
-            status: 'claimed',
-            claimantIdentityId: identity.identityId,
-            claimedAt: env.now,
-            wraps: [],
-          };
-        }
-      );
-      if (updated === undefined) throw new ProblemError('invite_not_found');
-      invite = updated;
-    } catch (error) {
-      const current = await env.store.getInvite(row.id, inviteId);
-      if (
-        current?.status !== 'claimed' ||
-        current.claimantIdentityId !== identity.identityId
-      )
-        throw error;
-      invite = current;
-    }
-  }
+      wraps: [],
+      claimWraps: wraps.map(({ version, enc, ct }) => ({ version, enc, ct })),
+    };
+  });
+  if (claimed === undefined) throw new ProblemError('invite_not_found');
   if ((await currentIdentity(env, email))?.identityId !== identity.identityId) {
-    await env.store.updateInviteClaim(
-      row.id,
-      identity.identityId,
-      (current) => ({
-        ...current,
-        revokedAt: env.now,
-      })
-    );
     throw new ProblemError('identity_changed');
   }
-  let newlyCommitted = false;
-  const committed = await env.store.updateInviteClaim(
-    row.id,
-    identity.identityId,
-    (current) => {
-      if (
-        current.revokedAt !== undefined ||
-        !current.inviteIds.includes(inviteId)
-      )
-        throw new ProblemError('invite_revoked');
-      newlyCommitted = current.state === 'pending';
-      return { ...current, state: 'committed' };
-    }
-  );
-  if (committed === undefined) throw new ProblemError('invite_revoked');
-  for (const wrap of wraps) {
-    if (await env.store.getWrap(row.id, wrap.version, identity.kemKeyId))
-      continue;
-    await env.store.putWrap({
-      ...wrap,
-      relicId: row.id,
-      createdAt: env.now,
-      source: 'claim',
-    });
+  if (!transitioned) {
+    return alreadyReader
+      ? { status: 'already_reader' }
+      : { status: 'claimed', versions: claimed.versions };
   }
-  if (!newlyCommitted) return { status: 'claimed', versions: invite.versions };
   await logAccess(env, owner.identityId, row.id, 'claim', {
     actorIdentityId: identity.identityId,
     actorEmail: identity.email,
     subjectIdentityId: identity.identityId,
     subjectEmail: identity.email,
   });
+  if (alreadyReader) return { status: 'already_reader' };
   try {
     await env.sendMail(
       owner.email,
@@ -2237,5 +2032,5 @@ export async function claimInvitation(
   } catch {
     console.error('relic: invitation claim notice failed');
   }
-  return { status: 'claimed', versions: invite.versions };
+  return { status: 'claimed', versions: claimed.versions };
 }
