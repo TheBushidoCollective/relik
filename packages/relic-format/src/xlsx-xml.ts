@@ -22,28 +22,31 @@ const PREDEFINED: Readonly<Record<string, string>> = {
 
 function decode(value: string): string {
   if (!value.includes('&')) return value;
-  return value.replace(/&([^;\s<&]+);|&/g, (whole, key: string | undefined) => {
-    if (!key) throw new Error('Invalid XML entity');
-    if (Object.hasOwn(PREDEFINED, key)) return PREDEFINED[key]!;
-    if (!/^#(?:[0-9]+|x[0-9a-fA-F]+)$/.test(key))
-      throw new Error('Invalid XML entity');
-    const n =
-      key[1] === 'x'
-        ? Number.parseInt(key.slice(2), 16)
-        : Number.parseInt(key.slice(1), 10);
-    if (
-      !(
-        n === 9 ||
-        n === 10 ||
-        n === 13 ||
-        (n >= 32 && n <= 0xd7ff) ||
-        (n >= 0xe000 && n <= 0xfffd) ||
-        (n >= 0x10000 && n <= 0x10ffff)
+  return value.replace(
+    /&([^;\s<&]+);|&/g,
+    (_whole, key: string | undefined) => {
+      if (!key) throw new Error('Invalid XML entity');
+      if (Object.hasOwn(PREDEFINED, key)) return PREDEFINED[key]!;
+      if (!/^#(?:[0-9]+|x[0-9a-fA-F]+)$/.test(key))
+        throw new Error('Invalid XML entity');
+      const n =
+        key[1] === 'x'
+          ? Number.parseInt(key.slice(2), 16)
+          : Number.parseInt(key.slice(1), 10);
+      if (
+        !(
+          n === 9 ||
+          n === 10 ||
+          n === 13 ||
+          (n >= 32 && n <= 0xd7ff) ||
+          (n >= 0xe000 && n <= 0xfffd) ||
+          (n >= 0x10000 && n <= 0x10ffff)
+        )
       )
-    )
-      throw new Error('Invalid XML character');
-    return String.fromCodePoint(n);
-  });
+        throw new Error('Invalid XML character');
+      return String.fromCodePoint(n);
+    }
+  );
 }
 
 /** Emits XML events in document order. A malformed or DTD-bearing part throws. */
