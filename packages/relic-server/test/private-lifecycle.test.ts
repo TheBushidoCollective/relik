@@ -13,6 +13,7 @@ import {
   signStatement,
   statementBytes,
   keyCommitment,
+  unwrapVersionKey,
   wrapVersionKey,
   type IdentityKeys,
 } from '@relic/format/private';
@@ -22,6 +23,8 @@ import {
   type RequestOptionsJSON,
 } from '@relic/format';
 import { createApp, type RelicApp } from '../src/app.ts';
+import { removeWrapsUpTo, sweepWrapsFor } from '../src/private/access.ts';
+import type { PrivateEnv } from '../src/private/context.ts';
 import {
   verifyAttestation,
   verifyStoredAttestation,
@@ -1213,6 +1216,80 @@ async function revocationRequest(owner: Person, reader: Person) {
   );
 }
 
+/** A grant for version 1, signed and submitted as the owner. */
+async function grantVersionOne(
+  owner: Person,
+  reader: Person,
+  versionKey: Uint8Array
+) {
+  const readerRecord = (await store.getIdentity(reader.identityId as string))!;
+  return send(
+    `/api/relics/${RELIC_ID}/grants`,
+    post(
+      {
+        attestation: await attest(owner, 'grant', RELIC_ID, [
+          {
+            kind: 'grant',
+            statement: {
+              at: now,
+              fingerprint_typed: await identityFingerprint(
+                reader.identityId as string,
+                reader.email
+              ),
+              grantee_email: reader.email,
+              grantee_identity_id: reader.identityId,
+              owner_identity_id: owner.identityId,
+              relic_id: RELIC_ID,
+              versions: [1],
+            },
+          },
+        ]),
+        wraps: [
+          await wrap(decodeBase64url(readerRecord.kemPublicKey), versionKey, 1),
+        ],
+      },
+      owner.cookie
+    )
+  );
+}
+
+/** Fetch and decrypt the returned wrap as the reader. */
+async function expectReaderOpens(reader: Person, versionKey: Uint8Array) {
+  const response = await send(
+    `/api/relics/${RELIC_ID}/versions/1/key`,
+    post({}, reader.cookie)
+  );
+  expect(response.status).toBe(200);
+  const saved = response.body['wrap'] as { enc: string; ct: string };
+  const keys = reader.keys as IdentityKeys;
+  const opened = await unwrapVersionKey({
+    recipient: {
+      publicKey: keys.kemPublicKey,
+      dh: async (peer) => {
+        const publicKey = await crypto.subtle.importKey(
+          'raw',
+          peer as BufferSource,
+          { name: 'ECDH', namedCurve: 'P-256' },
+          false,
+          []
+        );
+        return new Uint8Array(
+          await crypto.subtle.deriveBits(
+            { name: 'ECDH', public: publicKey },
+            keys.kem.privateKey,
+            256
+          )
+        );
+      },
+    },
+    relicId: RELIC_ID,
+    version: 1,
+    enc: saved.enc,
+    ct: saved.ct,
+  });
+  expect(Buffer.from(opened)).toEqual(Buffer.from(versionKey));
+}
+
 /** Makes the next wrap sweep throw, as a failed storage write would. Returns the restore. */
 function failNextSweep(): () => void {
   const real = store.deleteWrapIf.bind(store);
@@ -1353,6 +1430,185 @@ describe('security review: server fixes', () => {
       post({}, reader.cookie)
     );
     expect(denied.status).toBe(403);
+  });
+
+  test.each([
+    'after a refused create',
+    'after reading the old generation',
+  ] as const)(
+    'a regrant survives its revocation sweep %s',
+    async (window) => {
+      const fake = fakeGcs();
+      store = storeOn(fake);
+      app = createApp({ store, storage, now: () => now });
+      const owner = await person('owner@example.com');
+      await registerIdentity(owner);
+      const sealed = await sealedPrivateRelic(owner);
+      const reader = await person('reader@example.com');
+      await registerIdentity(reader);
+      const readerKey = (await store.getIdentity(reader.identityId as string))!
+        .kemKeyId;
+      expect(
+        (await grantVersionOne(owner, reader, sealed.versionKey)).status
+      ).toBe(201);
+
+      const restore = failNextSweep();
+      const revoked = await (async () => {
+        try {
+          return await send(
+            `/api/relics/${RELIC_ID}/revocations`,
+            await revocationRequest(owner, reader)
+          );
+        } finally {
+          restore();
+        }
+      })();
+      expect(revoked.status).toBe(200);
+      const revokeEpoch = (await store.getRelic(RELIC_ID))!.accessEpoch ?? 0;
+      const old = await store.getWrap(RELIC_ID, 1, readerKey);
+      expect(old).toBeDefined();
+      expect(old!.epoch ?? 0).toBeLessThanOrEqual(revokeEpoch);
+
+      let fired = false;
+      let deleted = false;
+      const sweep = async () => {
+        fired = true;
+        await removeWrapsUpTo(
+          { store, now } as unknown as PrivateEnv,
+          RELIC_ID,
+          readerKey,
+          revokeEpoch
+        );
+        deleted = (await store.getWrap(RELIC_ID, 1, readerKey)) === undefined;
+      };
+      const name = `m/wrap/${RELIC_ID}/1/${readerKey}.json`;
+      if (window === 'after a refused create') {
+        fake.afterNextCreateConflict(name, sweep);
+      } else {
+        fake.beforeNextReplace(name, sweep);
+      }
+
+      const granted = await grantVersionOne(owner, reader, sealed.versionKey);
+      expect(granted.status).toBe(201);
+      expect(fired).toBe(true);
+      expect(deleted).toBe(true);
+      expect(await store.getWrap(RELIC_ID, 1, readerKey)).toMatchObject({
+        source: 'grant',
+        epoch: revokeEpoch + 1,
+      });
+      await expectReaderOpens(reader, sealed.versionKey);
+    }
+  );
+
+  test.each([
+    'after a refused create',
+    'after reading the old generation',
+  ] as const)(
+    'a grant survives a former recovery holder sweep %s',
+    async (window) => {
+      const fake = fakeGcs();
+      store = storeOn(fake);
+      app = createApp({ store, storage, now: () => now });
+      const owner = await person('owner@example.com');
+      await registerIdentity(owner);
+      const sealed = await sealedPrivateRelic(owner);
+      const holder = await person('recovery@example.com');
+      await registerIdentity(holder);
+      const holderRecord = (await store.getIdentity(
+        holder.identityId as string
+      ))!;
+      await store.updateIdentity(owner.identityId as string, (current) => ({
+        ...current,
+        recovery: {
+          recoveryIdentityId: holder.identityId as string,
+          recoveryEmail: holder.email,
+          designatedAt: now,
+          attestation: attestation(),
+        },
+      }));
+      const old = await wrap(holder.keys!.kemPublicKey, sealed.versionKey, 1);
+      const epoch = (await store.getRelic(RELIC_ID))!.accessEpoch ?? 0;
+      expect(
+        await store.putWrap({
+          relicId: RELIC_ID,
+          version: 1,
+          recipientKeyId: holderRecord.kemKeyId,
+          enc: old.enc,
+          ct: old.ct,
+          createdAt: now,
+          source: 'backfill',
+          epoch,
+        })
+      ).toBe(true);
+      const freshOwner = await store.updateIdentity(
+        owner.identityId as string,
+        (current) => ({
+          ...current,
+          recovery: undefined,
+          recipientsEpoch: current.recipientsEpoch + 1,
+          pendingRecoverySweep: [holderRecord.kemKeyId],
+        })
+      );
+      expect(freshOwner).toBeDefined();
+
+      let fired = false;
+      let deleted = false;
+      const sweep = async () => {
+        fired = true;
+        await sweepWrapsFor(
+          { store, now } as unknown as PrivateEnv,
+          freshOwner!,
+          [holderRecord.kemKeyId]
+        );
+        deleted =
+          (await store.getWrap(RELIC_ID, 1, holderRecord.kemKeyId)) === undefined;
+      };
+      const name = `m/wrap/${RELIC_ID}/1/${holderRecord.kemKeyId}.json`;
+      if (window === 'after a refused create') {
+        fake.afterNextCreateConflict(name, sweep);
+      } else {
+        fake.beforeNextReplace(name, sweep);
+      }
+
+      const granted = await grantVersionOne(owner, holder, sealed.versionKey);
+      expect(granted.status).toBe(201);
+      expect(fired).toBe(true);
+      expect(deleted).toBe(true);
+      expect(
+        await store.getWrap(RELIC_ID, 1, holderRecord.kemKeyId)
+      ).toMatchObject({ source: 'grant', epoch: epoch + 1 });
+      await expectReaderOpens(holder, sealed.versionKey);
+    }
+  );
+
+  test('a grant preserves a same-epoch wrap and the reader can open it', async () => {
+    const fake = fakeGcs();
+    store = storeOn(fake);
+    app = createApp({ store, storage, now: () => now });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    const readerRecord = (await store.getIdentity(reader.identityId as string))!;
+    const existing = await wrap(reader.keys!.kemPublicKey, sealed.versionKey, 1);
+    const row = {
+      relicId: RELIC_ID,
+      version: 1,
+      recipientKeyId: readerRecord.kemKeyId,
+      enc: existing.enc,
+      ct: existing.ct,
+      createdAt: now,
+      source: 'grant' as const,
+      epoch: ((await store.getRelic(RELIC_ID))!.accessEpoch ?? 0) + 1,
+    };
+    expect(await store.putWrap(row)).toBe(true);
+
+    expect(
+      (await grantVersionOne(owner, reader, sealed.versionKey)).status
+    ).toBe(201);
+    expect(await store.getWrap(RELIC_ID, 1, readerRecord.kemKeyId)).toEqual(row);
+    await expectReaderOpens(reader, sealed.versionKey);
   });
 
   test('a failed wrap sweep leaves the device revoked and fenced, and the retry sweeps its wraps', async () => {

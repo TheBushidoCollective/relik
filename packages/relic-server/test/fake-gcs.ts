@@ -23,9 +23,13 @@ export interface FakeGcs {
   readonly objects: Map<string, FakeObject>;
   /** Every request the store has made, in order, as the fake received it. */
   readonly requests: { readonly url: string; readonly init: RequestInit }[];
-  /** `times: -1` means every write, for modelling permanent contention. */
   beforeNextUpload(name: string, hook: () => Promise<void>): void;
+  /** Runs after a create-only upload is refused, before the response returns. */
+  afterNextCreateConflict(name: string, hook: () => Promise<void>): void;
+  /** Runs before a generation-checked replacement is applied. */
+  beforeNextReplace(name: string, hook: () => Promise<void>): void;
   beforeNextDelete(name: string, hook: () => Promise<void>): void;
+  /** `times: -1` means every write, for modelling permanent contention. */
   contendOn(name: string, times: number): void;
 }
 
@@ -83,6 +87,8 @@ export function fakeGcs(): FakeGcs {
    */
   const bumps = new Map<string, number>();
   const uploadHooks = new Map<string, () => Promise<void>>();
+  const createConflictHooks = new Map<string, () => Promise<void>>();
+  const replaceHooks = new Map<string, () => Promise<void>>();
   const deleteHooks = new Map<string, () => Promise<void>>();
 
   const competingIncrement = (name: string): void => {
@@ -150,12 +156,26 @@ export function fakeGcs(): FakeGcs {
         uploadHooks.delete(name);
         await hook();
       }
+      if (precondition !== null && precondition !== '0') {
+        const replaceHook = replaceHooks.get(name);
+        if (replaceHook !== undefined) {
+          replaceHooks.delete(name);
+          await replaceHook();
+        }
+      }
       competingIncrement(name);
 
       if (precondition !== null) {
         const existing = objects.get(name);
         const current = existing === undefined ? 0 : existing.generation;
         if (String(current) !== precondition) {
+          if (precondition === '0') {
+            const conflictHook = createConflictHooks.get(name);
+            if (conflictHook !== undefined) {
+              createConflictHooks.delete(name);
+              await conflictHook();
+            }
+          }
           return new Response('precondition failed', { status: 412 });
         }
       }
@@ -293,6 +313,12 @@ export function fakeGcs(): FakeGcs {
     requests,
     beforeNextUpload(name: string, hook: () => Promise<void>) {
       uploadHooks.set(name, hook);
+    },
+    afterNextCreateConflict(name: string, hook: () => Promise<void>) {
+      createConflictHooks.set(name, hook);
+    },
+    beforeNextReplace(name: string, hook: () => Promise<void>) {
+      replaceHooks.set(name, hook);
     },
     beforeNextDelete(name: string, hook: () => Promise<void>) {
       deleteHooks.set(name, hook);
