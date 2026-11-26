@@ -97,6 +97,9 @@ const requestBodies: string[] = [];
 /** Invitation claims as the browser sent them, for the single-use replay in step 5. */
 const claimCalls: Array<{ path: string; body: Json; status: number }> = [];
 const grantStatuses: number[] = [];
+let claimTapProbe: (() => Promise<number>) | undefined;
+let setupTapCount: number | undefined;
+let claimTapCount: number | undefined;
 let substitutedLookup: Record<string, unknown> | undefined;
 /** Harness clock: real time plus an offset that the expiry steps move and restore. */
 let clockOffsetMs = 0;
@@ -183,6 +186,12 @@ handler = async (request: Request): Promise<Response> => {
   });
   const target = budgetProbe ? budgetApp : apps[nextApp++ % apps.length]!;
   const answered = await target.fetch(replay);
+  if (claimTapProbe && request.method === 'POST' && url.pathname === '/api/identity' && answered.status === 201) {
+    setupTapCount = await claimTapProbe();
+  }
+  if (claimTapProbe && request.method === 'POST' && /\/invites\/[^/]+\/claim$/.test(url.pathname)) {
+    claimTapCount = await claimTapProbe();
+  }
   if (request.method === 'POST' && /\/api\/relics\/[^/]+\/grants$/.test(url.pathname)) {
     grantStatuses.push(answered.status);
   }
@@ -1172,6 +1181,10 @@ async function run(): Promise<void> {
     assert.equal(noticeNamesOwner, true, 'a notice does not name the owner');
     assert.equal(noticeLink, false, 'a notice carries a link');
     assert.equal(noticeKey, false, 'a notice carries a key');
+    const recipientsBeforeClaim = await api(env, 'POST', `/api/relics/${relicId}/recipients`, {
+      cookie: ownerCookie, body: {},
+    });
+    assert.equal(recipientsBeforeClaim.status, 200);
 
     // INVITE_STEP_2. Each invitation opens only for its own address.
     const inviteeCookie = await nodeSignIn(env, INVITEE);
@@ -1228,7 +1241,7 @@ async function run(): Promise<void> {
     // INVITE_STEP_4. Keep access sets up a passkey and claims; the claim outlives the invitation.
     const logBeforeKeep = (await logOf(ownerCookie, relicId)).length;
     const mailKeep = mailbox.mark();
-    const signKeep = await signCountTotal(invitee.browser);
+    claimTapProbe = () => signCountTotal(invitee.browser);
     await inPage(invitee.browser, pageCreatePasskey, { prf: true });
     await click(invitee.browser, '[data-action="invite-keep"]');
     await poll('claim recorded', 25000, async () =>
@@ -1237,7 +1250,10 @@ async function run(): Promise<void> {
       const page = await invitee.browser.evaluate<string>(`JSON.stringify({state: document.querySelector('#relic-private')?.getAttribute('data-private-state'), text: document.body.innerText.slice(0, 700)})`);
       throw new Error(`${error instanceof Error ? error.message : String(error)}; page=${page}`);
     });
-    const signKeepDelta = (await signCountTotal(invitee.browser)) - signKeep;
+    claimTapProbe = undefined;
+    assert.notEqual(setupTapCount, undefined, 'identity registration was not observed');
+    assert.notEqual(claimTapCount, undefined, 'claim request was not observed');
+    const signKeepDelta = claimTapCount! - setupTapCount!;
     const credentials = (await invitee.browser.cdp.send(
       'WebAuthn.getCredentials',
       { authenticatorId: invitee.browser.authenticatorId },
@@ -1251,28 +1267,184 @@ async function run(): Promise<void> {
     clockOffsetMs = 8 * DAY_MS;
     let readsAfterExpiry = 'failed';
     try {
-      await goto(invitee.browser, relicUrl);
-      await waitForState(invitee.browser, ['unlock'], 'invitee unlock after expiry');
-      await click(invitee.browser, '[data-action="private-unlock"]');
-      await waitForOpened(invitee.browser, 'invitee after expiry');
+      const afterExpiry = await api(env, 'POST', `/api/relics/${relicId}/versions/${current}/key`, {
+        cookie: await cookieHeader(invitee.browser), body: {},
+      });
+      assert.equal(afterExpiry.status, 200, 'claim key unavailable after invitation expiry');
       readsAfterExpiry = 'ok';
     } finally {
       clockOffsetMs = 0;
     }
+    await goto(invitee.browser, relicUrl);
+    await waitForState(invitee.browser, ['unlock'], 'invitee unlock after expiry');
+    await click(invitee.browser, '[data-action="private-unlock"]');
+    await waitForOpened(invitee.browser, 'invitee after expiry');
     const ownerClaimMail = mailbox.all().slice(mailKeep).filter((m) => m.to.toLowerCase() === env.owner && m.subject === `${INVITEE} accepted your invitation`).length;
     const claimLog = (await logOf(ownerCookie, relicId)).slice(logBeforeKeep).filter((event) => event.kind !== 'wrap_fetch').map((event) => event.kind).join(',');
-    emit(104, `INVITE_STEP_4_CLAIM passkey_created=${credentials.credentials.length} identity=registered extra_claim_taps=${signKeepDelta} claim_wraps=${claimWraps.length === 1 ? 'listed' : 'mismatch'} invite_wraps=${inviteAfterClaim?.wraps.length ?? 'missing'} role=${String(roleAnswer.json['role'])} reads_after_invite_expiry=${readsAfterExpiry} log=${claimLog} owner_mail=${ownerClaimMail}`);
+    emit(104, `INVITE_STEP_4_CLAIM passkey_created=${credentials.credentials.length} identity=registered extra_claim_taps=${signKeepDelta} claim_wraps=${claimWraps.length === 1 ? 'listed' : 'mismatch'} invite_wraps=${inviteAfterClaim?.wraps.length ?? 'missing'} role=${String((roleAnswer.json['me'] as Json)?.['role'])} reads_after_invite_expiry=${readsAfterExpiry} log=${claimLog} owner_mail=${ownerClaimMail}`);
     assert.equal(credentials.credentials.length, 1, 'the claim did not leave one passkey');
     assert.equal(signKeepDelta, 0, 'the claim took a passkey assertion');
     assert.equal(claimWraps.length, 1, 'the claim did not write one wrap per listed version');
     assert.equal(inviteAfterClaim?.wraps.length, 0, 'the invitation kept its wraps');
-    assert.equal(roleAnswer.json['role'], 'invited', 'the claimant is not invited');
+    assert.equal((roleAnswer.json['me'] as Json)?.['role'], 'invited', 'the claimant is not invited');
     assert.equal(readsAfterExpiry, 'ok', 'the claimant cannot read after the invitation expired');
     assert.equal(claimLog, 'claim', 'the owner log lacks the claim');
     assert.equal(ownerClaimMail, 1, 'the owner did not get one claim email');
     lastReceipt = 104;
 
-    throw new Error('steps 5 to 13 of the invitation path are not yet written in this checkpoint');
+    const claimCall = claimCalls.find((call) => call.path.endsWith(`/${inviteOne}/claim`));
+    assert.ok(claimCall, 'the claim request was not captured');
+    const winningWraps = await store.listWraps(relicId);
+    const repeatedClaim = await api(env, 'POST', claimCall.path, {
+      cookie: await cookieHeader(invitee.browser), body: claimCall.body,
+    });
+    assert.ok(
+      repeatedClaim.status === 201 || (repeatedClaim.status === 409 && problemCode(repeatedClaim) === 'invite_claimed'),
+      `unexpected claim replay ${repeatedClaim.status} ${problemCode(repeatedClaim)}`
+    );
+    assert.deepEqual(await store.listWraps(relicId), winningWraps);
+    await goto(invitee.browser, relicUrl);
+    await waitForState(invitee.browser, ['unlock'], 'claimant reopens');
+    await click(invitee.browser, '[data-action="private-unlock"]');
+    await waitForOpened(invitee.browser, 'claimant reopens');
+    emit(105, `INVITE_STEP_5_SINGLE_USE second_tab=${repeatedClaim.status}${repeatedClaim.status === 409 ? '_invite_claimed' : '_same_claimant_repeat'} winner_wraps_intact=true reopen_same_identity=reader`);
+    lastReceipt = 105;
+
+    const recipientsAfterClaim = await api(env, 'POST', `/api/relics/${relicId}/recipients`, {
+      cookie: ownerCookie, body: {},
+    });
+    assert.equal(recipientsAfterClaim.status, 200);
+    assert.deepEqual(recipientsAfterClaim.json, recipientsBeforeClaim.json, 'claim changed the publisher roster');
+    await writeFile(docPath, 'Direct share invitation proof, later version.\n');
+    await mcp('relic_republish', { relic_id: relicId, path: docPath });
+    const laterVersion = await versionOf();
+    assert.equal((await store.listWraps(relicId)).some(
+      (wrap) => wrap.version === laterVersion && wrap.recipientKeyId === inviteeKem
+    ), false, 'republish included an unconfirmed claimant');
+    emit(106, 'INVITE_STEP_6_INVISIBLE recipients_equal_without_invites=true mcp_republish=sealed new_version_wrapped_to_claimant=false');
+    lastReceipt = 106;
+
+    // Confirm the claimed invitation in the owner panel with one assertion.
+    await goto(owner.browser, `${relicUrl}?access=invites`);
+    await owner.browser.waitForSelector(`[data-invite="${inviteOne}"][data-invite-state="claimed"]`, 25000);
+    const beforeConfirm = await signCountTotal(owner.browser);
+    await click(owner.browser, '[data-action="invite-confirm"]');
+    await poll('confirmed claimant grant', 25000, async () =>
+      (await grantsOf(ownerCookie, relicId)).some(
+        (grant) => grant.grantee.identity.identity_id === inviteeIdentity.identityId && grant.revoked_at === null
+      ) ? true : undefined
+    );
+    const confirmTaps = (await signCountTotal(owner.browser)) - beforeConfirm;
+    assert.equal(confirmTaps, 1);
+    assert.equal(await store.getInviteClaim(relicId, inviteeIdentity.identityId), undefined);
+    await writeFile(docPath, 'Direct share invitation proof, confirmed version.\n');
+    await mcp('relic_republish', { relic_id: relicId, path: docPath });
+    const confirmedVersion = await versionOf();
+    assert.ok((await store.listWraps(relicId)).some(
+      (wrap) => wrap.version === confirmedVersion && wrap.recipientKeyId === inviteeKem
+    ), 'confirmed claimant was not included in the new seal');
+    await goto(invitee.browser, relicUrl);
+    await waitForState(invitee.browser, ['unlock'], 'confirmed claimant');
+    await click(invitee.browser, '[data-action="private-unlock"]');
+    await waitForOpened(invitee.browser, 'confirmed claimant');
+    emit(107, `INVITE_STEP_7_CONFIRM owner_sign_count_delta=${confirmTaps} grant=live claim_row=superseded mcp_republish_after=wraps_claimant claimant_opens_new_version=ok`);
+    lastReceipt = 107;
+
+    const inviteTwoCookie = await nodeSignIn(env, INVITEE_TWO);
+    clockOffsetMs = 8 * DAY_MS;
+    try {
+      const expiredOpen = await api(env, 'POST', `/api/relics/${relicId}/invites/${linkTwo.inviteId}/open`, {
+        cookie: inviteTwoCookie, body: {},
+      });
+      const expiredKey = await api(env, 'POST', `/api/relics/${relicId}/versions/${current}/key`, {
+        cookie: inviteTwoCookie, body: { invite_id: linkTwo.inviteId },
+      });
+      const expiredMint = await api(env, 'POST', `/api/relics/${relicId}/mint`, {
+        cookie: inviteTwoCookie, body: { invite_id: linkTwo.inviteId, version: current },
+      });
+      const expiredClaim = await api(env, 'POST', `/api/relics/${relicId}/invites/${linkTwo.inviteId}/claim`, {
+        cookie: inviteTwoCookie, body: claimCall.body,
+      });
+      assert.equal(expiredOpen.status, 200);
+      assert.equal(expiredOpen.json['status'], 'expired');
+      assert.equal(expiredKey.status, 403);
+      assert.equal(expiredMint.status, 403);
+      assert.equal(expiredClaim.status, 410);
+      assert.equal(problemCode(expiredClaim), 'invite_expired');
+      emit(108, 'INVITE_STEP_8_EXPIRY open_status=expired key=403 mint=403 claim=410_invite_expired');
+      lastReceipt = 108;
+    } finally {
+      clockOffsetMs = 0;
+    }
+
+    // Use a separate pair so cancel and removal each exercise the correct state.
+    await freshSharePanel(owner, relicUrl);
+    await addToPanel(owner, [INVITEE_THREE, INVITEE_FOUR], 2);
+    await tapInvites(owner, 2);
+    const linksForRemoval = await linksShown(owner);
+    const toRemove = linksForRemoval.find((link) => link.email === INVITEE_THREE);
+    const toCancel = linksForRemoval.find((link) => link.email === INVITEE_FOUR);
+    assert.ok(toRemove && toCancel);
+    await signInFromLink(inviteeThree, toRemove.url);
+    await poll('third invitee ready', 25000, async () =>
+      (await inviteeThree.browser.evaluate<boolean>(`!!document.querySelector('[data-invite-banner]')`)) ? true : undefined
+    );
+    await inPage(inviteeThree.browser, pageCreatePasskey, { prf: true });
+    await click(inviteeThree.browser, '[data-action="invite-keep"]');
+    await poll('third invitation claimed', 25000, async () =>
+      (await store.getInvite(relicId, toRemove.inviteId))?.status === 'claimed' ? true : undefined
+    );
+    const removedIdentity = await identityOf(env, inviteeThree);
+    const removedKem = hexOf(await kemKeyIdOf(removedIdentity.kemPublicKey));
+    assert.ok((await store.listWraps(relicId)).some((wrap) => wrap.recipientKeyId === removedKem && wrap.source === 'claim'));
+    const cancelled = await api(env, 'POST', `/api/relics/${relicId}/invites/${toCancel.inviteId}/revoke`, {
+      cookie: ownerCookie, body: {},
+    });
+    assert.equal(cancelled.status, 200);
+    assert.equal((await store.getInvite(relicId, toCancel.inviteId))?.wraps.length, 0);
+    const fourthInvitee = await launchActor(env, 'invitee-four', INVITEE_FOUR, true);
+    actors.push(fourthInvitee);
+    await signInFromLink(fourthInvitee, toCancel.url);
+    await waitForState(fourthInvitee.browser, ['invite-withdrawn'], 'cancelled invitation');
+    const removed = await api(env, 'POST', `/api/relics/${relicId}/invites/${toRemove.inviteId}/revoke`, {
+      cookie: ownerCookie, body: {},
+    });
+    assert.equal(removed.status, 200);
+    assert.equal((await store.listWraps(relicId)).filter((wrap) => wrap.recipientKeyId === removedKem).length, 0);
+    const removedAccess = await api(env, 'GET', `/api/relics/${relicId}/access`, {
+      cookie: await cookieHeader(inviteeThree.browser),
+    });
+    assert.equal((removedAccess.json['me'] as Json)?.['role'], 'revoked');
+    emit(109, 'INVITE_STEP_9_REVOKE cancel_open=wraps_0 link_state=invite-withdrawn remove_claimed=claim_wraps_0 role=revoked');
+    lastReceipt = 109;
+
+    await freshSharePanel(owner, relicUrl);
+    await addToPanel(owner, [INVITEE_FIVE], 1);
+    await tapInvites(owner, 1);
+    const remainingInvite = (await linksShown(owner))[0];
+    assert.ok(remainingInvite);
+    const remainingCookie = await nodeSignIn(env, INVITEE_FIVE);
+    await openPanel(owner, relicUrl);
+    await clickPrivateControl(owner.browser, `button[data-action="revoke"][aria-label="Revoke ${SIXTH}"]`);
+    await owner.browser.waitForSelector('#revoke-dialog[open]', 25000);
+    await click(owner.browser, '[data-action="confirm-revoke"]');
+    await owner.browser.waitForSelector('#rekey[data-rekey-state="done"]', 90000);
+    const rekeyVersion = await versionOf();
+    assert.ok(rekeyVersion > confirmedVersion);
+    const remainingRow = await store.getInvite(relicId, remainingInvite.inviteId);
+    assert.equal(remainingRow?.status, 'open');
+    const oldInviteKey = await api(env, 'POST', `/api/relics/${relicId}/versions/${confirmedVersion}/key`, {
+      cookie: remainingCookie, body: { invite_id: remainingInvite.inviteId },
+    });
+    const newInviteKey = await api(env, 'POST', `/api/relics/${relicId}/versions/${rekeyVersion}/key`, {
+      cookie: remainingCookie, body: { invite_id: remainingInvite.inviteId },
+    });
+    assert.equal(oldInviteKey.status, 200);
+    assert.equal(newInviteKey.status, 403);
+    emit(110, 'INVITE_STEP_10_REKEY revoke_other=new_version open_invite_listed=ok open_invite_new_version=403');
+    lastReceipt = 110;
+
+    throw new Error('steps 11 to 13 of the invitation path are not yet written in this checkpoint');
   } finally {
     for (const actor of actors) await actor.browser.close().catch(() => {});
   }
