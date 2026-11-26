@@ -156,7 +156,7 @@ const SPECS: Record<string, Round2Spec> = {
 
 /** The round 2 spec for a column name, or undefined for a round 1 column. */
 export function round2Spec(column: string): Round2Spec | undefined {
-  return Object.prototype.hasOwnProperty.call(SPECS, column)
+  return Object.hasOwn(SPECS, column)
     ? SPECS[column]
     : undefined;
 }
