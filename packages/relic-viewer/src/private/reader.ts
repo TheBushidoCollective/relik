@@ -874,7 +874,14 @@ class PrivateReader {
       );
       let identity: UnlockedIdentity;
       if (state.identity === null) {
-        let outcome = await setUpIdentity(this.mount.deps, email);
+        let outcome;
+        try {
+          outcome = await setUpIdentity(this.mount.deps, email);
+        } catch (error) {
+          if (!(error instanceof PrivateRequestError) || error.code !== 'passkey_required') throw error;
+          await makeReplacementPasskey(this.mount.deps);
+          outcome = await retryIdentityAfterReplacement(this.mount.deps, email);
+        }
         if (outcome.kind === 'replace-offer') {
           await makeReplacementPasskey(this.mount.deps);
           outcome = await retryIdentityAfterReplacement(this.mount.deps, email);
