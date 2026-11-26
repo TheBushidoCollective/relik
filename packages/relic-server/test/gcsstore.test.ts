@@ -2491,6 +2491,57 @@ describe('conditional wrap primitives', () => {
     expect((await store.getWrap(RELIC_ID, 1, RECIPIENT_A))?.enc).toBe('later');
   });
 
+  test('a lifetime extension during a create conflict reaches the replacement', async () => {
+    const fake = fakeGcs();
+    const store = storeOn(fake);
+    await store.putRelic(privateRelic());
+    const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+    await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
+    const later = NOW + 60 * DAY;
+    fake.afterNextCreateConflict(name, async () => {
+      await store.extendPrivateLifetime(RELIC_ID, later);
+      await store.updateRelic(RELIC_ID, (row) => ({
+        ...row,
+        expiresAt: later,
+        privateErasureAt: later,
+      }));
+      await store.extendPrivateLifetime(RELIC_ID, later);
+    });
+
+    expect(
+      await store.ensureWrap(
+        { ...wrap(RECIPIENT_A, 1), enc: 'new', epoch: 2 },
+        (current) => (current.epoch ?? 0) < 2
+      )
+    ).toBe('replaced');
+    expect(fake.objects.get(name)?.customTime).toBe(
+      new Date(later).toISOString()
+    );
+  });
+
+  test('a retry refuses to recreate a wrap after the relik row is gone', async () => {
+    const fake = fakeGcs();
+    const store = storeOn(fake);
+    await store.putRelic(privateRelic());
+    const name = `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`;
+    await store.putWrap({ ...wrap(RECIPIENT_A, 1), epoch: 1 });
+    let removed = false;
+    fake.afterNextCreateConflict(name, async () => {
+      await store.deleteWraps(RELIC_ID, {});
+      await store.deleteRelicRow(RELIC_ID);
+      removed = true;
+    });
+
+    await expect(
+      store.ensureWrap(
+        { ...wrap(RECIPIENT_A, 1), epoch: 2 },
+        (current) => (current.epoch ?? 0) < 2
+      )
+    ).rejects.toMatchObject({ code: 'relic_removed' });
+    expect(removed).toBe(true);
+    expect(fake.objects.has(name)).toBe(false);
+  });
+
   test.each([
     'after a refused create',
     'after reading the old generation',

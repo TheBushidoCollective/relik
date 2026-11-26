@@ -1055,7 +1055,8 @@ export interface RelicStore {
   ): Promise<number>;
   /**
    * Creates the wrap if absent, replaces it when `replaceIf` holds, and keeps
-   * it otherwise. A concurrent write or delete is judged again.
+   * it otherwise. A concurrent write or delete is judged again. GCS reads the
+   * relik's erasure time for each write. A missing relik row is refused.
    * Create-only writes use `putWrap`.
    */
   ensureWrap(
@@ -2205,6 +2206,9 @@ export class MemoryStore implements RelicStore {
     row: WrapRow,
     replaceIf: (current: WrapRow) => boolean
   ): Promise<'created' | 'replaced' | 'kept'> {
+    if (!this.relics.has(row.relicId)) {
+      throw new ProblemError('relic_removed', { relic_id: row.relicId });
+    }
     const k = compositeKey(
       row.relicId,
       String(row.version),

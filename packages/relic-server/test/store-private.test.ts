@@ -280,6 +280,14 @@ for (const backend of backends) {
         expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toEqual(newer);
       });
 
+      test('ensureWrap refuses to write without a relik row', async () => {
+        const store = backend.make();
+        await expect(
+          store.ensureWrap(wrap(RECIPIENT_A, 1), () => true)
+        ).rejects.toMatchObject({ code: 'relic_removed' });
+        expect(await store.getWrap(RELIC_ID, 1, RECIPIENT_A)).toBeUndefined();
+      });
+
       test('deleteWraps by recipient removes that recipient in every version and nobody else', async () => {
         const store = backend.make();
         await store.putWrap(wrap(RECIPIENT_A, 1));

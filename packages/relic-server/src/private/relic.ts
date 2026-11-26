@@ -626,6 +626,10 @@ export async function applyGrants(
   }
 
   const inviteKeys = new Set(plannedInvites.map((p) => p.inviteId));
+  const grantWraps = wraps.filter(
+    (wrap) => !inviteKeys.has(wrap.recipientKeyId)
+  );
+  const grantVersions = [...new Set(planned.flatMap((p) => p.versions))];
   const created: string[] = [];
   const createdInvites: string[] = [];
   const replaced: { granteeId: string; prior: GrantRow }[] = [];
@@ -633,9 +637,8 @@ export async function applyGrants(
   const writtenInviteRows: InviteRow[] = [];
 
   /**
-   * Undoes only the grant and invitation rows this attestation wrote. Wraps are
-   * never removed on failure: a wrap with no live grant row serves nothing, and
-   * the next grant or revocation of that key replaces or sweeps it by epoch.
+   * Undoes only the grant and invitation rows this attestation wrote.
+   * Wraps are removed only for a version or relik the owner has deleted.
    */
   const rollback = async () => {
     const nonce = verified.attestation.nonce;
@@ -659,14 +662,39 @@ export async function applyGrants(
     }
   };
 
+  // A permanent deletion mark makes every wrap for that version unusable.
+  // Remove this grant's pairs if an owner delete crossed its writes.
+  const crossedDeletion = async (): Promise<ProblemError | undefined> => {
+    if (planned.length === 0) return undefined;
+    const [current, tombstone] = await Promise.all([
+      env.store.getRelic(row.id),
+      env.store.getTombstone(row.id),
+    ]);
+    const gone = current === undefined || tombstone !== undefined;
+    for (const wrap of grantWraps) {
+      if (gone || (current !== undefined && isDeleted(current, wrap.version))) {
+        await env.store.deleteWraps(row.id, {
+          version: wrap.version,
+          recipientKeyId: wrap.recipientKeyId,
+        });
+      }
+    }
+    if (gone) return new ProblemError('relic_removed', { relic_id: row.id });
+    const deleted = grantVersions.find(
+      (version) => current !== undefined && isDeleted(current, version)
+    );
+    return deleted === undefined
+      ? undefined
+      : new ProblemError('version_deleted', { version: deleted });
+  };
+
   // The epoch this call commits at. Every wrap it writes carries that epoch,
   // and the commit below requires the epoch to be unchanged, so a stamp is
   // either the committed epoch or the call fails.
   const epochAtStart = row.accessEpoch ?? 0;
   const commitEpoch = epochAtStart + 1;
   try {
-    for (const wrap of wraps) {
-      if (inviteKeys.has(wrap.recipientKeyId)) continue;
+    for (const wrap of grantWraps) {
       const record: WrapRow = {
         relicId: row.id,
         version: wrap.version,
@@ -768,6 +796,9 @@ export async function applyGrants(
       writtenInviteRows.push(inviteRow);
     }
 
+    const crossed = await crossedDeletion();
+    if (crossed !== undefined) throw crossed;
+
     if (planned.length > 0) {
       // A grant that replaces a revoked one fences the grantee's invitations
       // made before this commit, so a claim a revocation left behind stays
@@ -778,6 +809,12 @@ export async function applyGrants(
         if (p.prior?.revokedAt !== undefined) fences[p.grantee.email] = fence;
       }
       const committed = await env.store.updateRelic(row.id, (cur) => {
+        const deleted = grantVersions.find((version) =>
+          isDeleted(cur, version)
+        );
+        if (deleted !== undefined) {
+          throw new ProblemError('version_deleted', { version: deleted });
+        }
         const sealed = cur.sealedVersion;
         if (
           sealed === undefined ||
@@ -797,10 +834,14 @@ export async function applyGrants(
       if (committed === undefined) throw new ProblemError('relic_removed');
     }
   } catch (error) {
+    const crossed = await crossedDeletion().catch((cleanupError: unknown) => {
+      console.error('relic: grant deletion cleanup failed:', cleanupError);
+      return undefined;
+    });
     await rollback().catch((rollbackError: unknown) => {
       console.error('relic: grant rollback failed:', rollbackError);
     });
-    throw error;
+    throw crossed ?? error;
   }
 
   const grants: GrantWireJSON[] = [];

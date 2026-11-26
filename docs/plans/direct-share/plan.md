@@ -224,7 +224,7 @@ Returns 200 `GrantLookupJSON`. No access-log event, and no log line contains an 
 7. **Wraps.** The set of `(version, recipient_key_id)` pairs must equal exactly the union of grant versions times grantee KEM key and invitation versions times invite id, with no duplicates and at most `privateBackfillMaxWraps` items. Otherwise `400 invalid_wrap`.
 8. **Writes.**
    - Create grant wraps at the proposed commit epoch and write grant rows, then create invitation rows with their wraps embedded. `putWrap` is create-only; `replaceWrapIf` replaces an existing wrap only if its epoch is older, using a generation check.
-     The wrap primitive in this historical plan is superseded by `ensureWrap`, as described in `docs/spec/service.md` section 10.4.
+     The wrap primitive and deletion handling in this historical plan are superseded by `ensureWrap` and the deletion fence in `docs/spec/service.md` section 10.4.
    - If the batch has grants, compare the relik epoch with the starting epoch and advance it in one update. A regrant writes the address fence in that same update. On failure, created invitation rows are deleted and grant rows are rolled back only while their attestation nonce still matches. Wrap objects are not deleted by rollback. A lost response can cause rollback even when the epoch commit landed, failing closed.
    - A batch of invitations only changes no epoch. Each invitation records the access epoch observed by the call; later authorization checks apply the current address fence.
 
@@ -454,6 +454,7 @@ The Access button count is pending requests plus accepted invitations.
 7. **Writes and races.**
    - Validate everything, then write owner-supplied wraps and rows. Grant wraps use the proposed epoch; create-only writes and conditional replacement protect a newer wrap. A batch with grants advances the epoch and fences regranted addresses in the same compare-and-swap.
    - On failure, delete created invitation rows and roll back grant rows only while their attestation nonce still belongs to this call. Never delete wrap objects on a failure path. A lost commit response also takes this rollback path even if the commit landed.
+     The 2026-11-26 decision adds an exception: a crossed owner deletion removes this grant's wrap pairs for the deleted version or relik.
    - A stored wrap is served only when the current grant or other role covers that version, regardless of its source. Partial grants do not create coverage gaps on versions they do not cover.
 8. **Enumeration.** The answer is the owner's by design. Every refusal before the read is independent of which addresses are registered, and budgets are charged per address.
 
@@ -743,7 +744,7 @@ Both use `+tag` addresses and finish with a hard delete. Until they run, product
 | Correct wraps | Exact sets of `(version, recipient)` pairs; the browser wraps only verified keys; the invitee verifies the owner-signed invitation and runs the seal and commitment checks before using any key. Evidence: steps 4, 6, 14 and 16. |
 | The invitation is bound to the address | G, H, I and J compare the session address. Other addresses and bogus ids get the same answer. Evidence: step 15. |
 | The invite key never reaches the service | Only the fragment carries it. It is stripped at mount, appears in no body, log or email, and is never stored. Evidence: steps 14 and 16 and the S2 assertions. |
-| Replay and races | Single-use nonces; fresh statements; an invitation compare-and-swap that commits claim wraps; nonce-guarded grant-row rollback with no wrap deletion. Evidence: steps 18 and 8 and the server race tests. |
+| Replay and races | Single-use nonces; fresh statements; an invitation compare-and-swap that commits claim wraps; nonce-guarded grant-row rollback. A crossed owner deletion cleans this grant's pairs for deleted versions or a removed relik. Evidence: steps 18 and 8 and the server race tests. |
 | Installed clients | `/recipients` is unchanged by invitations and claims. Evidence: step 19. |
 | Only the owner grants later versions | A claim never adds anyone to R. Confirmation is an owner-signed `grant`. Evidence: steps 19 and 20. |
 | Role surfaces | `invited` can read, comment and decide by decision, and is not a signer. Evidence: S1 tests. |
