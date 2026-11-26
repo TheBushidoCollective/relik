@@ -46,7 +46,10 @@ export async function openInvitation(
     statement.owner_identity_id !== open.owner.identity.identity_id ||
     (await inviteIdOf(publicKey)) !== inviteId ||
     (pin !== undefined && pin.identityId !== statement.owner_identity_id) ||
-    JSON.stringify(open.versions) !== JSON.stringify(statement.versions) ||
+    !Array.isArray(open.versions) ||
+    new Set(open.versions).size !== open.versions.length ||
+    open.versions.some((version) => !statement.versions.includes(version)) ||
+    Date.parse(open.expires_at) !== statement.expires_at ||
     !(await verifyStatement(
       keys.sigPublicKey,
       statementBytes('invite', statement),

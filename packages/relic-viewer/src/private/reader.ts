@@ -59,6 +59,7 @@ import {
   makeReplacementPasskey,
   retryIdentityAfterReplacement,
   setUpIdentity,
+  type SetupOutcome,
 } from './identity.ts';
 import {
   InvalidKeyResponseError,
@@ -444,6 +445,8 @@ class PrivateReader {
   private panelHost: HTMLElement | undefined;
   private requestCount: HTMLElement | undefined;
   private detached = false;
+  private keepPending = false;
+  private keepButton: HTMLButtonElement | undefined;
   private sharePrefill: readonly string[] = [];
   private inviteRef:
     | { readonly inviteId: string; readonly d: Uint8Array | undefined }
@@ -689,6 +692,18 @@ class PrivateReader {
       } else if (open.status === 'revoked') {
         this.inviteStage('invite-withdrawn', open.owner.email);
       } else if (open.status === 'claimed') {
+        const state = await privateKeysOf(this.mount.deps).loadIdentityState(
+          this.mount.deps
+        );
+        if (
+          state.identity !== null &&
+          state.identity.identity_id === open.claimed_by_identity_id
+        ) {
+          this.inviteRef = undefined;
+          this.invitation = undefined;
+          await this.route();
+          return;
+        }
         this.inviteStage('invite-used', open.owner.email);
       } else {
         await this.showInviteReady(invitation);
@@ -833,6 +848,8 @@ class PrivateReader {
     keep.className = 'action primary';
     keep.setAttribute('data-action', 'invite-keep');
     keep.textContent = 'Keep access';
+    this.keepButton = keep;
+    keep.disabled = this.keepPending;
     keep.addEventListener('click', () => {
       void this.keepAccess(keep, invitation);
     });
@@ -851,6 +868,7 @@ class PrivateReader {
     button: HTMLButtonElement,
     invitation: VerifiedInvitation
   ): Promise<void> {
+    if (this.keepPending) return;
     const email = this.email;
     if (email === undefined) {
       this.showInviteSignIn();
@@ -867,6 +885,7 @@ class PrivateReader {
       );
       return;
     }
+    this.keepPending = true;
     const restore = waiting(button);
     try {
       const state = await privateKeysOf(this.mount.deps).loadIdentityState(
@@ -874,7 +893,18 @@ class PrivateReader {
       );
       let identity: UnlockedIdentity;
       if (state.identity === null) {
-        let outcome = await setUpIdentity(this.mount.deps, email);
+        let outcome: SetupOutcome;
+        try {
+          outcome = await setUpIdentity(this.mount.deps, email);
+        } catch (error) {
+          if (
+            !(error instanceof PrivateRequestError) ||
+            error.code !== 'passkey_required'
+          )
+            throw error;
+          await makeReplacementPasskey(this.mount.deps);
+          outcome = await retryIdentityAfterReplacement(this.mount.deps, email);
+        }
         if (outcome.kind === 'replace-offer') {
           await makeReplacementPasskey(this.mount.deps);
           outcome = await retryIdentityAfterReplacement(this.mount.deps, email);
@@ -912,6 +942,8 @@ class PrivateReader {
       }
       this.failure(error);
     } finally {
+      this.keepPending = false;
+      if (this.keepButton !== undefined) this.keepButton.disabled = false;
       restore();
     }
   }

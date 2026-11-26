@@ -148,6 +148,7 @@ describe('relic_share on a private relik', () => {
 
     for (const emails of [
       [],
+      ['not-an-address'],
       Array.from({ length: 21 }, (_, i) => `person${i}@example.test`),
     ]) {
       const res = await callTool(SHARE_TOOL_NAME, {

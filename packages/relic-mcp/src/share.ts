@@ -112,6 +112,19 @@ export async function shareRelic(
   let state: PublishState;
   if (await isPrivateRelic(input.relic_id)) {
     assertEmailCount(input.emails);
+    if (
+      input.emails.some(
+        (email) =>
+          typeof email !== 'string' ||
+          email.trim().length > 320 ||
+          !/^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(email.trim())
+      )
+    ) {
+      throw new PublishError(
+        'local_share_emails_invalid',
+        'Each entry must be a valid email address.'
+      );
+    }
     return privateInvitation(input, deps);
   }
 

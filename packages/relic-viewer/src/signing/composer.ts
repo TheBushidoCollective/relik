@@ -70,7 +70,8 @@ export async function resolveSigners(
           scope.deps,
           scope.relicId,
           unknown,
-          new Set(scope.grants.map((grant) => grant.identityId))
+          new Set(scope.grants.map((grant) => grant.identityId)),
+          scope.owner?.identityId
         );
   const signers: { email: string; identity_id: string | null }[] = [];
   const grants: GrantTarget[] = [];
@@ -248,6 +249,14 @@ export function openSigningComposer(input: {
   let boxes: readonly SigningBox[] = [];
   let current = 0;
   const emails: HTMLInputElement[] = [];
+  let resolved: Resolved | undefined;
+  let reviewGeneration = 0;
+  const invalidateReview = (): void => {
+    reviewGeneration++;
+    resolved = undefined;
+    delete send.dataset['confirmed'];
+    send.textContent = 'Review and send';
+  };
   const updateRows = (): void => {
     listTitle.textContent = `Signers ${emails.length} of 20`;
     emails.forEach((email, index) => {
@@ -279,6 +288,7 @@ export function openSigningComposer(input: {
       })
     : () => {};
   function appendSigner(): void {
+    invalidateReview();
     if (emails.length >= 20) return;
     const row = document.createElement('div');
     row.className = 'signer-row';
@@ -287,6 +297,7 @@ export function openSigningComposer(input: {
     const email = document.createElement('input');
     email.type = 'email';
     email.className = 'input';
+    email.addEventListener('input', invalidateReview);
     email.addEventListener('focus', () => {
       current = emails.indexOf(email);
       updateRows();
@@ -297,6 +308,7 @@ export function openSigningComposer(input: {
     remove.setAttribute('aria-label', 'Remove signer');
     remove.textContent = '×';
     remove.addEventListener('click', () => {
+      invalidateReview();
       const removed = emails.indexOf(email);
       emails.splice(removed, 1);
       boxes = boxes
@@ -347,7 +359,6 @@ export function openSigningComposer(input: {
     pageEvents.abort();
     panel.remove();
   });
-  let resolved: Resolved | undefined;
   send.addEventListener('click', () => {
     const names = emails.map((field) => normalizeEmail(field.value));
     if (
@@ -360,17 +371,27 @@ export function openSigningComposer(input: {
     }
     if (send.dataset['confirmed'] !== 'true') {
       send.disabled = true;
-      void resolveSigners(
-        {
-          deps: input.deps,
-          relicId: input.relicId,
-          grants: input.grants,
-          ...(input.owner === undefined ? {} : { owner: input.owner }),
-        },
-        names
+      const generation = reviewGeneration;
+      void (
+        input.private
+          ? resolveSigners(
+              {
+                deps: input.deps,
+                relicId: input.relicId,
+                grants: input.grants,
+                ...(input.owner === undefined ? {} : { owner: input.owner }),
+              },
+              names
+            )
+          : Promise.resolve({
+              kind: 'ready' as const,
+              signers: names.map((email) => ({ email, identity_id: null })),
+              grants: [],
+            })
       )
         .then((next) => {
           send.disabled = false;
+          if (generation !== reviewGeneration) return;
           if (next.kind === 'refused') {
             notice.textContent = next.message;
             return;
@@ -388,10 +409,24 @@ export function openSigningComposer(input: {
       return;
     }
     if (resolved === undefined) return;
+    if (
+      names.length !== resolved.signers.length ||
+      names.some((email, index) => email !== resolved!.signers[index]?.email)
+    ) {
+      invalidateReview();
+      notice.textContent = 'The signer list changed. Review it again.';
+      return;
+    }
     const { signers, grants } = resolved;
     notice.textContent =
       "Each signer confirms with a passkey on their own device. Relik records which passkey approved which version, and when. It doesn't verify anyone's identity.";
     send.disabled = true;
+    for (const email of emails) email.disabled = true;
+    add.disabled = true;
+    const removeButtons = [
+      ...rows.querySelectorAll<HTMLButtonElement>('button'),
+    ];
+    for (const button of removeButtons) button.disabled = true;
     void (async () => {
       const requestId = encodeBase64url(
         crypto.getRandomValues(new Uint8Array(16))
@@ -519,6 +554,9 @@ export function openSigningComposer(input: {
       notice.textContent =
         error instanceof Error ? error.message : 'Could not send the request.';
       send.disabled = false;
+      for (const email of emails) email.disabled = false;
+      add.disabled = false;
+      for (const button of removeButtons) button.disabled = false;
     });
   });
   appendSigner();
