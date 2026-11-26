@@ -1,6 +1,6 @@
 # Direct share and invitations: dispatch spec
 
-This is the complete content for `docs/plans/direct-share/plan.md`. It is not committed.
+This is the original direct-share dispatch spec. The grant and claim storage, rollback, coverage and lifecycle contracts below were updated for the grant-race fix; the initial grounding and decisions remain historical.
 
 - **Grounding.** Everything below was read at `origin/main` 56482913, which had not moved when I checked. The reads came from read-only snapshots: the scratch worktree, then a `git archive` export into `$TMPDIR`. Both are gone. Line numbers are from that commit. Workers rebase on `origin/main` and find anchors by symbol.
 - **Spelling.** Product copy says "relik" or "Relik". Identifiers, paths, package names, tool names and protocol labels keep `relic`. The guard is `packages/relic-viewer/test/brand-spelling.test.ts`.
@@ -159,37 +159,30 @@ This keeps the typecheck green.
 
 ### 3.2 Server rows and storage
 
+The original claim-row and wrap-rollback design in this section is superseded by the atomic invitation claim and row-based authorization in `docs/spec/service.md` section 10.4.
+
 All of these live in `store.ts` and both store implementations.
 
 - **`AccessEvent`** adds the kinds `share`, `invite` and `claim`, and an optional `subjectEmail`.
 - **`GrantRow`** adds an optional `grantStatement` (D1a).
-- **`WrapRow.source`** adds `'claim'`.
-- **New row, `InviteRow`:**
+- **`WrapRow.source`** is `'seal' | 'grant' | 'backfill'`. Claims never write `m/wrap/`.
+- **`InviteRow`:**
 
 ```ts
 { relicId, inviteId /* hex kemKeyId of invitePublicKey */, ownerIdentityId, invitedEmail /* normalized */,
   invitePublicKey /* base64url SEC1 */, versions /* listed, minus versions deleted since */, expiresAt, createdAt,
   status: 'open' | 'claimed' | 'revoked', wraps: { version, enc, ct }[] /* empty unless open */,
-  attestation: StoredAttestation /* the owner's tap; this invite's statement is the one with its public key */,
-  claimedAt?, claimantIdentityId?, revokedAt? }
+  claimWraps?: { version, enc, ct }[], claim?: { statement, identitySignature },
+  attestation: StoredAttestation, claimedAt?, claimantIdentityId?, revokedAt? }
 ```
 
   - Key: `m/invite/{relicId}/{inviteId}.json`.
-  - `customTime` on every write: `min(expiresAt, relik expiresAt)`.
+  - `customTime` follows the invitation expiry until claimed, then the relik expiry.
   - Writes are create-only, with compare-and-swap updates.
-  - Methods: `putInvite`, `getInvite`, `listInvites`, `updateInvite`, `deleteInvitesForRelic`.
-  - The invitation's wraps live inside the row and never in `m/wrap/`. So `requireRead`, `recipientKeys`, coverage and the sweeps never see them, and erasing the row erases them.
-- **New row, `InviteClaimRow`:**
-
-```ts
-{ relicId, identityId, ownerIdentityId, inviteIds: string[], versions: number[], claimedAt,
-  claim: { statement, identitySignature }, revokedAt? }
-```
-
-  - Key: `m/invite-claim/{relicId}/{identityId}.json`.
-  - `customTime` follows the relik's expiry (`privateCustomTime`).
-  - Methods: `getInviteClaim`, `putInviteClaim`, `updateInviteClaim`, `deleteInviteClaim`, `deleteInviteClaimsForRelic`.
-- **`standingOf` precedence:** owner, recovery, grantee, revoked (a grant or a claim revoked), invited (a live claim), requested, declined, none.
+  - Methods: `putInvite`, `getInvite`, `listInvites`, `updateInvite`, `deleteInvite`, `deleteInvitesForRelic`.
+  - Temporary wraps and claim wraps live inside the invitation row, not in `m/wrap/`.
+- **`InviteClaimIndex`:** `{ relicId, identityId, inviteIds }` at `m/invite-claim/{relicId}/{identityId}.json`, with the relik expiry. `addInviteClaimIndex` appends idempotently before the claim CAS; `getInviteClaimIndex` reads it and `deleteInviteClaimsForRelic` removes it on relik deletion. The index is only a lookup hint, and each referenced invitation must still be claimed by that identity.
+- **`standingOf` precedence:** owner, recovery, grantee, revoked grant, invited (a live claim), revoked claim, requested, declined, none.
 - **`READABLE_ROLES`** adds `invited`.
 - **`privateAccessView`'s allow-lists** add `invited` for owner, settings and signing visibility.
 - **The signing allow-list is unchanged,** so an invitee is never a signer.
@@ -230,7 +223,7 @@ Returns 200 `GrantLookupJSON`. No access-log event, and no log line contains an 
 7. **Wraps.** The set of `(version, recipient_key_id)` pairs must equal exactly the union of grant versions times grantee KEM key and invitation versions times invite id, with no duplicates and at most `privateBackfillMaxWraps` items. Otherwise `400 invalid_wrap`.
 8. **Writes.**
    - Grant wraps and rows; then create-only invitation rows with their wraps embedded.
-   - Then, if the batch has grants, one epoch compare-and-swap. If it fails: `409 grant_stale_version`, and every write of this call is rolled back, invitation rows included.
+   - Then, if the batch has grants, one epoch compare-and-swap. If it fails: `409 grant_stale_version`; invitation rows created by the call are deleted and grant rows are rolled back only while their attestation nonce still matches. Wrap objects are not deleted by rollback.
    - A batch of invitations only changes no epoch.
 
 Returns 201 `GrantsJSON`. After success:
@@ -264,7 +257,7 @@ Returns 201 `SigningRequestJSON`, unchanged.
 - **open or expired:** compare-and-swap to `revoked`, wraps emptied.
 - **claimed:**
   - If the claimant holds a live grant: `409 grant_exists` (revoke the reader instead).
-  - Otherwise delete the claim wraps for the claimant's key, unless that key is a current recipient. Mark the claim row and the invitation revoked.
+  - Otherwise compare-and-swap the invitation to `revoked`, emptying both the temporary and claim wraps. Its index entry may remain but grants no access.
 - **revoked:** 200, as a repeat.
 
 Each change logs `revoke` with `subject_email`. Returns 200 `{invite: InviteJSON}`.
@@ -294,21 +287,15 @@ Returns `KeyJSON` with `wrap.recipient_key_id = invite_id`. Logs `wrap_fetch` wi
 2. `400 invalid_statement` if the body is malformed.
 3. Relik refusals.
 4. `404 invite_not_found`.
-5. Status:
-   - `409 invite_claimed`; a repeat by the same claimant with the same versions returns the earlier result;
-   - `410 invite_revoked`;
-   - `410 invite_expired`.
+5. An invitation already revoked returns `410 invite_revoked`; an open invitation past expiry returns `410 invite_expired`.
 6. `409 identity_required` if the address has no current identity.
 7. The statement: parsed; signed by that identity's key (`signature`); `claimant_identity_id` is that identity and `invite_id` matches (`claim`); `relic_id` (`relic`); `versions` equal the row's (`claim`); fresh (`stale`).
-8. If the claimant already holds a live grant: compare-and-swap the row to `claimed` with wraps emptied, log `claim`, and return 200 `{status:'already_reader'}`.
-9. Wraps: exactly the row's versions times the claimant's KEM key (`400 invalid_wrap`).
-10. Writes, in this order:
-    1. claim wraps, create-only with source `claim`, recording which this call wrote;
-    2. the claim row, created or merged, recording whether this call created it;
-    3. a compare-and-swap of the invitation from `open` to `claimed`, with `claimantIdentityId`, `claimedAt` and wraps emptied.
-
-    If the swap loses, roll back only this call's writes and return `409 invite_claimed`.
-11. Log `claim` and email the owner.
+8. A claimed invitation returns the existing result to the same identity, or `409 invite_claimed` to a different identity.
+9. If the claimant already holds a live grant, use the invitation CAS below with no claim wraps or index entry and return 200 `{status:'already_reader'}`.
+10. Otherwise validate exactly the row's versions times the claimant's KEM key (`400 invalid_wrap`), then add the invitation id to the identity's claim index.
+11. Compare-and-swap the invitation from `open` to `claimed`, storing the signed claim and claimant wraps together with `claimantIdentityId` and `claimedAt`, and emptying the temporary wraps. A revoked row returns `410 invite_revoked`, a different claimant returns `409 invite_claimed`, expiry returns `410 invite_expired`, and changed versions return `400 invalid_statement` with `statement_check: 'claim'`. A same-identity winner is treated as a successful repeat.
+12. Recheck the current identity. If it changed after the CAS, return `409 identity_changed`; the invitation remains consumed by the old identity.
+13. For a new claim, log `claim` and email the owner unless the claimant was already a reader.
 
 Returns 201 `{status:'claimed', versions}`.
 
@@ -462,9 +449,9 @@ The Access button count is pending requests plus accepted invitations.
 5. **The owner's own address** shows "That's you" and is refused.
 6. **The recovery holder can be shared with.**
 7. **Writes and races.**
-   - Validate everything, then write wraps (recording which), then rows (create-only, or compare-and-swap), then one epoch compare-and-swap.
-   - On failure, roll back only this call's writes, plus `source: 'seal'` wraps for a key whose row this call created.
-   - Never roll back `claim` wraps, and never roll back keys held in another role or by a live claim.
+   - Validate everything, then write owner-supplied wraps, then rows (create-only, or compare-and-swap), then one epoch compare-and-swap.
+   - On failure, delete created invitation rows and roll back grant rows only while their attestation nonce still belongs to this call. Never delete wrap objects on a failure path.
+   - A stored wrap is served only when the current grant or other role covers that version, regardless of its source. Partial grants do not create coverage gaps on versions they do not cover.
 8. **Enumeration.** The answer is the owner's by design. Every refusal before the read is independent of which addresses are registered, and budgets are charged per address.
 
 ### 4.2 Invitations
@@ -508,22 +495,22 @@ Every miss returns the same refusal (H, I).
 - If the address had no identity, the browser runs the existing setup first: create a passkey if needed, then `registerOnce` (viewer `identity.ts:73-130`). If it already had one, the browser runs `unlock`.
 - The browser then signs `invite_claim` with that identity (D19), re-wraps each listed version key to its own KEM key, and posts J.
 - The claimant's standing becomes `invited`. They read through their claim wraps, comment and decide on those versions (D14), and are never in R. So no seal wraps to them until the owner confirms.
-- **Confirming is a direct share** (route B, or route C when they are named as a signer). Afterwards `applyGrants` deletes the claim row, and the grant supersedes it.
+- **Confirming is a direct share** (route B, or route C when they are named as a signer). The invitation and claim wraps remain; readable versions are the union of the grant and live claimed invitations.
 
 **What happens to an invitation in each case:**
 
-- **Revoke.** Cancelling strips the invitation's wraps at once. Removing a claimant deletes their claim wraps and marks the claim revoked. Revoking a confirmed claimant is a normal grant revocation, whose key sweep also removes claim wraps.
+- **Revoke.** Cancelling or removing an accepted invitee marks the invitation revoked and clears both of its wrap arrays. Revoking a confirmed claimant revokes their claimed invitations and matching open invitations, marks the grant, moves the epoch, then sweeps ordinary wraps unless another recipient role retains the key.
 - **Rekey because a different reader was revoked** (D16). Open invitations keep their listed, older versions. No invitation covers the new version.
 - **Republish.** An invitation never covers versions sealed after it. A claimant gets later versions only after confirmation.
-- **Version deletion** removes those versions and their wraps from each invitation. An open invitation left with no versions becomes `revoked`.
+- **Version deletion** removes those versions and both temporary and claimant wraps from each invitation. An open invitation left with no versions becomes `revoked`.
 - **Signing.** An invitation-only address is not a signer. A claimant becomes one when the composer grants them (D1a), which also confirms them.
-- **Recovery holder.** The recovery holder always has an identity, so cannot be invited (`identity_exists`). `sweepWrapsFor` (`access.ts:104-119`) and grant rollback treat a key whose identity holds a live claim on that relik as current.
-- **Replay and two tabs.** Claim statements are fresh and single-use, through the compare-and-swap. The losing tab rolls back only its own writes and gets `invite_claimed`. The UI then reads `/access` (role `invited`) and shows the reader.
-- **After expiry,** G reports `expired`. H and I refuse. J returns `410 invite_expired`. The lifecycle erases the row (4.3).
+- **Recovery holder.** The recovery holder always has an identity, so cannot be invited (`identity_exists`). Recovery and grantee roles may coexist. Claim wraps are on their invitation rows and are not touched by `m/wrap/` sweeps.
+- **Replay and two tabs.** The invitation compare-and-swap admits one claimant. A repeat by that identity returns the existing result without changing the winning wraps; a different claimant gets `invite_claimed`, and a cancel that wins gives `invite_revoked`.
+- **After expiry,** an unclaimed invitation reports `expired`, H and I refuse, and J returns `410 invite_expired`. A claimed invitation and its claimant wraps continue for the relik lifetime (4.3).
 - **A different address** gets the uniform `404`. Invitations cannot be moved to another address.
 - **An identity that already exists.**
   - When creating: refused (`identity_exists`), so the owner shares directly.
-  - At claim time: the server binds to `currentIdentity` for the invited address. If that identity already holds a live grant, the invitation is used up and nothing is written.
+  - At claim time: the server binds to `currentIdentity` for the invited address. If that identity already holds a live grant, the invitation is marked claimed with no claim wraps or index entry.
 - **Enumeration.**
   - A link holder without the mailbox sees `401` or the uniform `404`, and never learns the address.
   - A mailbox holder without the link learns only the notice.
@@ -534,9 +521,9 @@ Every miss returns the same refusal (H, I).
 
 | Family | `customTime` | Bucket rule prefix | `extendPrivateLifetime` | Owner deletes the whole relik / operator delete | Version delete | Cancel / remove | Claim | Expiry |
 |---|---|---|---|---|---|---|---|---|
-| `m/invite/{relik}/{id}` (new) | `min(invite expiry, relik expiry)`, kept on every rewrite | **add `invite/`** | **excluded** | **add `deleteInvitesForRelic`** to both | strip versions and wraps; empty and open becomes `revoked` | wraps emptied, status set | wraps emptied | refused by time; erased 1 day after `customTime` |
-| `m/invite-claim/{relik}/{identity}` (new) | relik expiry | **add `invite-claim/`** | **included** | **add `deleteInviteClaimsForRelic`** to both | versions stripped | `revokedAt` set | created or merged | with the relik |
-| `m/wrap/` (claim wraps, source `claim`) | relik expiry | existing | included | existing | existing | deleted for the claimant's key unless kept elsewhere | created | with the relik |
+| `m/invite/{relik}/{id}` | invitation expiry until claimed, then relik expiry | `invite/` | claimed or previously claimed rows only | `deleteInvitesForRelic` on both | strip versions and both wrap arrays; empty and open becomes `revoked` | status revoked, both wrap arrays emptied | signed claim and wraps committed in invitation CAS | unclaimed access refused at expiry; lifecycle erases after `customTime` |
+| `m/invite-claim/{relik}/{identity}` | relik expiry | `invite-claim/` | included | `deleteInviteClaimsForRelic` on both | unchanged; no version data | retained, without authority | add invitation id before CAS | with the relik |
+| `m/wrap/` | relik expiry | existing | included | existing | deleted for the version | grant revocation sweeps the key unless another recipient role retains it | never written by a claim | with the relik |
 | `m/access/` (`invite`, `claim`, `share` events) | retention | existing | n/a | survive (existing) | n/a | n/a | n/a | retention |
 | Sign-in codes and sessions | existing transient | existing | n/a | n/a | n/a | n/a | n/a | existing |
 
@@ -626,11 +613,11 @@ It cannot create grants or invitations (3.4). It composes `grant_url` locally, a
   - the direct-share observables from the earlier version;
   - a mixed batch of 1 grant and 2 invitations in one tap returns 201, with two rows whose wraps open under their invite keys;
   - G, H and I return the uniform 404 or 403 for a different address and for a bogus id;
-  - J creates claim wraps, the claim row and role `invited`, and empties the invitation's wraps;
-  - a second claim returns 409, and rollback leaves the winner intact;
-  - an expired invitation is refused by G, H, I and J;
-  - under fake GCS: the invite row's `customTime` equals the invitation's expiry and survives a rewrite; `extendPrivateLifetime` leaves invite rows alone and moves claim rows; whole and version deletes remove invites and claims;
-  - `/recipients` for a relik with open, claimed and confirmed invitations is deep-equal to the same relik without them;
+  - J commits claimant wraps and the signed claim inside the invitation row, gives role `invited`, and empties its temporary wraps;
+  - a same-identity repeat returns 201 without changing the winner, a different identity is refused, and a cancel that wins returns `410 invite_revoked`;
+  - an unclaimed expired invitation is refused by G, H, I and J;
+  - under fake GCS: an unclaimed invite row's `customTime` follows invitation expiry, a claimed row and its index follow relik expiry, and lifetime extension and deletion follow 4.3;
+  - open and claimed invitations do not change `/recipients`; confirming one adds the ordinary grant;
   - an invitation to a registered address returns 409 and still charges the lookup budget.
 
 **S2. Viewer** (`private/{owner-panel,reader,fingerprint-input,open}.ts`, a new `private/direct-share.ts`, a new `private/invite.ts`, `signing/{composer,controller,api}.ts`; tests)
@@ -669,10 +656,10 @@ Independent review is required for S1 and S2 (security boundaries). The others g
   | No check before the read depends on registration | identical refusals for registered and unregistered inputs |
   | Invitation creation is charged before `identity_exists` | the budget test |
   | Every invite read path compares addresses and answers uniformly | the different-address and bogus-id tests |
-  | The invitation's wraps never enter `m/wrap/` | store assertions |
-  | `/recipients` is unchanged | the deep-equal test |
-  | Claim rollback only undoes its own writes | the two-tab test |
-  | Invite rows are excluded from lifetime extension and claim rows included | fake-GCS tests |
+  | Temporary and claimant wraps never enter `m/wrap/` | store assertions |
+  | Open and claimed invitations do not change `/recipients`; confirmation adds an ordinary grant | the deep-equal test and confirmation path |
+  | Claim CAS records the claim and wraps atomically | same-identity repeat and cancel race tests |
+  | Claimed invite rows and indexes are extended, unclaimed invite rows are not | fake-GCS tests |
   | Both delete sweeps cover invites and claims | delete tests |
   | Terraform carries the prefixes | the validate step plus a test that diffs the prefix list against the store families |
   | `privateReach` admits `invited` only by decision | a test |
@@ -682,7 +669,7 @@ Independent review is required for S1 and S2 (security boundaries). The others g
 - **S2.** The invite key never leaves memory: assert `fetch` bodies and the absence of `localStorage` writes. Only verified keys are wrapped. The fragment is stripped before the first request.
 - **S3.** No fetch, and no key in output.
 - **S4.** Every receipt is backed by an assertion; the mutation controls fail as expected.
-- **Separate work:** `coverageGaps` false positives for readers granted only some versions (`identity.ts:671-700`).
+- **Coverage:** partial grants no longer produce gaps on versions outside their coverage; a missing covered wrap still produces a gap.
 
 ## 10. End-to-end proof (`direct-share-path.ts`)
 
@@ -708,16 +695,16 @@ The receipts print in order, then `DIRECT_SHARE_PATH_OK` with exit code 0. A def
 
 14. `INVITE_STEP_1_CREATE batch=grant:1,invite:2 owner_sign_count_delta=1 invite_rows=2 wraps_open_under_invite_key=true d_in_any_request=false notice_mails=2 notice_names_owner=true notice_link=absent notice_key=absent links_shown=2`
 15. `INVITE_STEP_2_ADDRESS_BOUND signed_out=401 other_address=404 bogus_id=404 same_body=true key_other=403 mint_other=403`
-16. `INVITE_STEP_3_OPEN_WITH_CODE sign_in=code state=invite-ready listed=opened unlisted_key=403 comments=absent signing=absent fragment_after_open=absent log=wrap_fetch:address receipts=0`
-17. `INVITE_STEP_4_CLAIM passkey_created=1 identity=registered extra_claim_taps=0 claim_wraps=listed invite_wraps=0 role=invited reads_after_invite_expiry=ok log=claim owner_mail=1`
-18. `INVITE_STEP_5_SINGLE_USE second_tab=409_invite_claimed winner_wraps_intact=true reopen_same_identity=reader`
+16. `INVITE_STEP_3_OPEN_WITH_CODE sign_in=code state=invite-ready listed=opened unlisted_key=403 comments=absent signing=absent fragment_after_open=absent log=wrap_fetch:address receipts=0 key_in_body=absent`
+17. `INVITE_STEP_4_CLAIM passkey_created=1 identity=registered extra_claim_taps=0 claim_wraps=listed claim_store=invite_row m_wrap=absent invite_wraps=0 role=invited reads_after_invite_expiry=ok log=claim owner_mail=1`
+18. `INVITE_STEP_5_SINGLE_USE second_tab=201_same_claimant_repeat winner_wraps_intact=true reopen_same_identity=reader`
 19. `INVITE_STEP_6_INVISIBLE recipients_equal_without_invites=true mcp_republish=sealed new_version_wrapped_to_claimant=false`
-20. `INVITE_STEP_7_CONFIRM owner_sign_count_delta=1 grant=live claim_row=superseded mcp_republish_after=wraps_claimant claimant_opens_new_version=ok`
+20. `INVITE_STEP_7_CONFIRM owner_sign_count_delta=1 grant=live claim=retained invitation=confirmed mcp_republish_after=wraps_claimant claimant_opens_new_version=ok`
 21. `INVITE_STEP_8_EXPIRY open_status=expired key=403 mint=403 claim=410_invite_expired`
-22. `INVITE_STEP_9_REVOKE cancel_open=wraps_0 link_state=invite-withdrawn remove_claimed=claim_wraps_0 role=revoked`
+22. `INVITE_STEP_9_REVOKE cancel_open=wraps_0 link_state=invite-withdrawn remove_claimed=claim_wraps_0 key=403 role=revoked`
 23. `INVITE_STEP_10_REKEY revoke_other=new_version open_invite_listed=ok open_invite_new_version=403`
-24. `INVITE_STEP_11_REGISTERED invite_for_registered=409_identity_exists lookup_charged=true existing_identity=unlock_then_claim already_reader=consumed_no_writes`
-25. `INVITE_STEP_12_DELETE version_delete=versions_stripped whole_relik=invites_0,claims_0`
+24. `INVITE_STEP_11_REGISTERED invite_for_registered=409_identity_exists lookup_charged=true existing_identity=unlock_then_claim already_reader=consumed_no_extra_wraps_or_index`
+25. `INVITE_STEP_12_DELETE version_delete=versions_stripped surviving_key=200 deleted_key=403`, followed by `INVITE_STEP_12_RELIK_DELETE whole_relik=invites_0,claim_indexes_0 checked_claimants=3`.
 26. `INVITE_STEP_13_MCP grant_url_unregistered=invite_offered mcp_invite_tool=absent`
 
 **Mutation controls,** recorded in `PATH.md`. Each must fail its step:
@@ -734,7 +721,7 @@ The receipts print in order, then `DIRECT_SHARE_PATH_OK` with exit code 0. A def
 | invitation compare-and-swap skipped | 18 |
 | claim stops emptying the invitation's wraps | 17 |
 | lookup charge for invitations skipped | 24 |
-| invite rows added to `extendPrivateLifetime` | the S1 fake-GCS test |
+| claimed invite rows excluded from `extendPrivateLifetime` | the S1 fake-GCS test |
 
 **After deploy (operator run, not CI):**
 
@@ -753,14 +740,14 @@ Both use `+tag` addresses and finish with a hard delete. Until they run, product
 | Correct wraps | Exact sets of `(version, recipient)` pairs; the browser wraps only verified keys; the invitee verifies the owner-signed invitation and runs the seal and commitment checks before using any key. Evidence: steps 4, 6, 14 and 16. |
 | The invitation is bound to the address | G, H, I and J compare the session address. Other addresses and bogus ids get the same answer. Evidence: step 15. |
 | The invite key never reaches the service | Only the fragment carries it. It is stripped at mount, appears in no body, log or email, and is never stored. Evidence: steps 14 and 16 and the S2 assertions. |
-| Replay and races | Single-use nonces; fresh statements; the claim compare-and-swap; rollback of own writes only. Evidence: steps 18 and 8 and the S1 seal-injection test. |
+| Replay and races | Single-use nonces; fresh statements; an invitation compare-and-swap that commits claim wraps; nonce-guarded grant-row rollback with no wrap deletion. Evidence: steps 18 and 8 and the server race tests. |
 | Installed clients | `/recipients` is unchanged by invitations and claims. Evidence: step 19. |
 | Only the owner grants later versions | A claim never adds anyone to R. Confirmation is an owner-signed `grant`. Evidence: steps 19 and 20. |
 | Role surfaces | `invited` can read, comment and decide by decision, and is not a signer. Evidence: S1 tests. |
 | Revocation, expiry, version deletion | Each strips or deletes the right objects. Evidence: steps 21, 22 and 25 and the 4.3 tests. |
-| Lifecycle | Invite `customTime` equals the invitation's expiry; prefixes are in Terraform; extension excludes invite rows; both delete sweeps cover invites and claims. Evidence: S1 fake-GCS tests and the validate step. |
+| Lifecycle | Unclaimed invite `customTime` equals invitation expiry; claimed rows and indexes follow relik expiry; prefixes are in Terraform; both delete sweeps cover invitations and indexes. Evidence: S1 fake-GCS tests and the validate step. |
 | Email | Content as in 3.6, and gating as in 3.6. Evidence: steps 5, 14 and 17. |
-| Recovery | Claim wraps survive `sweepWrapsFor` and grant rollback. Evidence: an S1 test. |
+| Recovery | Claim wraps are embedded in invitation rows and are not touched by `m/wrap/` sweeps. Evidence: the server tests. |
 | Self, retired, signing-route grants | As before. Evidence: steps 9 and 12. |
 
 ## 12. Residuals to disclose

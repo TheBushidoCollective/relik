@@ -401,8 +401,8 @@ export interface GrantRow {
 }
 /**
  * An invitation for an address with no private-share key yet (plan 3.2). Its
- * wraps live inside the row, so `m/wrap/` and the recipient set never see
- * them. The row's `customTime` is fixed at creation and never lowered.
+ * temporary and claimant wraps live inside the row, not in `m/wrap/`. The
+ * row's `customTime` follows invitation expiry until claim, then relik expiry.
  */
 export interface InviteRow {
   readonly relicId: string;

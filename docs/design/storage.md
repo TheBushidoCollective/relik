@@ -283,13 +283,13 @@ A private relic adds the objects below. Each is a JSON document at the path show
 | `m/grant-by-grantee/{granteeIdentityId}/{relicId}.json` | `{relicId, at}` |
 | `m/access-request/{relicId}/{requesterIdentityId}.json` | `AccessRequestRow` |
 | `m/owner-relic/{ownerIdentityId}/{relicId}.json` | `OwnedRelicRow` |
-| `m/invite/{relicId}/{inviteId}.json` | `InviteRow`, including temporary wraps only while open |
-| `m/invite-claim/{relicId}/{identityId}.json` | `InviteClaimRow`, including the claimant's signed claim |
+| `m/invite/{relicId}/{inviteId}.json` | `InviteRow`, with temporary wraps while open and claimant wraps and signed claim after acceptance |
+| `m/invite-claim/{relicId}/{identityId}.json` | `InviteClaimIndex`, an identity-scoped list of invitation ids, not an authorization row |
 | `m/access/{ownerIdentityId}/{at}-{8 hex}.json` | `AccessEvent`, with `at` as 16 zero-padded digits, written with `uploadType=multipart` metadata that sets `customTime` (section 7.5) |
 
 Within the contract, a `customTime` is set on access-log objects (section 7.5) and, for a private relic, on every object written for that relic, so the bucket erases it one day after the relic's expiry (section 7.2). Plan decision 7 is accepted and its rules are in `deploy/terraform/modules/relic/resource.google_storage_bucket.relics.tf`. The application writes the `customTime` values, and that write path belongs to the server slice and is not verified on this document's base.
 
-The direct-share contract (`docs/plans/direct-share/plan.md`, section 4.3) adds two object families for invitations. An invitation row's `customTime` is `min(invitation expiry, relic expiry)`, set when the row is written. Cloud Storage cannot decrease a Custom-Time (section 7.5, fact 3), so every rewrite sends the value first written. A claim row and its claim wraps use the relic expiry, like other private objects. Section 7.7 gives the lifetime and deletion rules for each family.
+The direct-share contract (`docs/plans/direct-share/plan.md`, section 4.3) adds two object families for invitations. An open invitation row's `customTime` is its invitation expiry, already capped by relik expiry. Once claimed, the row and its embedded claim wraps carry the relik expiry, as does the claim index. Rewrites and extensions never decrease `customTime`. Section 7.7 gives the lifetime and deletion rules for each family.
 
 Shortening a relic's lifetime ends access at the new expiry at once. It does not move the erasure time of objects already written. The sweeps for invitations and claims are in section 7.7.
 
@@ -349,7 +349,7 @@ Three facts bound the rule:
 2. A change to a bucket's lifecycle configuration can take up to 24 hours to take effect ([lifecycle](https://docs.cloud.google.com/storage/docs/lifecycle)).
 3. Custom-Time cannot be removed after it is set, and it cannot be decreased on an object ([metadata](https://docs.cloud.google.com/storage/docs/metadata)). Each event's retention is set when the event is written, so a later change to an owner's retention setting applies to events written after the change.
 
-The bucket has no other lifecycle rule for private relics. Relic ciphertext, cover objects, wraps and seals are covered only by the rule in section 7.2.
+The private-relik rule in section 7.2 covers ciphertext, wraps, seals, invitations and claim indexes. The access-log rule above is separate.
 
 ### 7.6 Browser access (CORS)
 
@@ -357,13 +357,13 @@ The bucket allows browser requests from the service origin, and plan correction 
 
 ### 7.7 Invitation and claim lifecycle
 
-This table is the contract for the direct-share change. It is not yet in the Terraform on this base. Each family is added to, or deliberately left out of, each of its sweeps.
+The bucket rule includes both invitation families. Each family participates in the sweeps below.
 
 | Family | `customTime` | Bucket rule prefix | `extendPrivateLifetime` | Owner deletes the whole relic, or operator delete | Version delete | Cancel or remove | Claim | Expiry |
 |---|---|---|---|---|---|---|---|---|
-| `m/invite/{relicId}/{inviteId}` (new) | `min(invite expiry, relic expiry)`, set at creation and never decreased | add `invite/` | excluded | add `deleteInvitesForRelic` to both | versions and their wraps stripped; an open invitation left with no versions becomes revoked | wraps emptied, status set | wraps emptied | refused by time at expiry; erased one day after `customTime` |
-| `m/invite-claim/{relicId}/{identityId}` (new) | relic expiry | add `invite-claim/` | included | add `deleteInviteClaimsForRelic` to both | versions stripped | `revokedAt` set; claim wraps deleted for the claimant's key unless another current role keeps it | created or merged | with the relic |
-| `m/wrap/` (claim wraps, source `claim`) | relic expiry | existing `m/wrap/` | included | existing | existing | deleted for the claimant's key unless another current role keeps it | created | with the relic |
+| `m/invite/{relicId}/{inviteId}` | invitation expiry until claimed; relik expiry once claimed | `invite/` | claimed or previously claimed rows only | `deleteInvitesForRelic` on both paths | versions and both wrap arrays stripped; an open invitation left with no versions becomes revoked | status revoked and both wrap arrays emptied | signed claim and claimant wraps stored atomically; temporary wraps emptied | unclaimed access refused at expiry; lifecycle erases after `customTime` |
+| `m/invite-claim/{relicId}/{identityId}` | relik expiry | `invite-claim/` | included | `deleteInviteClaimsForRelic` on both paths | unchanged; the index stores no versions or wraps | retained as a non-authoritative hint | invitation id added before the invitation compare-and-swap | with the relik |
+| `m/wrap/` | relik expiry | existing `m/wrap/` | included | existing | deleted for the version | a grant revocation sweeps the key unless another recipient role retains it | never written by a claim | with the relik |
 | `m/access/` (`invite`, `claim`, `share` events) | retention | existing | n/a | survive | n/a | n/a | n/a | retention |
 | Sign-in codes and sessions | existing transient | existing | n/a | n/a | n/a | n/a | n/a | existing |
 

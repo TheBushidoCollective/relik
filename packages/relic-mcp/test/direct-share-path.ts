@@ -1744,6 +1744,10 @@ async function run(): Promise<void> {
         `${error instanceof Error ? error.message : String(error)}; page=${page}`
       );
     });
+    const claimCall = await poll('claim response', 25000, async () =>
+      claimCalls.find((call) => call.path.endsWith(`/${inviteOne}/claim`))
+    );
+    assert.equal(claimCall.status, 201, 'the initial claim did not succeed');
     claimTapProbe = undefined;
     assert.notEqual(
       setupTapCount,
@@ -1759,10 +1763,16 @@ async function run(): Promise<void> {
     )) as { credentials: unknown[] };
     const inviteeIdentity = await identityOf(env, invitee);
     const inviteeKem = hexOf(await kemKeyIdOf(inviteeIdentity.kemPublicKey));
-    const claimWraps = (await store.listWraps(relicId)).filter(
-      (wrap) => wrap.recipientKeyId === inviteeKem && wrap.source === 'claim'
-    );
     const inviteAfterClaim = await store.getInvite(relicId, inviteOne);
+    assert.ok(inviteAfterClaim, 'the claimed invitation is missing');
+    const claimWraps = inviteAfterClaim.claimWraps ?? [];
+    const claimantObjectWraps = (await store.listWraps(relicId)).filter(
+      (wrap) => wrap.recipientKeyId === inviteeKem
+    );
+    const claimIndex = await store.getInviteClaimIndex(
+      relicId,
+      inviteeIdentity.identityId
+    );
     const roleAnswer = await api(env, 'GET', `/api/relics/${relicId}/access`, {
       cookie: await cookieHeader(invitee.browser),
     });
@@ -1810,7 +1820,7 @@ async function run(): Promise<void> {
       .join(',');
     emit(
       104,
-      `INVITE_STEP_4_CLAIM passkey_created=${credentials.credentials.length} identity=registered extra_claim_taps=${signKeepDelta} claim_wraps=${claimWraps.length === 1 ? 'listed' : 'mismatch'} invite_wraps=${inviteAfterClaim?.wraps.length ?? 'missing'} role=${String((roleAnswer.json['me'] as Json)?.['role'])} reads_after_invite_expiry=${readsAfterExpiry} log=${claimLog} owner_mail=${ownerClaimMail}`
+      `INVITE_STEP_4_CLAIM passkey_created=${credentials.credentials.length} identity=registered extra_claim_taps=${signKeepDelta} claim_wraps=${claimWraps.length === 1 ? 'listed' : 'mismatch'} claim_store=invite_row m_wrap=${claimantObjectWraps.length === 0 ? 'absent' : 'present'} invite_wraps=${inviteAfterClaim.wraps.length} role=${String((roleAnswer.json['me'] as Json)?.['role'])} reads_after_invite_expiry=${readsAfterExpiry} log=${claimLog} owner_mail=${ownerClaimMail}`
     );
     assert.equal(
       credentials.credentials.length,
@@ -1823,8 +1833,23 @@ async function run(): Promise<void> {
       1,
       'the claim did not write one wrap per listed version'
     );
+    assert.deepEqual(
+      claimWraps.map((wrap) => wrap.version),
+      inviteAfterClaim.versions,
+      'the invitation claim wraps do not cover the listed versions'
+    );
     assert.equal(
-      inviteAfterClaim?.wraps.length,
+      claimantObjectWraps.length,
+      0,
+      'claim wrote a wrap under the claimant key in m/wrap'
+    );
+    assert.equal(
+      claimIndex?.inviteIds.includes(inviteOne),
+      true,
+      'the claimant index does not reference the invitation'
+    );
+    assert.equal(
+      inviteAfterClaim.wraps.length,
       0,
       'the invitation kept its wraps'
     );
@@ -1842,29 +1867,25 @@ async function run(): Promise<void> {
     assert.equal(ownerClaimMail, 1, 'the owner did not get one claim email');
     lastReceipt = 104;
 
-    const claimCall = claimCalls.find((call) =>
-      call.path.endsWith(`/${inviteOne}/claim`)
-    );
-    assert.ok(claimCall, 'the claim request was not captured');
-    const winningWraps = await store.listWraps(relicId);
+    const winningClaimWraps = (await store.getInvite(relicId, inviteOne))
+      ?.claimWraps;
     const repeatedClaim = await api(env, 'POST', claimCall.path, {
       cookie: await cookieHeader(invitee.browser),
       body: claimCall.body,
     });
-    assert.ok(
-      repeatedClaim.status === 201 ||
-        (repeatedClaim.status === 409 &&
-          problemCode(repeatedClaim) === 'invite_claimed'),
-      `unexpected claim replay ${repeatedClaim.status} ${problemCode(repeatedClaim)}`
+    assert.equal(repeatedClaim.status, 201, 'same claimant replay was refused');
+    assert.deepEqual(
+      (await store.getInvite(relicId, inviteOne))?.claimWraps,
+      winningClaimWraps,
+      'replaying the claim changed the winning invitation wraps'
     );
-    assert.deepEqual(await store.listWraps(relicId), winningWraps);
     await goto(invitee.browser, relicUrl);
     await waitForState(invitee.browser, ['unlock'], 'claimant reopens');
     await click(invitee.browser, '[data-action="private-unlock"]');
     await waitForOpened(invitee.browser, 'claimant reopens');
     emit(
       105,
-      `INVITE_STEP_5_SINGLE_USE second_tab=${repeatedClaim.status}${repeatedClaim.status === 409 ? '_invite_claimed' : '_same_claimant_repeat'} winner_wraps_intact=true reopen_same_identity=reader`
+      `INVITE_STEP_5_SINGLE_USE second_tab=${repeatedClaim.status}_same_claimant_repeat winner_wraps_intact=true reopen_same_identity=reader`
     );
     lastReceipt = 105;
 
@@ -1919,9 +1940,36 @@ async function run(): Promise<void> {
     );
     const confirmTaps = (await signCountTotal(owner.browser)) - beforeConfirm;
     assert.equal(confirmTaps, 1);
+    const retainedInvite = await store.getInvite(relicId, inviteOne);
     assert.equal(
-      await store.getInviteClaim(relicId, inviteeIdentity.identityId),
-      undefined
+      retainedInvite?.status,
+      'claimed',
+      'confirmation removed the claim'
+    );
+    assert.deepEqual(
+      retainedInvite?.claimWraps,
+      winningClaimWraps,
+      'confirmation changed the claimed invitation wraps'
+    );
+    assert.equal(
+      (await store.getInviteClaimIndex(relicId, inviteeIdentity.identityId))
+        ?.inviteIds.includes(inviteOne),
+      true,
+      'confirmation removed the claim index'
+    );
+    const confirmedInvites = await api(
+      env,
+      'GET',
+      `/api/relics/${relicId}/invites`,
+      { cookie: ownerCookie }
+    );
+    assert.equal(confirmedInvites.status, 200);
+    assert.equal(
+      (confirmedInvites.json['invites'] as Json[]).find(
+        (invite) => invite['invite_id'] === inviteOne
+      )?.['status'],
+      'confirmed',
+      'the owner does not see the retained invitation as confirmed'
     );
     await writeFile(
       docPath,
@@ -1943,7 +1991,7 @@ async function run(): Promise<void> {
     await waitForOpened(invitee.browser, 'confirmed claimant');
     emit(
       107,
-      `INVITE_STEP_7_CONFIRM owner_sign_count_delta=${confirmTaps} grant=live claim_row=superseded mcp_republish_after=wraps_claimant claimant_opens_new_version=ok`
+      `INVITE_STEP_7_CONFIRM owner_sign_count_delta=${confirmTaps} grant=live claim=retained invitation=confirmed mcp_republish_after=wraps_claimant claimant_opens_new_version=ok`
     );
     lastReceipt = 107;
 
@@ -2030,11 +2078,19 @@ async function run(): Promise<void> {
     );
     const removedIdentity = await identityOf(env, inviteeThree);
     const removedKem = hexOf(await kemKeyIdOf(removedIdentity.kemPublicKey));
-    assert.ok(
-      (await store.listWraps(relicId)).some(
-        (wrap) => wrap.recipientKeyId === removedKem && wrap.source === 'claim'
-      )
+    const claimBeforeRemoval = await store.getInvite(relicId, toRemove.inviteId);
+    assert.ok(claimBeforeRemoval, 'the invitation to remove is missing');
+    const removedClaimWraps = claimBeforeRemoval.claimWraps;
+    assert.ok(removedClaimWraps?.length, 'claim wraps are missing');
+    assert.deepEqual(
+      removedClaimWraps.map((wrap) => wrap.version),
+      claimBeforeRemoval.versions,
+      'claim wraps do not cover the invited versions'
     );
+    const removedObjectWraps = (await store.listWraps(relicId)).filter(
+      (wrap) => wrap.recipientKeyId === removedKem
+    );
+    assert.equal(removedObjectWraps.length, 0, 'claim wrote an m/wrap object');
     const cancelled = await api(
       env,
       'POST',
@@ -2072,11 +2128,26 @@ async function run(): Promise<void> {
       }
     );
     assert.equal(removed.status, 200);
-    assert.equal(
+    const claimAfterRemoval = await store.getInvite(relicId, toRemove.inviteId);
+    assert.equal(claimAfterRemoval?.status, 'revoked');
+    assert.deepEqual(claimAfterRemoval?.claimWraps, []);
+    assert.deepEqual(
       (await store.listWraps(relicId)).filter(
         (wrap) => wrap.recipientKeyId === removedKem
-      ).length,
-      0
+      ),
+      removedObjectWraps,
+      'removing a claim changed m/wrap objects'
+    );
+    const removedKey = await api(
+      env,
+      'POST',
+      `/api/relics/${relicId}/versions/${claimBeforeRemoval.versions[0]}/key`,
+      { cookie: await cookieHeader(inviteeThree.browser), body: {} }
+    );
+    assert.equal(
+      removedKey.status,
+      403,
+      'a removed claimant can still fetch a key'
     );
     const removedAccess = await api(
       env,
@@ -2089,7 +2160,7 @@ async function run(): Promise<void> {
     assert.equal((removedAccess.json['me'] as Json)?.['role'], 'revoked');
     emit(
       109,
-      'INVITE_STEP_9_REVOKE cancel_open=wraps_0 link_state=invite-withdrawn remove_claimed=claim_wraps_0 role=revoked'
+      `INVITE_STEP_9_REVOKE cancel_open=wraps_0 link_state=invite-withdrawn remove_claimed=claim_wraps_0 key=${removedKey.status} role=revoked`
     );
     lastReceipt = 109;
 
@@ -2316,18 +2387,28 @@ async function run(): Promise<void> {
         ? true
         : undefined
     );
-    const alreadyReaderCall = claimCalls.find((call) =>
-      call.path.endsWith(`/${alreadyReaderInvite.inviteId}/claim`)
+    const alreadyReaderCall = await poll(
+      'already reader claim response',
+      25000,
+      async () =>
+        claimCalls.find((call) =>
+          call.path.endsWith(`/${alreadyReaderInvite.inviteId}/claim`)
+        )
     );
     assert.equal(alreadyReaderCall?.status, 200);
     assert.deepEqual(await store.listWraps(relicId), beforeAlreadyReader);
     assert.equal(
-      await store.getInviteClaim(relicId, alreadyReader.identityId),
+      await store.getInviteClaimIndex(relicId, alreadyReader.identityId),
       undefined
+    );
+    assert.deepEqual(
+      (await store.getInvite(relicId, alreadyReaderInvite.inviteId))?.claimWraps,
+      [],
+      'an already-authorized reader received claim wraps'
     );
     emit(
       111,
-      'INVITE_STEP_11_REGISTERED invite_for_registered=409_identity_exists lookup_charged=true existing_identity=unlock_then_claim already_reader=consumed_no_writes'
+      'INVITE_STEP_11_REGISTERED invite_for_registered=409_identity_exists lookup_charged=true existing_identity=unlock_then_claim already_reader=consumed_no_extra_wraps_or_index'
     );
     lastReceipt = 111;
 
@@ -2859,6 +2940,17 @@ async function run(): Promise<void> {
     }
 
     // Whole-relik deletion: every invitation and claim of this relik goes with it.
+    const indexedClaimants = [
+      inviteeIdentity.identityId,
+      removedIdentity.identityId,
+      existingIdentity.identityId,
+    ];
+    for (const identityId of indexedClaimants) {
+      assert.ok(
+        await store.getInviteClaimIndex(relicId, identityId),
+        'a claim index expected before relik deletion is missing'
+      );
+    }
     const wholeNonce = await api(env, 'POST', '/api/attest/nonce', {
       cookie: ownerCookie,
       body: { purpose: 'delete', relic_id: relicId },
@@ -2892,12 +2984,18 @@ async function run(): Promise<void> {
     );
     assert.equal(wholeDelete.status, 200);
     const invitesLeft = (await store.listInvites(relicId)).length;
-    const claimsLeft = (await store.listInviteClaims(relicId)).length;
+    const claimsLeft = (
+      await Promise.all(
+        indexedClaimants.map((identityId) =>
+          store.getInviteClaimIndex(relicId, identityId)
+        )
+      )
+    ).filter((index) => index !== undefined).length;
     assert.equal(invitesLeft, 0);
     assert.equal(claimsLeft, 0);
     emit(
       114,
-      `INVITE_STEP_12_RELIK_DELETE whole_relik=invites_${invitesLeft},claims_${claimsLeft}`
+      `INVITE_STEP_12_RELIK_DELETE whole_relik=invites_${invitesLeft},claim_indexes_${claimsLeft} checked_claimants=${indexedClaimants.length}`
     );
     lastReceipt = 114;
   } finally {

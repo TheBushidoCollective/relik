@@ -693,9 +693,8 @@ export async function ownedAndShared(
 }
 
 /**
- * Sealed versions whose wraps lack a current recipient. A gap is the window
- * between a new recipient and the owner's backfill, and the dashboard shows
- * it so the owner can repair it.
+ * Sealed versions missing a wrap for a recipient who is authorized for that
+ * version. The dashboard shows the gap so the owner can repair it.
  */
 async function coverageGaps(
   env: PrivateEnv,

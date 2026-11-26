@@ -2249,9 +2249,8 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     },
 
     /**
-     * Create-only. An invitation's `customTime` is its own expiry, fixed when
-     * it is created and derived the same way on every rewrite, so it never
-     * needs lowering (the owner's expiry is already clamped to the relic's).
+     * Create-only. The initial `customTime` is the invitation expiry, already
+     * capped by relik expiry. A claim moves it to the relik expiry.
      */
     async putInvite(row: InviteRow): Promise<boolean> {
       return put(
