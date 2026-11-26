@@ -1910,10 +1910,28 @@ describe('a seal that races a change to the recipient set (PS2-06)', () => {
     const first = await person('first@example.com');
     await registerIdentity(first);
     expect((await designate(owner, first)).status).toBe(200);
+    const firstKem = await holderKem(first);
+    // A designated holder holds no wraps until the owner's browser backfills
+    // them. This backfill is the old holder's wrap the designation must sweep.
+    const backfilled = await send(
+      '/api/identity/backfill',
+      post(
+        {
+          wraps: [
+            {
+              relic_id: RELIC_ID,
+              ...(await wrap(firstKem.kemPublicKey, sealed.versionKey, 1)),
+            },
+          ],
+        },
+        owner.cookie
+      )
+    );
+    expect(backfilled.status).toBe(200);
+    expect(backfilled.body).toEqual({ stored: 1, skipped: 0 });
     const second = await person('second@example.com');
     await registerIdentity(second);
     const bytes = await openVersionTwo();
-    const firstKem = await holderKem(first);
     const inFlight = await buildSealVersionTwo(owner, device, bytes, [
       { kemPublicKey: firstKem.kemPublicKey, keyId: firstKem.keyId },
     ]);
@@ -1930,6 +1948,7 @@ describe('a seal that races a change to the recipient set (PS2-06)', () => {
     restore();
 
     expect(moved.status).toBe(200);
+    expect(await store.getWrap(RELIC_ID, 1, firstKem.keyId)).toBeUndefined();
     expect(outcomes[0]?.status).toBe(409);
     expect(outcomes[0]?.body['code']).toBe('recipients_changed');
     expect(await store.getWrap(RELIC_ID, 2, firstKem.keyId)).toBeUndefined();
