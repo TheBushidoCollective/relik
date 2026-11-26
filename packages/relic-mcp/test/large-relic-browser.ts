@@ -578,6 +578,8 @@ export class ProofBrowser {
 
   async memoryNegativeControl(page: Page): Promise<{
     allocation: MemoryGrowth;
+    release: MemoryGrowth;
+    releaseRounds: number;
     retained: MemoryGrowth;
     churn: MemoryGrowth;
   }> {
@@ -605,9 +607,29 @@ export class ProofBrowser {
       `memory sampler missed 512 MiB allocation: ${JSON.stringify(allocation)}`
     );
     await this.evaluate(page, 'globalThis.__largeProofAllocation = null');
-    await this.pressure(page);
-
-    const baseline = await this.rendererMemory();
+    const samples: MemoryGrowth[] = [];
+    let baseline: MemorySnapshot | undefined;
+    let release: MemoryGrowth | undefined;
+    let releaseRounds = 0;
+    // Run 45852958327 on Chrome 158 reported -435,208,192 bytes of retained
+    // growth. Adding the 512 MiB allocation (536,870,912 bytes) gives
+    // 101,662,720 bytes: the allocation was released after the baseline.
+    for (let round = 1; round <= 10; round++) {
+      await this.pressure(page);
+      const sample = await this.rendererMemory();
+      release = memoryGrowth(allocationBaseline, sample);
+      samples.push(release);
+      if (release.footprint < 64 * MIB) {
+        baseline = sample;
+        releaseRounds = round;
+        break;
+      }
+    }
+    assert.ok(
+      baseline,
+      `memory sampler did not observe the 512 MiB release: ${JSON.stringify(samples)}`
+    );
+    assert.ok(release);
     await this.evaluate(
       page,
       `(() => {
@@ -646,7 +668,7 @@ export class ProofBrowser {
       churn.footprint < 64 * MIB,
       `memory sampler counted released churn: ${JSON.stringify(churn)}`
     );
-    return { allocation, retained, churn };
+    return { allocation, release, releaseRounds, retained, churn };
   }
 
   async closePage(page: Page): Promise<void> {
