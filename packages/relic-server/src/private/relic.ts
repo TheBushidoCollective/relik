@@ -767,6 +767,22 @@ export async function applyGrants(
         }
         replaced.push({ granteeId, prior });
       }
+      for (const version of p.versions) {
+        if (await env.store.getWrap(row.id, version, p.grantee.kemKeyId))
+          continue;
+        const wrap = wraps.find(
+          (item) =>
+            item.version === version &&
+            item.recipientKeyId === p.grantee.kemKeyId
+        );
+        if (wrap === undefined) throw new ProblemError('invalid_wrap');
+        await env.store.putWrap({
+          ...wrap,
+          relicId: row.id,
+          createdAt: env.now,
+          source: 'grant',
+        });
+      }
       writtenGrants.set(granteeId, grantRow);
     }
 
@@ -976,11 +992,19 @@ export async function listInvitations(
   relicId: string
 ): Promise<InviteJSON[]> {
   const { row } = await ownedPrivate(env, email, relicId);
-  return Promise.all(
-    (await env.store.listInvites(row.id)).map((invite) =>
-      ownerInviteJson(env, invite)
-    )
-  );
+  const invites = [...(await env.store.listInvites(row.id))];
+  const present = new Set(invites.map((invite) => invite.inviteId));
+  for (const claim of await env.store.listInviteClaims(row.id)) {
+    if (claim.state !== 'committed' || claim.invitation === undefined) continue;
+    const snapshot = claim.invitation;
+    if (present.has(snapshot.inviteId)) continue;
+    invites.push({
+      ...snapshot,
+      status: claim.revokedAt === undefined ? 'claimed' : 'revoked',
+      revokedAt: claim.revokedAt,
+    });
+  }
+  return Promise.all(invites.map((invite) => ownerInviteJson(env, invite)));
 }
 
 export async function revokeInvitation(
@@ -990,7 +1014,28 @@ export async function revokeInvitation(
   inviteId: string
 ): Promise<InviteJSON> {
   const { row, owner } = await ownedPrivate(env, email, relicId);
-  const invite = await env.store.getInvite(row.id, inviteId);
+  const storedInvite = await env.store.getInvite(row.id, inviteId);
+  const claim =
+    storedInvite === undefined
+      ? (await env.store.listInviteClaims(row.id)).find(
+          (item) =>
+            item.state === 'committed' &&
+            item.inviteIds.includes(inviteId) &&
+            item.invitation !== undefined
+        )
+      : undefined;
+  const invite =
+    storedInvite ??
+    (claim?.invitation === undefined
+      ? undefined
+      : {
+          ...claim.invitation,
+          status:
+            claim.revokedAt === undefined
+              ? ('claimed' as const)
+              : ('revoked' as const),
+          revokedAt: claim.revokedAt,
+        });
   if (invite === undefined) throw new ProblemError('invite_not_found');
   if (invite.status !== 'revoked' && invite.claimantIdentityId !== undefined) {
     const grant = await env.store.getGrant(row.id, invite.claimantIdentityId);
@@ -998,8 +1043,13 @@ export async function revokeInvitation(
       throw new ProblemError('grant_exists');
   }
   const revoked =
-    invite.status === 'revoked'
-      ? invite
+    invite.status === 'revoked' || storedInvite === undefined
+      ? {
+          ...invite,
+          status: 'revoked' as const,
+          wraps: [],
+          revokedAt: invite.revokedAt ?? env.now,
+        }
       : await env.store.updateInvite(row.id, inviteId, (current) => {
           if (
             current.status !== invite.status ||
@@ -2081,6 +2131,13 @@ export async function claimInvitation(
       identityId: identity.identityId,
       ownerIdentityId: owner.identityId,
       inviteIds: [inviteId],
+      invitation: {
+        ...invite,
+        status: 'claimed',
+        wraps: [],
+        claimantIdentityId: identity.identityId,
+        claimedAt: env.now,
+      },
       versions: [...invite.versions],
       claimedAt: env.now,
       state: 'pending',
@@ -2152,6 +2209,16 @@ export async function claimInvitation(
     }
   );
   if (committed === undefined) throw new ProblemError('invite_revoked');
+  for (const wrap of wraps) {
+    if (await env.store.getWrap(row.id, wrap.version, identity.kemKeyId))
+      continue;
+    await env.store.putWrap({
+      ...wrap,
+      relicId: row.id,
+      createdAt: env.now,
+      source: 'claim',
+    });
+  }
   if (!newlyCommitted) return { status: 'claimed', versions: invite.versions };
   await logAccess(env, owner.identityId, row.id, 'claim', {
     actorIdentityId: identity.identityId,

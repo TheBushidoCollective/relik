@@ -2104,7 +2104,10 @@ test('an invited claimant cannot use the private share route', async () => {
   const invitee = await person('ada@example.com');
   await registerIdentity(invitee);
   await claimFor(invitee, owner, [1]);
-  const response = await send(`/api/relics/${RELIC_ID}/share`, post({ emails: ['stranger@example.net'] }, invitee.cookie));
+  const response = await send(
+    `/api/relics/${RELIC_ID}/share`,
+    post({ emails: ['stranger@example.net'] }, invitee.cookie)
+  );
   expect(response.status).toBe(403);
   expect(response.body['code']).toBe('private_access_denied');
 });
@@ -2118,11 +2121,187 @@ test('invited decisions refuse versions outside the claim', async () => {
   await claimFor(invitee, owner, [1]);
   const seal = (await store.getSeal(RELIC_ID, 1))!;
   await store.putSeal({ ...seal, version: 2 });
-  await store.updateRelic(RELIC_ID, (row) => ({ ...row, version: 2, sealedVersion: 2, decisionsOpen: true }));
+  await store.updateRelic(RELIC_ID, (row) => ({
+    ...row,
+    version: 2,
+    sealedVersion: 2,
+    decisionsOpen: true,
+  }));
   await store.recordVersionDigest(RELIC_ID, 2, 'a'.repeat(64));
   for (const path of ['decisions/options', 'decisions', 'decisions/list']) {
-    const response = await send(`/api/relics/${RELIC_ID}/${path}`, post({ version: 2, verdict: 'approve' }, invitee.cookie));
+    const response = await send(
+      `/api/relics/${RELIC_ID}/${path}`,
+      post({ version: 2, verdict: 'approve' }, invitee.cookie)
+    );
     expect(response.status).toBe(403);
     expect(response.body['code']).toBe('private_access_denied');
   }
+});
+
+test('a winning grant repairs a wrap removed by a losing batch rollback', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const h = await person('h@example.com');
+  const g = await person('g@example.com');
+  await registerIdentity(h);
+  await registerIdentity(g);
+  const hs = await grantStatementFor(owner, h, [1]);
+  const gs = await grantStatementFor(owner, g, [1]);
+  const hw = await wrap(h.keys!.kemPublicKey, versionKey, 1);
+  const gw = await wrap(g.keys!.kemPublicKey, versionKey, 1);
+  const a = {
+    attestation: await attest(owner, 'grant', RELIC_ID, [hs, gs]),
+    wraps: [hw, gw],
+  };
+  const c = {
+    attestation: await attest(owner, 'grant', RELIC_ID, [hs]),
+    wraps: [hw],
+  };
+  const b = {
+    attestation: await attest(owner, 'grant', RELIC_ID, [gs]),
+    wraps: [gw],
+  };
+  const path = `/api/relics/${RELIC_ID}/grants`;
+  const put = store.putGrant.bind(store);
+  const remove = store.deleteWraps.bind(store);
+  let started = false;
+  const atB = Promise.withResolvers<void>();
+  const continueB = Promise.withResolvers<void>();
+  let bResult:
+    | Promise<{ status: number; body: Record<string, unknown> }>
+    | undefined;
+  store.putGrant = async (row) => {
+    if (!started && row.granteeIdentityId === h.identityId) {
+      started = true;
+      expect((await send(path, post(c, owner.cookie))).status).toBe(201);
+      bResult = send(path, post(b, owner.cookie));
+      await atB.promise;
+    } else if (started && row.granteeIdentityId === g.identityId) {
+      atB.resolve();
+      await continueB.promise;
+    }
+    return put(row);
+  };
+  store.deleteWraps = async (...args) => {
+    const result = await remove(...args);
+    if (args[1].recipientKeyId === gw.recipient_key_id) continueB.resolve();
+    return result;
+  };
+  const lost = await send(path, post(a, owner.cookie));
+  expect(lost.status).toBe(409);
+  expect((await bResult!)!.status).toBe(201);
+  expect(
+    (await send(`/api/relics/${RELIC_ID}/versions/1/key`, post({}, g.cookie)))
+      .status
+  ).toBe(200);
+});
+
+test('owner can list and remove a claimant after invitation lifecycle deletion', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const invitee = await person('ada@example.com');
+  const { inviteId } = await createInvite(owner, invitee.email, versionKey, {
+    expiresAt: now + DAY,
+  });
+  await registerIdentity(invitee);
+  const statement = {
+    at: now,
+    claimant_identity_id: invitee.identityId!,
+    invite_id: inviteId,
+    relic_id: RELIC_ID,
+    versions: [1],
+  };
+  const body = {
+    statement,
+    identity_signature: await signStatement(
+      signer(invitee.keys!),
+      statementBytes('invite_claim', statement)
+    ),
+    wraps: [await wrap(invitee.keys!.kemPublicKey, versionKey, 1)],
+  };
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/invites/${inviteId}/claim`,
+        post(body, invitee.cookie)
+      )
+    ).status
+  ).toBe(201);
+  now += 2 * DAY;
+  await store.deleteInvite(RELIC_ID, inviteId);
+  const list = await send(`/api/relics/${RELIC_ID}/invites`, {
+    cookie: owner.cookie,
+  });
+  expect(list.status).toBe(200);
+  expect(list.body['invites'] as unknown[]).toHaveLength(1);
+  const revoke = await send(
+    `/api/relics/${RELIC_ID}/invites/${inviteId}/revoke`,
+    post({}, owner.cookie)
+  );
+  expect(revoke.status).toBe(200);
+  expect(
+    (
+      await send(
+        `/api/relics/${RELIC_ID}/versions/1/key`,
+        post({}, invitee.cookie)
+      )
+    ).status
+  ).toBe(403);
+});
+
+test('the access log names the invited address on invitation events', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  const invitee = await person('ada@example.com');
+  const { inviteId } = await createInvite(owner, invitee.email, versionKey);
+  const log = await send(`/api/identity/access-log?relic_id=${RELIC_ID}`, {
+    cookie: owner.cookie,
+  });
+  expect(log.status).toBe(200);
+  const invite = (
+    log.body['events'] as { kind: string; subject_email: string | null }[]
+  ).find((event) => event.kind === 'invite');
+  expect(invite?.subject_email).toBe(invitee.email);
+  const revoke = await send(
+    `/api/relics/${RELIC_ID}/invites/${inviteId}/revoke`,
+    post({}, owner.cookie)
+  );
+  expect(revoke.status).toBe(200);
+  const after = await send(`/api/identity/access-log?relic_id=${RELIC_ID}`, {
+    cookie: owner.cookie,
+  });
+  const withdrawn = (
+    after.body['events'] as { kind: string; subject_email: string | null }[]
+  ).find((event) => event.kind === 'revoke');
+  expect(withdrawn?.subject_email).toBe(invitee.email);
+});
+
+test('an invitation longer than 30 days is refused even on a relik whose lifetime allows it', async () => {
+  app = build({ privateMaxTtlDays: 60 });
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const { versionKey } = await sealedPrivateRelic(owner);
+  await store.updateRelic(RELIC_ID, (row) => ({
+    ...row,
+    expiresAt: now + 60 * DAY,
+  }));
+  const invite = await inviteFor(owner, 'ada@example.com', [1], {
+    expiresAt: now + 31 * DAY,
+  });
+  const response = await send(
+    `/api/relics/${RELIC_ID}/grants`,
+    post(
+      {
+        attestation: await attest(owner, 'grant', RELIC_ID, [invite.statement]),
+        wraps: [await wrap(invite.pair.publicKey, versionKey, 1)],
+      },
+      owner.cookie
+    )
+  );
+  expect(response.status).toBe(400);
+  expect(response.body['code']).toBe('invalid_statement');
+  expect(response.body['statement_check']).toBe('expires_at');
 });
