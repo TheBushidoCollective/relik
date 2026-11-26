@@ -22,6 +22,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   decodeBase64url,
+  inviteRecipient,
+  parseInviteFragment,
+  unwrapVersionKey,
   identityFingerprint,
   kemKeyIdOf,
   parseStatement,
@@ -91,11 +94,22 @@ const mails: CapturedMail[] = [];
 const defects: string[] = [];
 /** Every request body the service received, for the fragment and key assertions. */
 const requestBodies: string[] = [];
+/** Invitation claims as the browser sent them, for the single-use replay in step 5. */
+const claimCalls: Array<{ path: string; body: Json; status: number }> = [];
 const grantStatuses: number[] = [];
 let substitutedLookup: Record<string, unknown> | undefined;
 /** Harness clock: real time plus an offset that the expiry steps move and restore. */
-const clockOffsetMs = 0;
+let clockOffsetMs = 0;
 const clock = (): number => Date.now() + clockOffsetMs;
+/** Section 10 receipts, printed in plan order at the end of the run. */
+const proofLines: Array<{ order: number; line: string }> = [];
+function emit(order: number, line: string): void {
+  proofLines.push({ order, line });
+}
+/** The key text after `#k=` in an invitation link: the only place the invite key lives. */
+function fragmentKeyOf(url: string): string {
+  return new URL(url).hash.slice('#k='.length);
+}
 
 let handler: ((request: Request) => Promise<Response>) | undefined;
 const service = Bun.serve({
@@ -172,6 +186,9 @@ handler = async (request: Request): Promise<Response> => {
   if (request.method === 'POST' && /\/api\/relics\/[^/]+\/grants$/.test(url.pathname)) {
     grantStatuses.push(answered.status);
   }
+  if (request.method === 'POST' && /\/invites\/[^/]+\/claim$/.test(url.pathname)) {
+    claimCalls.push({ path: url.pathname, body: JSON.parse(new TextDecoder().decode(bytes ?? new Uint8Array())), status: answered.status });
+  }
   if (substitutedLookup && request.method === 'POST' && url.pathname.endsWith('/grants/lookup')) {
     const value = substitutedLookup;
     substitutedLookup = undefined;
@@ -247,6 +264,11 @@ function hexOf(bytes: Uint8Array): string {
 const FOURTH = 'fourth+direct-share@example.test';
 const FIFTH = 'fifth+direct-share@example.test';
 const INVITEE = 'invitee+direct-share@example.test';
+const SIXTH = 'sixth+direct-share@example.test';
+const INVITEE_TWO = 'invitee-two+direct-share@example.test';
+const INVITEE_THREE = 'invitee-three+direct-share@example.test';
+const INVITEE_FOUR = 'invitee-four+direct-share@example.test';
+const INVITEE_FIVE = 'invitee-five+direct-share@example.test';
 
 type Json = Record<string, unknown>;
 
@@ -385,6 +407,98 @@ async function openRelik(actor: Actor, relicUrl: string): Promise<string[]> {
   return seen;
 }
 
+/** One access-log line as the owner's service answers it. */
+interface LogEvent {
+  readonly kind: string;
+  readonly actor?: { readonly email: string | null } | undefined;
+  readonly subject_email?: string | null | undefined;
+}
+
+/** The invitation cards on the owner's page that still hold their link. */
+interface InviteLinkView {
+  readonly inviteId: string;
+  readonly email: string;
+  readonly url: string;
+}
+
+async function linksShown(actor: Actor): Promise<InviteLinkView[]> {
+  return actor.browser.evaluate<InviteLinkView[]>(`(() =>
+    Array.from(document.querySelectorAll('[data-invite-link]')).flatMap((card) => {
+      const url = card.querySelector('[data-link-text]')?.textContent ?? '';
+      return url === '' ? [] : [{
+        inviteId: card.getAttribute('data-invite-link') ?? '',
+        email: card.querySelector('strong')?.textContent ?? '',
+        url,
+      }];
+    }))()`);
+}
+
+/** Opens the owner's Share section with no rows, so each batch starts clean. */
+async function freshSharePanel(actor: Actor, relicUrl: string): Promise<void> {
+  await goto(actor.browser, 'about:blank');
+  await goto(actor.browser, `${relicUrl}?access=share`);
+  await actor.browser.waitForSelector('[data-share-section]', 25000);
+}
+
+/** Sets the panel's version picks to `wanted`. The current version is locked on by the page. */
+async function pickVersions(actor: Actor, wanted: readonly number[]): Promise<void> {
+  await actor.browser.evaluate<void>(`(() => {
+    for (const box of document.querySelectorAll('[data-share-version]')) {
+      const version = Number(box.getAttribute('data-share-version'));
+      const want = ${JSON.stringify(wanted)}.includes(version);
+      if (box.checked !== want && !box.disabled) box.click();
+    }
+  })()`);
+}
+
+/** One passkey tap, then waits until `links` invitation cards show their link. */
+async function tapInvites(actor: Actor, links: number): Promise<void> {
+  await click(actor.browser, '[data-action="share-passkey"]');
+  await poll(`${links} invitation links`, 60000, async () =>
+    (await linksShown(actor)).length === links ? true : undefined
+  );
+}
+
+/** Puts the browser's passkey prompt on or off, so a sign-in code can be typed first. */
+async function setPresence(actor: Actor, enabled: boolean): Promise<void> {
+  await actor.browser.cdp.send(
+    'WebAuthn.setAutomaticPresenceSimulation',
+    { authenticatorId: actor.browser.authenticatorId, enabled },
+    actor.browser.sessionId
+  );
+}
+
+/** Email-code sign-in from an invitation link. Relik sends the code to the invited address. */
+async function signInFromLink(actor: Actor, link: string): Promise<void> {
+  await goto(actor.browser, link);
+  await waitForState(actor.browser, ['invite-signin'], `${actor.name} invitation sign-in`);
+  await setPresence(actor, false);
+  const since = env.mailbox.mark();
+  await setField(actor.browser, '#signin-email', actor.email);
+  await actor.browser.evaluate<void>(`document.querySelector('#signin-email-form').requestSubmit()`);
+  const mail = await env.mailbox.await(
+    actor.email,
+    since,
+    (m) => m.code !== undefined,
+    `${actor.name} invitation code`
+  );
+  await poll(`${actor.name} code form`, 15000, async () =>
+    (await actor.browser.evaluate<boolean>(`!document.querySelector('#signin-code-form')?.hidden`))
+      ? true
+      : undefined
+  );
+  await setField(actor.browser, '#signin-code', mail.code ?? '');
+  await actor.browser.evaluate<void>(`document.querySelector('#signin-code-form').requestSubmit()`);
+  await setPresence(actor, true);
+}
+
+/** The reader's state after a page load: the ready view replaces the private host. */
+async function readerStateAfterLoad(actor: Actor, url: string): Promise<string> {
+  await goto(actor.browser, url);
+  await Bun.sleep(1500);
+  return (await currentState(actor.browser)) ?? 'ready';
+}
+
 async function run(): Promise<void> {
   const owner = await launchActor(env, 'owner', env.owner, true);
   const reader = await launchActor(env, 'reader', env.reader, true);
@@ -392,7 +506,10 @@ async function run(): Promise<void> {
   const fourth = await launchActor(env, 'fourth', FOURTH, true);
   const fifth = await launchActor(env, 'fifth', FIFTH, true);
   const invitee = await launchActor(env, 'invitee', INVITEE, true);
-  const actors = [owner, reader, third, fourth, fifth, invitee];
+  const sixth = await launchActor(env, 'sixth', SIXTH, true);
+  const inviteeTwo = await launchActor(env, 'invitee-two', INVITEE_TWO, true);
+  const inviteeThree = await launchActor(env, 'invitee-three', INVITEE_THREE, true);
+  const actors = [owner, reader, third, fourth, fifth, sixth, invitee, inviteeTwo, inviteeThree];
   try {
     const docPath = join(scratch, FILE_NAME);
     await writeFile(docPath, 'Direct share proof document, version one.\n');
@@ -407,6 +524,7 @@ async function run(): Promise<void> {
     const thirdId = await setUpIdentity(third, relicUrl);
     const fourthId = await setUpIdentity(fourth, relicUrl);
     const fifthId = await setUpIdentity(fifth, relicUrl);
+    await setUpIdentity(sixth, relicUrl);
 
     // Step 1. Lookup gate.
     const readerCookie = await cookieHeader(reader.browser);
@@ -991,14 +1109,184 @@ async function run(): Promise<void> {
     assert.deepEqual(requestGrantEvents.map((event) => event.kind), ['grant']);
     console.log('DIRECT_STEP_10_REQUEST_PATH lookup_standing=requested grant_log=grant grant_mail=unchanged');
     lastReceipt = 10;
-    throw new Error('steps 11 to 26 are not yet written in this checkpoint');
+    // Stage B. Invitations (plan section 10, INVITE_STEP_1 to 13).
+    const DAY_MS = 86_400_000;
+    const logOf = async (cookie: string, id: string): Promise<LogEvent[]> => {
+      const answer = await api(env, 'GET', `/api/identity/access-log?relic_id=${id}`, { cookie });
+      return (answer.json['events'] ?? []) as LogEvent[];
+    };
+    const versionOf = async (): Promise<number> =>
+      Math.max(...(await store.listWraps(relicId)).map((wrap) => wrap.version));
+
+    // INVITE_STEP_1. One tap grants a registered address and invites two.
+    const current = await versionOf();
+    await freshSharePanel(owner, relicUrl);
+    await pickVersions(owner, [current]);
+    await addToPanel(owner, [SIXTH, INVITEE, INVITEE_TWO], 3);
+    const signBeforeB1 = await signCountTotal(owner.browser);
+    const mailB1 = mailbox.mark();
+    await tapInvites(owner, 2);
+    const signB1 = (await signCountTotal(owner.browser)) - signBeforeB1;
+    const shownB1 = await linksShown(owner);
+    const linkOne = shownB1.find((link) => link.email === INVITEE);
+    const linkTwo = shownB1.find((link) => link.email === INVITEE_TWO);
+    assert.ok(linkOne && linkTwo, 'the owner page does not show both invitation links');
+    const sixthGrant = (await grantsOf(ownerCookie, relicId)).some(
+      (grant) => grant.grantee.email === SIXTH && grant.revoked_at === null
+    );
+    assert.equal(sixthGrant, true, 'the batch grant did not store');
+    const openRows = (await store.listInvites(relicId)).filter((row) => row.status === 'open');
+    let opensUnderKey = true;
+    for (const row of openRows) {
+      const link = row.invitedEmail === INVITEE ? linkOne : linkTwo;
+      const d = parseInviteFragment(new URL(link.url).hash.slice(1));
+      assert.ok(d, 'the invitation link carries no key');
+      const recipient = await inviteRecipient(d, decodeBase64url(row.invitePublicKey));
+      for (const wrap of row.wraps) {
+        const opened = await unwrapVersionKey({
+          recipient,
+          relicId,
+          version: wrap.version,
+          enc: wrap.enc,
+          ct: wrap.ct,
+        }).catch(() => undefined);
+        if (opened === undefined) opensUnderKey = false;
+      }
+    }
+    const keyOne = fragmentKeyOf(linkOne.url);
+    const keyTwo = fragmentKeyOf(linkTwo.url);
+    const keyInRequest = requestBodies.some((body) => body.includes(keyOne) || body.includes(keyTwo));
+    const inviteSubject = `${env.owner} invited you to a relik`;
+    await mailbox.await(INVITEE, mailB1, (m) => m.subject === inviteSubject, 'invitation notice');
+    await mailbox.await(INVITEE_TWO, mailB1, (m) => m.subject === inviteSubject, 'second invitation notice');
+    const notices = mailbox.all().slice(mailB1).filter((m) => m.subject === inviteSubject);
+    const noticeNamesOwner = notices.every((m) => m.text.includes(env.owner));
+    const noticeLink = notices.some((m) => /https?:|#k=|\?invite=/.test(m.text));
+    const noticeKey = notices.some((m) => m.text.includes(keyOne) || m.text.includes(keyTwo));
+    emit(101, `INVITE_STEP_1_CREATE batch=grant:1,invite:2 owner_sign_count_delta=${signB1} invite_rows=${openRows.length} wraps_open_under_invite_key=${opensUnderKey} d_in_any_request=${keyInRequest} notice_mails=${notices.length} notice_names_owner=${noticeNamesOwner} notice_link=${noticeLink ? 'present' : 'absent'} notice_key=${noticeKey ? 'present' : 'absent'} links_shown=${shownB1.length}`);
+    assert.equal(signB1, 1, 'the batch used more than one passkey assertion');
+    assert.equal(openRows.length, 2, 'the batch did not store two open invitations');
+    assert.equal(opensUnderKey, true, 'a wrap does not open under its invite key');
+    assert.equal(keyInRequest, false, 'an invite key reached a request body');
+    assert.equal(notices.length, 2, 'each invitee did not get one notice');
+    assert.equal(noticeNamesOwner, true, 'a notice does not name the owner');
+    assert.equal(noticeLink, false, 'a notice carries a link');
+    assert.equal(noticeKey, false, 'a notice carries a key');
+
+    // INVITE_STEP_2. Each invitation opens only for its own address.
+    const inviteeCookie = await nodeSignIn(env, INVITEE);
+    const readerNow = await cookieHeader(reader.browser);
+    const inviteOne = linkOne.inviteId;
+    const openPath = `/api/relics/${relicId}/invites/${inviteOne}/open`;
+    const signedOutOpen = await api(env, 'POST', openPath, { body: {} });
+    const otherOpen = await api(env, 'POST', openPath, { cookie: readerNow, body: {} });
+    const bogusOpen = await api(env, 'POST', `/api/relics/${relicId}/invites/${'0'.repeat(32)}/open`, { cookie: inviteeCookie, body: {} });
+    const keyOther = await api(env, 'POST', `/api/relics/${relicId}/versions/${current}/key`, { cookie: readerNow, body: { invite_id: inviteOne } });
+    const mintOther = await api(env, 'POST', `/api/relics/${relicId}/mint`, { cookie: readerNow, body: { invite_id: inviteOne, version: current } });
+    // `instance` is the problem's per-response occurrence id, not part of the answer.
+    const withoutInstance = (body: Json): Json => {
+      const { instance: _instance, ...rest } = body;
+      return rest;
+    };
+    const sameBody = otherOpen.status === bogusOpen.status && JSON.stringify(withoutInstance(otherOpen.json)) === JSON.stringify(withoutInstance(bogusOpen.json));
+    emit(102, `INVITE_STEP_2_ADDRESS_BOUND signed_out=${signedOutOpen.status} other_address=${otherOpen.status} bogus_id=${bogusOpen.status} same_body=${sameBody} key_other=${keyOther.status} mint_other=${mintOther.status}`);
+    assert.equal(signedOutOpen.status, 401, 'a signed-out open is not 401');
+    assert.equal(otherOpen.status, 404, 'another address can open the invitation');
+    assert.equal(bogusOpen.status, 404, 'a bogus invitation id is not 404');
+    assert.equal(sameBody, true, 'the other-address and bogus-id answers differ');
+    assert.equal(keyOther.status, 403, 'another address fetched the invitation key');
+    assert.equal(mintOther.status, 403, 'another address minted from the invitation');
+
+    // INVITE_STEP_3. The invitee signs in with a code from the link and reads the file.
+    const receiptsBeforeOpen = (await store.listReceipts(relicId)).length;
+    await signInFromLink(invitee, linkOne.url);
+    // The ready view replaces the private host, so invite-ready shows as the banner on the file.
+    await poll('invitee banner', 25000, async () =>
+      (await invitee.browser.evaluate<boolean>(`!!document.querySelector('[data-invite-banner]')`))
+        ? true
+        : undefined
+    );
+    await waitForOpened(invitee.browser, 'invitee');
+    const hashAfterOpen = await invitee.browser.evaluate<string>('location.hash');
+    const commentsPresent = await invitee.browser.evaluate<boolean>(`!!document.querySelector('.compose-textarea')`);
+    const signingPresent = await invitee.browser.evaluate<boolean>(`!!document.querySelector('[data-action="sign"], [data-signing-request]')`);
+    const unlistedKey = await api(env, 'POST', `/api/relics/${relicId}/versions/${current - 1}/key`, {
+      cookie: await cookieHeader(invitee.browser),
+      body: { invite_id: inviteOne },
+    });
+    const logAfterOpen = await logOf(ownerCookie, relicId);
+    const wrapFetchByInvitee = logAfterOpen.some((event) => event.kind === 'wrap_fetch' && event.actor?.email === INVITEE);
+    const receiptsOpenDelta = (await store.listReceipts(relicId)).length - receiptsBeforeOpen;
+    emit(103, `INVITE_STEP_3_OPEN_WITH_CODE sign_in=code state=invite-ready listed=opened unlisted_key=${unlistedKey.status} comments=${commentsPresent ? 'present' : 'absent'} signing=${signingPresent ? 'present' : 'absent'} fragment_after_open=${hashAfterOpen === '' ? 'absent' : 'present'} log=${wrapFetchByInvitee ? 'wrap_fetch:address' : 'absent'} receipts=${receiptsOpenDelta}`);
+    assert.equal(unlistedKey.status, 403, 'an unlisted version key was served');
+    assert.equal(commentsPresent, false, 'the invitee sees the comment composer');
+    assert.equal(signingPresent, false, 'the invitee sees signing controls');
+    assert.equal(hashAfterOpen, '', 'the fragment is still in the location');
+    assert.equal(wrapFetchByInvitee, true, 'the owner log lacks the invitee key fetch');
+    assert.equal(receiptsOpenDelta, 0, 'opening wrote a receipt');
+
+    // INVITE_STEP_4. Keep access sets up a passkey and claims; the claim outlives the invitation.
+    const logBeforeKeep = (await logOf(ownerCookie, relicId)).length;
+    const mailKeep = mailbox.mark();
+    const signKeep = await signCountTotal(invitee.browser);
+    await inPage(invitee.browser, pageCreatePasskey, { prf: true });
+    await click(invitee.browser, '[data-action="invite-keep"]');
+    await poll('claim recorded', 25000, async () =>
+      (await store.getInvite(relicId, inviteOne))?.status === 'claimed' ? true : undefined
+    ).catch(async (error: unknown) => {
+      const page = await invitee.browser.evaluate<string>(`JSON.stringify({state: document.querySelector('#relic-private')?.getAttribute('data-private-state'), text: document.body.innerText.slice(0, 700)})`);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}; page=${page}`);
+    });
+    const signKeepDelta = (await signCountTotal(invitee.browser)) - signKeep;
+    const credentials = (await invitee.browser.cdp.send(
+      'WebAuthn.getCredentials',
+      { authenticatorId: invitee.browser.authenticatorId },
+      invitee.browser.sessionId
+    )) as { credentials: unknown[] };
+    const inviteeIdentity = await identityOf(env, invitee);
+    const inviteeKem = hexOf(await kemKeyIdOf(inviteeIdentity.kemPublicKey));
+    const claimWraps = (await store.listWraps(relicId)).filter((wrap) => wrap.recipientKeyId === inviteeKem && wrap.source === 'claim');
+    const inviteAfterClaim = await store.getInvite(relicId, inviteOne);
+    const roleAnswer = await api(env, 'GET', `/api/relics/${relicId}/access`, { cookie: await cookieHeader(invitee.browser) });
+    clockOffsetMs = 8 * DAY_MS;
+    let readsAfterExpiry = 'failed';
+    try {
+      await goto(invitee.browser, relicUrl);
+      await waitForState(invitee.browser, ['unlock'], 'invitee unlock after expiry');
+      await click(invitee.browser, '[data-action="private-unlock"]');
+      await waitForOpened(invitee.browser, 'invitee after expiry');
+      readsAfterExpiry = 'ok';
+    } finally {
+      clockOffsetMs = 0;
+    }
+    const ownerClaimMail = mailbox.all().slice(mailKeep).filter((m) => m.to.toLowerCase() === env.owner && m.subject === `${INVITEE} accepted your invitation`).length;
+    const claimLog = (await logOf(ownerCookie, relicId)).slice(logBeforeKeep).filter((event) => event.kind !== 'wrap_fetch').map((event) => event.kind).join(',');
+    emit(104, `INVITE_STEP_4_CLAIM passkey_created=${credentials.credentials.length} identity=registered extra_claim_taps=${signKeepDelta} claim_wraps=${claimWraps.length === 1 ? 'listed' : 'mismatch'} invite_wraps=${inviteAfterClaim?.wraps.length ?? 'missing'} role=${String(roleAnswer.json['role'])} reads_after_invite_expiry=${readsAfterExpiry} log=${claimLog} owner_mail=${ownerClaimMail}`);
+    assert.equal(credentials.credentials.length, 1, 'the claim did not leave one passkey');
+    assert.equal(signKeepDelta, 0, 'the claim took a passkey assertion');
+    assert.equal(claimWraps.length, 1, 'the claim did not write one wrap per listed version');
+    assert.equal(inviteAfterClaim?.wraps.length, 0, 'the invitation kept its wraps');
+    assert.equal(roleAnswer.json['role'], 'invited', 'the claimant is not invited');
+    assert.equal(readsAfterExpiry, 'ok', 'the claimant cannot read after the invitation expired');
+    assert.equal(claimLog, 'claim', 'the owner log lacks the claim');
+    assert.equal(ownerClaimMail, 1, 'the owner did not get one claim email');
+    lastReceipt = 104;
+
+    throw new Error('steps 5 to 13 of the invitation path are not yet written in this checkpoint');
   } finally {
     for (const actor of actors) await actor.browser.close().catch(() => {});
   }
 }
 
+function flushProofLines(): void {
+  for (const { line } of [...proofLines].sort((a, b) => a.order - b.order)) {
+    console.log(line);
+  }
+}
+
 try {
   await run();
+  flushProofLines();
   if (defects.length > 0) {
     console.error(`DIRECT_SHARE_PATH_BLOCKED defects=${defects.join(',')}`);
     process.exitCode = 1;
@@ -1006,6 +1294,7 @@ try {
     console.log('DIRECT_SHARE_PATH_OK');
   }
 } catch (error) {
+  flushProofLines();
   const message = error instanceof Error ? error.message : String(error);
   console.error(
     `DIRECT_SHARE_PATH_FAILED last_receipt_step=${lastReceipt} ${message}`
