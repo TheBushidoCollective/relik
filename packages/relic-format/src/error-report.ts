@@ -329,7 +329,7 @@ const MCP_VERSION =
 const SERVER_FILE =
   /^packages\/relic-(server|format)\/src\/[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*\.ts$(?![\s\S])/;
 const VIEWER_FILE =
-  /^assets\/(?:viewer\.js|register-sw\.js|chunk-[a-z0-9]{8}\.js)$(?![\s\S])/;
+  /^assets\/(?:viewer\.js|register-sw\.js|model-view\.js|pdf\.worker\.js|chunk-[a-z0-9]{8}\.js)$(?![\s\S])/;
 const MCP_FILE = /^dist\/(?:relic-mcp|native-secure-open)\.js$(?![\s\S])/;
 const MAX_POSITION = 10_000_000;
 

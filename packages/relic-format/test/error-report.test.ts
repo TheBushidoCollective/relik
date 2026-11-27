@@ -404,6 +404,77 @@ describe('stack scrubbing', () => {
     expectNoCanaries(frames);
   });
 
+  for (const script of ['model-view.js', 'pdf.worker.js']) {
+    test(`keeps ${script} frames without URLs or lookalikes`, () => {
+      const file = `assets/${script}`;
+      const stack = [
+        `at load (https://relik.link/${file}:1:2)`,
+        `at load (https://relik.link/${file}?id=${secretId}${secretFragment}:3:4)`,
+        `at load (https://evil.example/${file}:5:6)`,
+        `at load (https://relik.link/${file}-${secretId}.js:7:8)`,
+      ].join('\n');
+      const frames = viewerFramesFrom(stack, origin);
+      expect(frames).toEqual([
+        { file, line: 1, column: 2 },
+        { file, line: 3, column: 4 },
+      ]);
+      expectNoCanaries(frames);
+      const fixedReport = { ...report(), frames: [frames[0]!] };
+      expect(parseClientReport(fixedReport)).toEqual(fixedReport);
+      expect(
+        parseClientReport(fixedReport, { viewerFiles: new Set([file]) })
+      ).toEqual(fixedReport);
+      expect(
+        parseClientReport(fixedReport, {
+          viewerFiles: new Set(['assets/viewer.js']),
+        })
+      ).toBeNull();
+      for (const invalidFile of [
+        `${file}-${secretId}.js`,
+        `${file}?${secretId}`,
+        `${file}${secretFragment}`,
+      ]) {
+        expect(
+          parseClientReport({
+            ...report(),
+            frames: [{ file: invalidFile, line: 1, column: 0 }],
+          })
+        ).toBeNull();
+      }
+      expect(fingerprintOf(fixedReport)).toBe(
+        createHash('sha256')
+          .update(`relik-error-report/v1\nviewer\nError\npublic-open\n${file}`)
+          .digest('hex')
+          .slice(0, 16)
+      );
+    });
+  }
+
+  test('drops landing, service worker, worker, worklet, and sandbox scripts', () => {
+    const excluded = [
+      '/assets/landing.js',
+      '/sw.js',
+      '/assets/model-parse-worker.js',
+      '/assets/spreadsheet-parse-worker.js',
+      '/assets/otio-audio-pcm-worker.js',
+      '/assets/otio-video-timing-worker.js',
+      '/assets/otio-transport-gate-worklet.js',
+      '/assets/sandbox.js',
+      '/assets/frame-docx.frame.js',
+      '/assets/frame-epub.frame.js',
+    ];
+    for (const path of excluded) {
+      const stack = `at load (https://relik.link${path}:1:2)`;
+      expect(viewerFramesFrom(stack, origin)).toEqual([]);
+      expect(
+        parseClientReport({
+          ...report(),
+          frames: [{ file: path.slice(1), line: 1, column: 2 }],
+        })
+      ).toBeNull();
+    }
+  });
+
   test('extracts Firefox and Safari frames without function, query or fragment', () => {
     const firefox = [
       `render@https://relik.link/assets/viewer.js?email=${canaries[1]}:14:3`,
