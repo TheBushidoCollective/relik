@@ -629,6 +629,14 @@ describe('classification and grouping', () => {
       .digest('hex')
       .slice(0, 16);
     expect(fingerprintOf(base)).toBe(expected);
+    expect(
+      fingerprintOf({
+        source: base.source,
+        errorClass: base.errorClass,
+        route: base.route,
+        frames: base.frames.map(({ file }) => ({ file })),
+      })
+    ).toBe(expected);
     const changedFrames: ErrorFrame[] = [
       { file: 'assets/chunk-a1b2c3d4.js', line: 99, column: 100 },
       { file: 'assets/viewer.js', line: 1, column: 0 },

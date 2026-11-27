@@ -556,7 +556,17 @@ export function classOf(error: unknown): ErrorClass {
   return 'Other';
 }
 
-export function fingerprintOf(report: ErrorReport): string {
+/** Only these fields participate in fingerprinting, including file-only frames. */
+export type ErrorFingerprintInput = Pick<
+  ErrorReport,
+  'source' | 'errorClass' | 'route'
+> & {
+  readonly frames: readonly Pick<ErrorFrame, 'file'>[];
+};
+
+export function fingerprintOf<T extends ErrorFingerprintInput>(
+  report: T
+): string {
   const files = report.frames
     .slice(0, 3)
     .map(({ file }) =>
