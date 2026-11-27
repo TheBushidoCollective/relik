@@ -306,6 +306,7 @@ describe('the usercontent frame the render routes build', () => {
     textContent = '';
     readonly children: ElementStub[] = [];
     readonly attributes = new Map<string, string>();
+    readonly listeners = new Map<string, (event: Event) => void>();
     readonly classList = { add: (_name: string): void => {} };
 
     constructor(tag: string) {
@@ -335,6 +336,12 @@ describe('the usercontent frame the render routes build', () => {
     setAttribute(name: string, value: string): void {
       this.attributes.set(name, value);
     }
+    removeAttribute(name: string): void {
+      this.attributes.delete(name);
+    }
+    hasAttribute(name: string): boolean {
+      return this.attributes.has(name);
+    }
     appendChild(child: ElementStub): ElementStub {
       this.children.push(child);
       return child;
@@ -344,9 +351,14 @@ describe('the usercontent frame the render routes build', () => {
       this.children.push(...kids);
     }
 
-    addEventListener(): void {}
-    removeEventListener(): void {}
-    dispatchEvent(): boolean {
+    addEventListener(type: string, listener: (event: Event) => void): void {
+      this.listeners.set(type, listener);
+    }
+    removeEventListener(type: string): void {
+      this.listeners.delete(type);
+    }
+    dispatchEvent(event: Event): boolean {
+      this.listeners.get(event.type)?.(event);
       return true;
     }
   }
@@ -445,6 +457,39 @@ describe('the usercontent frame the render routes build', () => {
     expect(noticeElement?.children.at(-1)?.textContent).toContain(
       'It is shown as source.'
     );
+  });
+
+  test('file-drag readiness follows the frame handshake and ends on navigation', () => {
+    let onMessage: ((event: unknown) => void) | undefined;
+    const source = { postMessage: () => {} };
+    (globalThis as { window?: unknown }).window = {
+      addEventListener: (type: string, callback: (event: unknown) => void) => {
+        if (type === 'message') onMessage = callback;
+      },
+      removeEventListener: () => {},
+    };
+    const handle = sandboxFrame(
+      view('sandboxed-html', ''),
+      USERCONTENT_ORIGIN,
+      {
+        type: 'relic:render',
+        html: '',
+      }
+    );
+    Object.assign(handle.frame, { contentWindow: source });
+    const frame = handle.frame as unknown as ElementStub;
+    expect(frame.hasAttribute('data-file-drag-ready')).toBe(false);
+    onMessage?.({ source: {}, data: { type: 'relic:sandbox-ready' } });
+    expect(frame.hasAttribute('data-file-drag-ready')).toBe(false);
+    onMessage?.({ source, data: { type: 'relic:sandbox-ready' } });
+    expect(frame.hasAttribute('data-file-drag-ready')).toBe(true);
+    frame.dispatchEvent(new Event('load'));
+    expect(frame.hasAttribute('data-file-drag-ready')).toBe(true);
+    frame.dispatchEvent(new Event('load'));
+    expect(frame.hasAttribute('data-file-drag-ready')).toBe(false);
+    onMessage?.({ source, data: { type: 'relic:sandbox-ready' } });
+    expect(frame.hasAttribute('data-file-drag-ready')).toBe(false);
+    handle.dispose();
   });
 
   test('document frame accepts one state only after handshake and disposes pending posts', () => {

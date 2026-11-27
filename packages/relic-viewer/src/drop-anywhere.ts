@@ -131,6 +131,15 @@ export function armFileDrop(open: (dropped: DroppedFiles) => void): void {
   window.addEventListener(
     'dragenter',
     (event) => {
+      // Once the shim is listening, let the frame claim the drag or report
+      // it as unclaimed. Until then the host must still catch early drops.
+      if (
+        event.target instanceof HTMLIFrameElement &&
+        event.target.classList.contains('usercontent-frame') &&
+        event.target.hasAttribute('data-file-drag-ready')
+      ) {
+        return;
+      }
       if (isFileDrag(event.dataTransfer?.types)) raise();
     },
     true
