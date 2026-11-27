@@ -62,6 +62,7 @@ server's environment to opt in. Release versions send reports for unexpected
 tool failures and process crashes to the configured Relik service. Development
 builds do not send reports. `relic_describe_client` shows whether reporting is
 on or off.
+The report request refuses redirects, so it is not forwarded to another origin.
 Expected validation and refusal outcomes are not reported, including
 validation refusals from `relic_apply_suggestions`.
 
