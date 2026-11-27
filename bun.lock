@@ -28,6 +28,15 @@
         "@relic/viewer": "workspace:*",
       },
     },
+    "packages/relic-ops": {
+      "name": "@relic/ops",
+      "version": "0.1.0",
+      "dependencies": {
+        "@relic/format": "workspace:*",
+        "@relic/server": "workspace:*",
+        "relic-mcp": "workspace:*",
+      },
+    },
     "packages/relic-server": {
       "name": "@relic/server",
       "version": "0.1.0",
@@ -61,8 +70,8 @@
     },
   },
   "patchedDependencies": {
-    "docx-preview@0.4.1": "patches/docx-preview@0.4.1.patch",
     "pdfjs-dist@5.4.149": "patches/pdfjs-dist@5.4.149.patch",
+    "docx-preview@0.4.1": "patches/docx-preview@0.4.1.patch",
   },
   "packages": {
     "@dimforge/rapier3d-compat": ["@dimforge/rapier3d-compat@0.12.0", "", {}, "sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow=="],
@@ -100,6 +109,8 @@
     "@napi-rs/canvas-win32-x64-msvc": ["@napi-rs/canvas-win32-x64-msvc@0.1.100", "", { "os": "win32", "cpu": "x64" }, "sha512-MyT1j3mHC2+Lu4pBi9mKyMJhtP6U7k7EldY7sj/uS5gJA65gTXt8MefJQXLJo5d/vZbuWmfxzkEUNc/urV3pHA=="],
 
     "@relic/format": ["@relic/format@workspace:packages/relic-format"],
+
+    "@relic/ops": ["@relic/ops@workspace:packages/relic-ops"],
 
     "@relic/server": ["@relic/server@workspace:packages/relic-server"],
 
