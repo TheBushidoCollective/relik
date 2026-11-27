@@ -21,6 +21,7 @@ import {
  *    launch-blocking, since the abuse intake is a go/no-go obligation.
  */
 
+import { isIP } from 'node:net';
 import { inflateSync } from 'node:zlib';
 import {
   COMMENT_ADDRESSES_LIMIT_BYTES,
@@ -234,6 +235,8 @@ export interface AppOptions {
   readonly limiter?: RateLimiter | undefined;
   readonly addressLimiter?: RateLimiter | undefined;
   readonly errorReporter?: ErrorReporter | undefined;
+  /** Disable report ingestion on a separately deployed usercontent service. */
+  readonly acceptErrorReports?: boolean;
 }
 
 export interface RelicApp {
@@ -261,11 +264,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
       revision: config.revision,
       now: clock,
     });
-  // Keeping this separate prevents other endpoint traffic from evicting its
-  // global window. No more than one IP entry is created per global charge.
+  // The instance budget is not in the evictable per-IP table.
   const errorReportLimiter = new RateLimiter({
     maxEntries: config.errorReportGlobalRateLimit.limit + 2,
   });
+  let errorReportGlobalWindow: { count: number; resetAt: number } | undefined;
   const limiter =
     options.limiter ??
     new RateLimiter({
@@ -579,28 +582,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
   ): Promise<Response> {
     const [first, second, third, fourth] = rest;
     if (first === 'error-reports' && rest.length === 1) {
+      // Host is taken from the request URL, never from forwarded host headers.
+      // The deployment also disables ingestion on the usercontent instance,
+      // even if a direct caller supplies the service host.
+      if (
+        options.acceptErrorReports === false ||
+        url.host === new URL(config.usercontentOrigin).host
+      ) {
+        return new Response('Not found', { status: 404 });
+      }
       if (request.method !== 'POST') {
         return new Response('Method not allowed', { status: 405 });
-      }
-      const global = errorReportLimiter.check(
-        'error-report global',
-        config.errorReportGlobalRateLimit,
-        now
-      );
-      if (!global.allowed) {
-        return refuse('error_report_rate_limited', {
-          retry_after_seconds: global.retryAfterSeconds,
-        });
-      }
-      const perIp = errorReportLimiter.check(
-        rateLimitKey('error-report', ip),
-        config.errorReportRateLimit,
-        now
-      );
-      if (!perIp.allowed) {
-        return refuse('error_report_rate_limited', {
-          retry_after_seconds: perIp.retryAfterSeconds,
-        });
       }
       if (
         !/^application\/json(?:\s*;|$)/i.test(
@@ -617,27 +609,78 @@ export function createApp(options: AppOptions = {}): RelicApp {
         );
         const candidate = parseClientReport(input);
         if (candidate === null) return refuse('invalid_error_report');
-        // Candidate frame names passed the format allowlist. Verify each one
-        // against the actual asset source, not a caller-supplied chunk hash.
-        const viewerFiles = new Set<string>(['assets/register-sw.js']);
+
+        let report = candidate;
         if (candidate.source === 'viewer') {
-          for (const frame of candidate.frames) {
-            if (
-              frame.file !== 'assets/register-sw.js' &&
-              (await assets.get(frame.file.slice('assets/'.length))) !==
-                undefined
-            ) {
-              viewerFiles.add(frame.file);
-            }
+          if (
+            config.revision === undefined ||
+            candidate.revision !== config.revision
+          ) {
+            return refuse('invalid_error_report');
           }
+          const linesByFile = new Map<string, string[]>();
+          for (const frame of candidate.frames) {
+            if (linesByFile.has(frame.file)) continue;
+            const body =
+              frame.file === 'assets/register-sw.js'
+                ? new TextEncoder().encode(REGISTER_SW_JS)
+                : (await assets.get(frame.file.slice('assets/'.length)))?.body;
+            if (body === undefined) return refuse('invalid_error_report');
+            const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+            linesByFile.set(frame.file, text.split(/\r\n|[\n\r\u2028\u2029]/u));
+          }
+          report = {
+            ...candidate,
+            frames: candidate.frames.filter((frame) => {
+              const line = linesByFile.get(frame.file)?.[frame.line - 1];
+              // Stack columns are one-based; zero is allowed when unknown.
+              return line !== undefined && frame.column <= line.length + 1;
+            }),
+          };
         }
-        const report = parseClientReport(input, {
-          revisions: new Set(
-            config.revision === undefined ? [] : [config.revision]
-          ),
-          viewerFiles,
-        });
-        if (report === null) return refuse('invalid_error_report');
+
+        // No rejected input spends either budget. There is no await between
+        // these checks and charges, so concurrent requests cannot overspend.
+        const at = clock();
+        const key = rateLimitKey(
+          'error-report',
+          errorReportIp(request, config)
+        );
+        const perIp = errorReportLimiter.peek(
+          key,
+          config.errorReportRateLimit,
+          at
+        );
+        if (!perIp.allowed) {
+          return refuse('error_report_rate_limited', {
+            retry_after_seconds: perIp.retryAfterSeconds,
+          });
+        }
+        if (
+          errorReportGlobalWindow !== undefined &&
+          at < errorReportGlobalWindow.resetAt &&
+          errorReportGlobalWindow.count >=
+            config.errorReportGlobalRateLimit.limit
+        ) {
+          return refuse('error_report_rate_limited', {
+            retry_after_seconds: Math.ceil(
+              (errorReportGlobalWindow.resetAt - at) / 1000
+            ),
+          });
+        }
+        errorReportLimiter.check(key, config.errorReportRateLimit, at);
+        if (
+          errorReportGlobalWindow === undefined ||
+          at >= errorReportGlobalWindow.resetAt
+        ) {
+          errorReportGlobalWindow = {
+            count: 1,
+            resetAt:
+              at + config.errorReportGlobalRateLimit.windowSeconds * 1000,
+          };
+        } else {
+          errorReportGlobalWindow.count += 1;
+        }
         reporter.client(report);
         return new Response(null, {
           status: 204,
@@ -7154,6 +7197,30 @@ export function clientIp(request: Request, config: RelicConfig): string {
   return '127.0.0.1';
 }
 
+/** Use only a complete configured proxy chain for the report rate key. */
+function errorReportIp(request: Request, config: RelicConfig): string {
+  const hops = config.trustedProxyHops;
+  const forwarded = request.headers.get('x-forwarded-for');
+  if (hops > 0 && forwarded !== null) {
+    const entries = forwarded.split(',').map((entry) => entry.trim());
+    if (entries.length >= hops) {
+      const start = entries.length - hops;
+      let valid = true;
+      for (let i = start; i < entries.length; i += 1) {
+        const hop = entries[i];
+        if (hop === undefined || isIP(hop) === 0) {
+          valid = false;
+          break;
+        }
+      }
+      const candidate = entries[start];
+      if (valid && candidate !== undefined) return candidate;
+    }
+  }
+  // X-Real-IP and every forwarded entry are untrusted without this chain.
+  return 'unknown';
+}
+
 async function readJson(request: Request): Promise<unknown> {
   try {
     return await request.json();
@@ -8470,7 +8537,7 @@ of those happens, so we do not assert either way.
 
 ## Error reports
 
-Error reports are published in the public Relik issue tracker with only these report fields: ${errorReportFields}. The fields describe the source, error class, route template, build, code locations and an occurrence count.
+Scrubbed reports may become public issues in the Relik issue tracker. A submitted report contains only these report fields: ${errorReportFields}. The fields describe the source, error class, route template, build, code locations and an occurrence count. A public issue also includes a derived \`fingerprint\`, a \`builds\` list and a seven-day count (\`count7d\`).
 
 Reports never include content, keys, fragments, relik IDs, email addresses, IP addresses, your file names, URLs, error messages or free text. These limits prevent accidental capture; a person submitting a report can still choose valid values. The service and web viewer report errors automatically. The relic-mcp client reports only when its user sets \`RELIC_ERROR_REPORTS=1\`.
 

@@ -9,15 +9,24 @@ import {
 import { serverRouteOf } from './error-report-routes.ts';
 
 const MAX_FINGERPRINTS = 200;
+const MAX_MCP_FINGERPRINTS = 32;
+const MAX_BUILDS_PER_FINGERPRINT = 8;
 const EMISSION_INTERVAL_MS = 600_000;
 const CLIENT_LIFETIME_MS = 86_400_000;
 const MAX_COUNT = 1_000_000;
 
-interface Entry {
+interface BuildEntry {
   report: ErrorReport;
   readonly firstSeen: number;
   lastEmission: number;
   pending: number;
+  total: number;
+}
+
+interface Entry {
+  readonly firstSeen: number;
+  total: number;
+  readonly builds: Map<string, BuildEntry>;
 }
 
 export interface ErrorReporter {
@@ -33,11 +42,12 @@ export function createErrorReporter(options: {
   const now = options.now ?? Date.now;
   const emit = options.emit ?? ((line: string) => console.log(line));
   const serverEntries = new Map<string, Entry>();
-  const clientEntries = new Map<string, Entry>();
+  const viewerEntries = new Map<string, Entry>();
+  const mcpEntries = new Map<string, Entry>();
 
-  function flush(fingerprint: string, entry: Entry, at: number): void {
-    if (entry.pending === 0) return;
-    const report = { ...entry.report, count: entry.pending };
+  function flush(fingerprint: string, build: BuildEntry, at: number): void {
+    if (build.pending === 0) return;
+    const report = { ...build.report, count: build.pending };
     // Recheck at the output boundary even when the caller supplied a typed object.
     const valid = parseLoggedReport(report);
     if (valid === null) return;
@@ -50,56 +60,118 @@ export function createErrorReporter(options: {
         report: valid,
       })
     );
-    entry.pending = 0;
-    entry.lastEmission = at;
+    build.pending = 0;
+    build.lastEmission = at;
+  }
+
+  function flushEntry(fingerprint: string, entry: Entry, at: number): void {
+    for (const build of entry.builds.values()) {
+      try {
+        flush(fingerprint, build, at);
+      } catch {
+        // A failed sink must not replace the response to the user.
+      }
+    }
   }
 
   function flushDue(at: number): void {
-    for (const entries of [serverEntries, clientEntries]) {
+    for (const entries of [serverEntries, viewerEntries, mcpEntries]) {
       for (const [fingerprint, entry] of entries) {
-        if (at - entry.lastEmission >= EMISSION_INTERVAL_MS) {
-          try {
-            flush(fingerprint, entry, at);
-          } catch {
-            // A failed sink must not replace the response to the user.
+        for (const build of entry.builds.values()) {
+          if (at - build.lastEmission >= EMISSION_INTERVAL_MS) {
+            try {
+              flush(fingerprint, build, at);
+            } catch {
+              // Keep this build's pending count for another attempt.
+            }
           }
         }
       }
     }
   }
 
+  // Prefer evicting the least frequent entry, breaking ties by oldest arrival.
+  function victim<T extends { readonly firstSeen: number; total: number }>(
+    entries: Map<string, T>
+  ): string | undefined {
+    let key: string | undefined;
+    let selected: T | undefined;
+    for (const [candidate, value] of entries) {
+      if (
+        selected === undefined ||
+        value.total < selected.total ||
+        (value.total === selected.total && value.firstSeen < selected.firstSeen)
+      ) {
+        key = candidate;
+        selected = value;
+      }
+    }
+    return key;
+  }
+
   function record(report: ErrorReport): void {
     if (options.revision === undefined) return;
     const at = now();
-    for (const [fingerprint, entry] of clientEntries) {
-      if (at - entry.firstSeen >= CLIENT_LIFETIME_MS) {
-        try {
-          flush(fingerprint, entry, at);
-        } catch {
-          // Expiry still bounds client state if the sink has failed.
+    for (const entries of [viewerEntries, mcpEntries]) {
+      for (const [fingerprint, entry] of entries) {
+        if (at - entry.firstSeen >= CLIENT_LIFETIME_MS) {
+          flushEntry(fingerprint, entry, at);
+          entries.delete(fingerprint);
         }
-        clientEntries.delete(fingerprint);
       }
     }
-    const entries = report.source === 'server' ? serverEntries : clientEntries;
+    const entries =
+      report.source === 'server'
+        ? serverEntries
+        : report.source === 'viewer'
+          ? viewerEntries
+          : mcpEntries;
+    const capacity =
+      report.source === 'mcp' ? MAX_MCP_FINGERPRINTS : MAX_FINGERPRINTS;
     const fingerprint = fingerprintOf(report);
-    const existing = entries.get(fingerprint);
-    if (existing !== undefined) {
-      existing.report = report;
-      existing.pending = Math.min(MAX_COUNT, existing.pending + report.count);
-    } else if (entries.size < MAX_FINGERPRINTS) {
-      const entry: Entry = {
+    let entry = entries.get(fingerprint);
+    if (entry === undefined) {
+      if (entries.size >= capacity) {
+        const oldest = victim(entries);
+        if (oldest !== undefined) {
+          flushEntry(oldest, entries.get(oldest)!, at);
+          entries.delete(oldest);
+        }
+      }
+      entry = { firstSeen: at, total: 0, builds: new Map() };
+      entries.set(fingerprint, entry);
+    }
+    entry.total = Math.min(MAX_COUNT, entry.total + report.count);
+    let build = entry.builds.get(report.revision);
+    if (build === undefined) {
+      if (entry.builds.size >= MAX_BUILDS_PER_FINGERPRINT) {
+        const oldest = victim(entry.builds);
+        if (oldest !== undefined) {
+          try {
+            flush(fingerprint, entry.builds.get(oldest)!, at);
+          } catch {
+            // Eviction still bounds memory if the sink has failed.
+          }
+          entry.builds.delete(oldest);
+        }
+      }
+      build = {
         report,
         firstSeen: at,
         lastEmission: at,
         pending: report.count,
+        total: report.count,
       };
-      entries.set(fingerprint, entry);
+      entry.builds.set(report.revision, build);
       try {
-        flush(fingerprint, entry, at);
+        flush(fingerprint, build, at);
       } catch {
         // Keep the scrubbed pending count for a later attempt.
       }
+    } else {
+      build.report = report;
+      build.pending = Math.min(MAX_COUNT, build.pending + report.count);
+      build.total = Math.min(MAX_COUNT, build.total + report.count);
     }
     flushDue(at);
   }

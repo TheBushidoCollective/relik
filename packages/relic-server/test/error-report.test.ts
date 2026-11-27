@@ -4,11 +4,12 @@ import {
   ERROR_CLASSES,
   type ErrorReport,
   parseLoggedReport,
+  MCP_ROUTES,
   SERVER_ROUTES,
   VIEWER_ROUTES,
 } from '@relic/format/error-report';
 import { createApp } from '../src/app.ts';
-import { memoryAssets } from '../src/assets.ts';
+import { memoryAssets, REGISTER_SW_JS } from '../src/assets.ts';
 import { assertConfig, DEFAULT_CONFIG } from '../src/config.ts';
 import { serverRouteOf } from '../src/error-report-routes.ts';
 import { createErrorReporter } from '../src/error-report.ts';
@@ -70,7 +71,7 @@ function setup(config: Parameters<typeof createApp>[0] = {}) {
       errorReportGlobalRateLimit: { limit: 2000, windowSeconds: 3600 },
     },
     assets: memoryAssets({
-      'viewer.js': 'viewer',
+      'viewer.js': `${'aaaa\n'.repeat(6)}viewer`,
       'chunk-abcdefgh.js': 'chunk',
     }),
     errorReporter: reporter,
@@ -94,6 +95,7 @@ function post(
     method: 'POST',
     headers: {
       'content-type': extra.type ?? 'application/json',
+      'x-forwarded-for': `${extra.ip ?? '198.51.100.1'}, 130.211.0.1`,
       'x-real-ip': extra.ip ?? '198.51.100.1',
     },
     body: typeof body === 'string' ? body : JSON.stringify(body),
@@ -353,14 +355,14 @@ describe('error report endpoint', () => {
   });
 
   test('rejects other methods and enforces the 30-per-IP window', async () => {
-    const app = createApp({ config: { revision: REVISION } });
+    const { app } = setup({ config: { revision: REVISION } });
     const wrongMethod = await app.fetch(
       new Request('https://relic.example/api/error-reports', { method: 'GET' })
     );
     expect(wrongMethod.status).toBe(405);
     for (let i = 0; i < 30; i += 1)
-      expect((await app.fetch(post('no'))).status).toBe(400);
-    const limited = await app.fetch(post('no'));
+      expect((await app.fetch(post(mcp()))).status).toBe(204);
+    const limited = await app.fetch(post(mcp()));
     expect(limited.status).toBe(429);
     expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
     expect(await limited.json()).toMatchObject({
@@ -369,21 +371,299 @@ describe('error report endpoint', () => {
   });
 
   test('enforces the 600-per-instance window across distinct IPs', async () => {
-    const app = createApp({
-      config: { revision: REVISION, trustedProxyHops: 0 },
-    });
+    const { app } = setup({ config: { revision: REVISION } });
     for (let i = 0; i < 600; i += 1) {
       const response = await app.fetch(
-        post('no', { ip: `198.51.${Math.floor(i / 250)}.${(i % 250) + 1}` })
+        post(mcp(), { ip: `198.51.${Math.floor(i / 250)}.${(i % 250) + 1}` })
       );
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(204);
     }
-    const response = await app.fetch(post('no', { ip: '203.0.113.1' }));
+    const response = await app.fetch(post(mcp(), { ip: '203.0.113.1' }));
     expect(response.status).toBe(429);
     expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
     expect(await response.json()).toMatchObject({
       code: 'error_report_rate_limited',
     });
+  });
+
+  test('rejects malformed, oversized and unsupported bodies before either quota', async () => {
+    const { app } = setup({
+      config: {
+        revision: REVISION,
+        errorReportRateLimit: { limit: 1, windowSeconds: 3600 },
+        errorReportGlobalRateLimit: { limit: 2, windowSeconds: 3600 },
+      },
+    });
+    for (const request of [
+      post(mcp(), { type: 'text/plain' }),
+      post('{invalid json'),
+      post(' '.repeat(4097)),
+      post({ ...mcp(), extra: 'not allowed' }),
+    ]) {
+      expect((await app.fetch(request)).status).toBe(400);
+    }
+    expect((await app.fetch(post(mcp()))).status).toBe(204);
+    expect((await app.fetch(post(mcp(), { ip: '198.51.100.2' }))).status).toBe(
+      204
+    );
+  });
+
+  test('unknown viewer builds and unserved assets never spend quotas or enter a pool', async () => {
+    const { app, lines } = setup({
+      config: {
+        revision: REVISION,
+        errorReportRateLimit: { limit: 1, windowSeconds: 3600 },
+        errorReportGlobalRateLimit: { limit: 1, windowSeconds: 3600 },
+      },
+    });
+    const unknownBuild = { ...viewer(), revision: 'b'.repeat(40) };
+    const unknownAsset = {
+      ...viewer(),
+      frames: [{ file: 'assets/chunk-zzzzzzzz.js', line: 1, column: 0 }],
+    };
+    expect((await app.fetch(post(unknownBuild))).status).toBe(400);
+    expect((await app.fetch(post(unknownAsset))).status).toBe(400);
+    expect(lines).toHaveLength(0);
+    expect((await app.fetch(post(viewer()))).status).toBe(204);
+    expect(parsed(lines)[0]!.report.revision).toBe(REVISION);
+  });
+
+  test('per-IP refusals do not spend the shared instance quota', async () => {
+    const { app } = setup({
+      config: {
+        revision: REVISION,
+        errorReportRateLimit: { limit: 1, windowSeconds: 3600 },
+        errorReportGlobalRateLimit: { limit: 2, windowSeconds: 3600 },
+      },
+    });
+    expect((await app.fetch(post(mcp()))).status).toBe(204);
+    for (let i = 0; i < 5; i += 1) {
+      expect((await app.fetch(post(mcp()))).status).toBe(429);
+    }
+    expect((await app.fetch(post(mcp(), { ip: '198.51.100.2' }))).status).toBe(
+      204
+    );
+  });
+
+  test('instance quota survives overlapping IP windows at global rollover', async () => {
+    let time = 0;
+    const { app } = setup({
+      now: () => time,
+      config: {
+        revision: REVISION,
+        errorReportRateLimit: { limit: 10, windowSeconds: 10 },
+        errorReportGlobalRateLimit: { limit: 4, windowSeconds: 10 },
+      },
+    });
+    expect((await app.fetch(post(mcp(), { ip: '198.51.100.1' }))).status).toBe(
+      204
+    );
+    time = 9_000;
+    for (let i = 2; i <= 4; i += 1) {
+      expect(
+        (await app.fetch(post(mcp(), { ip: `198.51.100.${i}` }))).status
+      ).toBe(204);
+    }
+    time = 10_000;
+    for (let i = 5; i <= 8; i += 1) {
+      expect(
+        (await app.fetch(post(mcp(), { ip: `198.51.100.${i}` }))).status
+      ).toBe(204);
+    }
+    expect((await app.fetch(post(mcp(), { ip: '198.51.100.9' }))).status).toBe(
+      429
+    );
+  });
+
+  test('usercontent host and disabled direct service never expose report ingestion', async () => {
+    const { app, lines } = setup();
+    for (const method of ['POST', 'GET']) {
+      const response = await app.fetch(
+        new Request('https://relic-usercontent.example/api/error-reports', {
+          method,
+          headers: {
+            'content-type': 'application/json',
+            'x-forwarded-host': 'relic.example',
+          },
+          ...(method === 'POST' ? { body: JSON.stringify(mcp()) } : {}),
+        })
+      );
+      expect(response.status).toBe(404);
+    }
+    const disabled = setup({ acceptErrorReports: false });
+    const spoofedHost = await disabled.app.fetch(post(mcp()));
+    expect(spoofedHost.status).toBe(404);
+    expect(lines).toHaveLength(0);
+    expect(disabled.lines).toHaveLength(0);
+    expect((await app.fetch(post(mcp()))).status).toBe(204);
+  });
+
+  test('deployed usercontent disables ingestion and uses its direct proxy hop', async () => {
+    const terraform = await Bun.file(
+      new URL(
+        '../../../deploy/terraform/modules/relic/module.service.tf',
+        import.meta.url
+      )
+    ).text();
+    const usercontent = terraform.split('module "usercontent" {')[1];
+    expect(usercontent).toBeDefined();
+    expect(usercontent).toMatch(/RELIC_ACCEPT_ERROR_REPORTS\s*=\s*"false"/);
+    expect(usercontent).toMatch(
+      /RELIC_TRUSTED_PROXY_HOPS\s*=\s*tostring\(var\.usercontent_trusted_proxy_hops\)/
+    );
+    const variables = await Bun.file(
+      new URL(
+        '../../../deploy/terraform/modules/relic/variables.tf',
+        import.meta.url
+      )
+    ).text();
+    expect(variables).toMatch(
+      /variable "usercontent_trusted_proxy_hops"\s*\{[^}]*default\s*=\s*2/s
+    );
+    const stack = await Bun.file(
+      new URL('../../../deploy/terraform/module.relic.tf', import.meta.url)
+    ).text();
+    expect(stack).toMatch(/usercontent_trusted_proxy_hops\s*=\s*1/);
+  });
+
+  test('absent and short proxy chains cannot rotate the report key with X-Real-IP', async () => {
+    for (const forwarded of [undefined, '203.0.113.40']) {
+      const { app } = setup({
+        config: {
+          revision: REVISION,
+          trustedProxyHops: 2,
+          errorReportRateLimit: { limit: 1, windowSeconds: 3600 },
+          errorReportGlobalRateLimit: { limit: 10, windowSeconds: 3600 },
+        },
+      });
+      for (let i = 1; i <= 2; i += 1) {
+        const response = await app.fetch(
+          new Request('https://relic.example/api/error-reports', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-real-ip': `192.0.2.${i}`,
+              ...(forwarded === undefined
+                ? {}
+                : { 'x-forwarded-for': forwarded }),
+            },
+            body: JSON.stringify(mcp()),
+          })
+        );
+        expect(response.status).toBe(i === 1 ? 204 : 429);
+      }
+    }
+  });
+
+  test('empty proxy hops cannot make a caller-controlled address the report key', async () => {
+    const { app } = setup({
+      config: {
+        revision: REVISION,
+        trustedProxyHops: 2,
+        errorReportRateLimit: { limit: 1, windowSeconds: 3600 },
+        errorReportGlobalRateLimit: { limit: 10, windowSeconds: 3600 },
+      },
+    });
+    for (let i = 1; i <= 2; i += 1) {
+      const response = await app.fetch(
+        new Request('https://relic.example/api/error-reports', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-forwarded-for': `192.0.2.${i}, , 130.211.0.1`,
+          },
+          body: JSON.stringify(mcp()),
+        })
+      );
+      expect(response.status).toBe(i === 1 ? 204 : 429);
+    }
+  });
+
+  test('empty or malformed trailing proxy hops cannot expose a caller-controlled report key', async () => {
+    for (const trailingHop of ['', 'not-an-ip']) {
+      const { app } = setup({
+        config: {
+          revision: REVISION,
+          trustedProxyHops: 2,
+          errorReportRateLimit: { limit: 1, windowSeconds: 3600 },
+          errorReportGlobalRateLimit: { limit: 10, windowSeconds: 3600 },
+        },
+      });
+      for (let i = 1; i <= 2; i += 1) {
+        const response = await app.fetch(
+          new Request('https://relic.example/api/error-reports', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-forwarded-for': `192.0.2.${i},${trailingHop}`,
+            },
+            body: JSON.stringify(mcp()),
+          })
+        );
+        expect(response.status).toBe(i === 1 ? 204 : 429);
+      }
+    }
+  });
+
+  test('zero trusted hops ignore all caller-controlled report IP headers', async () => {
+    const { app } = setup({
+      config: {
+        revision: REVISION,
+        trustedProxyHops: 0,
+        errorReportRateLimit: { limit: 1, windowSeconds: 3600 },
+        errorReportGlobalRateLimit: { limit: 10, windowSeconds: 3600 },
+      },
+    });
+    expect((await app.fetch(post(mcp(), { ip: '192.0.2.1' }))).status).toBe(
+      204
+    );
+    expect((await app.fetch(post(mcp(), { ip: '192.0.2.2' }))).status).toBe(
+      429
+    );
+  });
+
+  test('direct trusted ingress ignores spoofed leading forwarded IPs', async () => {
+    const { app } = setup({
+      config: {
+        revision: REVISION,
+        trustedProxyHops: 1,
+        errorReportRateLimit: { limit: 1, windowSeconds: 3600 },
+        errorReportGlobalRateLimit: { limit: 10, windowSeconds: 3600 },
+      },
+    });
+    expect((await app.fetch(post(mcp(), { ip: '192.0.2.1' }))).status).toBe(
+      204
+    );
+    expect((await app.fetch(post(mcp(), { ip: '192.0.2.2' }))).status).toBe(
+      429
+    );
+  });
+
+  test('viewer positions are bounded by each exact served asset and preserve valid frames', async () => {
+    const { app, lines } = setup({
+      assets: memoryAssets({
+        'viewer.js': 'abc\né🙂\n',
+        'chunk-abcdefgh.js': '123456\nz',
+      }),
+    });
+    const registerColumn = REGISTER_SW_JS.split('\n')[0]!.length + 1;
+    const frames = [
+      { file: 'assets/viewer.js', line: 1, column: 4 },
+      { file: 'assets/viewer.js', line: 2, column: 4 },
+      { file: 'assets/viewer.js', line: 2, column: 5 },
+      { file: 'assets/viewer.js', line: 10_000_000, column: 0 },
+      { file: 'assets/chunk-abcdefgh.js', line: 1, column: 7 },
+      { file: 'assets/chunk-abcdefgh.js', line: 2, column: 3 },
+      { file: 'assets/register-sw.js', line: 1, column: registerColumn },
+      { file: 'assets/register-sw.js', line: 1, column: registerColumn + 1 },
+    ];
+    expect((await app.fetch(post({ ...viewer(), frames }))).status).toBe(204);
+    expect(parsed(lines)[0]!.report.frames).toEqual([
+      frames[0]!,
+      frames[1]!,
+      frames[4]!,
+      frames[6]!,
+    ]);
   });
 });
 
@@ -409,29 +689,147 @@ describe('aggregation', () => {
     ]);
   });
 
-  test('caps server and client fingerprints separately and expires client entries after 24 hours', () => {
-    const { reporter, lines, clock } = setup();
-    const clientReports: ErrorReport[] = [];
+  test('MCP saturation cannot occupy viewer or server fingerprint pools', () => {
+    const { reporter, lines } = setup();
+    const reports: ErrorReport[] = [];
+    for (const route of MCP_ROUTES) {
+      for (const errorClass of ERROR_CLASSES) {
+        reports.push({ ...mcp(), route, errorClass });
+        if (reports.length === 201) break;
+      }
+      if (reports.length === 201) break;
+    }
+    expect(reports).toHaveLength(201);
+    for (const report of reports) reporter.client(report);
+    const before = lines.length;
+    reporter.client(reports[0]!);
+    expect(lines).toHaveLength(before + 1);
+    reporter.client(viewer());
+    const error = new Error('');
+    error.stack =
+      'Error\n    at safe (/srv/packages/relic-server/src/app.ts:1:0)';
+    reporter.server(error, 'GET', '/health');
+    expect(
+      parsed(lines)
+        .slice(-2)
+        .map((line) => line.report.source)
+    ).toEqual(['viewer', 'server']);
+    noCanaries(lines);
+  });
+
+  test('viewer pool replaces the oldest low-count fingerprint and flushes pending hits', () => {
+    const { reporter, lines } = setup();
+    const reports: ErrorReport[] = [];
     for (const route of VIEWER_ROUTES) {
       for (const errorClass of ERROR_CLASSES) {
-        clientReports.push({ ...viewer(), route, errorClass });
-        if (clientReports.length === 201) break;
+        reports.push({ ...viewer(), route, errorClass });
+        if (reports.length === 201) break;
       }
-      if (clientReports.length === 201) break;
+      if (reports.length === 201) break;
     }
-    expect(clientReports).toHaveLength(201);
-    for (const item of clientReports) reporter.client(item);
+    expect(reports).toHaveLength(201);
+    for (const report of reports.slice(0, 200)) {
+      reporter.client(report);
+      reporter.client(report);
+    }
     expect(lines).toHaveLength(200);
-    for (let i = 0; i < 201; i += 1) {
-      const err = new Error('');
-      err.stack = `Error\n    at safe (/srv/packages/relic-server/src/file${i}.ts:1:0)`;
-      reporter.server(err, 'GET', '/health');
+    reporter.client(reports[200]!);
+    expect(lines).toHaveLength(202);
+    expect(parsed(lines)[200]!.report).toEqual(reports[0]!);
+    expect(parsed(lines)[201]!.report).toEqual(reports[200]!);
+    reporter.client(reports[0]!);
+    expect(parsed(lines).at(-1)!.report).toEqual(reports[0]!);
+  });
+
+  test('pool replacement keeps frequent fingerprints ahead of older low-count entries', () => {
+    const { reporter, lines } = setup();
+    const reports: ErrorReport[] = [];
+    for (const route of VIEWER_ROUTES) {
+      for (const errorClass of ERROR_CLASSES) {
+        reports.push({ ...viewer(), route, errorClass });
+        if (reports.length === 201) break;
+      }
+      if (reports.length === 201) break;
     }
-    expect(lines).toHaveLength(400);
+    reporter.client(reports[0]!);
+    reporter.client(reports[0]!);
+    reporter.client(reports[0]!);
+    for (const report of reports.slice(1, 201)) reporter.client(report);
+    const before = lines.length;
+    reporter.client(reports[0]!);
+    expect(lines).toHaveLength(before);
+    reporter.client(reports[1]!);
+    expect(lines).toHaveLength(before + 1);
+    expect(parsed(lines).at(-1)!.report).toEqual(reports[1]!);
+  });
+
+  test('server pool replaces the oldest low-count fingerprint and flushes pending hits', () => {
+    const { reporter, lines } = setup();
+    for (let i = 0; i < 201; i += 1) {
+      const error = new Error('');
+      error.stack = `Error\n    at safe (/srv/packages/relic-server/src/file${i}.ts:1:0)`;
+      reporter.server(error, 'GET', '/health');
+      if (i < 200) reporter.server(error, 'GET', '/health');
+    }
+    expect(lines).toHaveLength(202);
+    const events = parsed(lines);
+    expect(events[200]!.report.frames[0]!.file).toBe(
+      'packages/relic-server/src/file0.ts'
+    );
+    expect(events[200]!.report.count).toBe(1);
+    expect(events[201]!.report.frames[0]!.file).toBe(
+      'packages/relic-server/src/file200.ts'
+    );
+  });
+
+  test('separate MCP build counts survive unknown versions sharing a fingerprint', () => {
+    const { reporter, lines, clock } = setup();
+    const one = { ...mcp(), revision: '1.0.0' };
+    const two = { ...mcp(), revision: '2.0.0' };
+    const unknown = { ...mcp(), revision: '999.0.0' };
+    for (const report of [one, one, two, two, unknown, unknown]) {
+      reporter.client(report);
+    }
+    clock(600_000);
+    reporter.client(one);
+    const events = parsed(lines);
+    expect(new Set(events.map((event) => event.fingerprint)).size).toBe(1);
+    const totals = new Map<string, number>();
+    for (const { report } of events) {
+      totals.set(
+        report.revision,
+        (totals.get(report.revision) ?? 0) + report.count
+      );
+    }
+    expect([...totals]).toEqual([
+      ['1.0.0', 3],
+      ['2.0.0', 2],
+      ['999.0.0', 2],
+    ]);
+  });
+
+  test('bounded per-fingerprint builds flush pending counts before replacement', () => {
+    const { reporter, lines } = setup();
+    for (let i = 0; i < 9; i += 1) {
+      const report = { ...mcp(), revision: `1.0.${i}` };
+      reporter.client(report);
+      if (i < 8) reporter.client(report);
+    }
+    const first = parsed(lines).filter(
+      (event) => event.report.revision === '1.0.0'
+    );
+    expect(first.map((event) => event.report.count)).toEqual([1, 1]);
+    reporter.client({ ...mcp(), revision: '1.0.0' });
+    expect(parsed(lines).at(-1)!.report.revision).toBe('1.0.0');
+  });
+
+  test('client expiry flushes pending hits and admits a fresh occurrence', () => {
+    const { reporter, lines, clock } = setup();
+    reporter.client(viewer());
+    reporter.client(viewer());
     clock(86_400_000);
-    reporter.client(clientReports[200]!);
-    expect(lines).toHaveLength(401);
-    noCanaries(lines);
+    reporter.client(viewer());
+    expect(parsed(lines).map((line) => line.report.count)).toEqual([1, 1, 1]);
   });
 
   test('never propagates a hostile exception, clock or sink failure', () => {

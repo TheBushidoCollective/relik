@@ -212,6 +212,7 @@ if (import.meta.main) {
     const mailer = mailerFromEnv(process.env);
     app = createApp({
       config,
+      acceptErrorReports: process.env['RELIC_ACCEPT_ERROR_REPORTS'] !== 'false',
       storage: await resolveStorage(),
       store: await resolveStore(),
       assets: diskAssets(

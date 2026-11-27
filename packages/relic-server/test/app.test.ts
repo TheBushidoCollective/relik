@@ -742,7 +742,10 @@ describe('reserved segments beat ids at the router', () => {
   test('/policy publishes the disclosure statement', async () => {
     const body = await app.fetch(req('/policy')).then((r) => r.text());
     expect(body).toContain(
-      `Error reports are published in the public Relik issue tracker with only these report fields: ${ERROR_REPORT_DISCLOSED_FIELDS.map((field) => `\`${field}\``).join(', ')}.`
+      `Scrubbed reports may become public issues in the Relik issue tracker. A submitted report contains only these report fields: ${ERROR_REPORT_DISCLOSED_FIELDS.map((field) => `\`${field}\``).join(', ')}.`
+    );
+    expect(body).toContain(
+      'A public issue also includes a derived `fingerprint`, a `builds` list and a seven-day count (`count7d`).'
     );
     expect(body).toContain(
       'Reports never include content, keys, fragments, relik IDs, email addresses, IP addresses, your file names, URLs, error messages or free text.'
