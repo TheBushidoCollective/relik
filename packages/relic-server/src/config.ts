@@ -23,6 +23,8 @@ export interface RelicConfig {
    * section 2).
    */
   readonly usercontentOrigin: string;
+  /** Source revision embedded by the image build; absent only in development. */
+  readonly revision: string | undefined;
 
   /** Published cap, on plaintext, verifiable with `ls`. */
   readonly plaintextCapBytes: number;
@@ -59,6 +61,8 @@ export interface RelicConfig {
   readonly abuseSlaHours: number;
 
   readonly publishRateLimit: RateLimitConfig;
+  readonly errorReportRateLimit: RateLimitConfig;
+  readonly errorReportGlobalRateLimit: RateLimitConfig;
   readonly mintRateLimit: RateLimitConfig;
   /** Sign-in requests per IP. Each one can send mail, so it is the tightest. */
   readonly authRateLimit: RateLimitConfig;
@@ -243,6 +247,7 @@ const DAY = 86_400;
 export const DEFAULT_CONFIG: RelicConfig = {
   serviceOrigin: 'https://relic.example',
   usercontentOrigin: 'https://relic-usercontent.example',
+  revision: undefined,
 
   plaintextCapBytes: PLAINTEXT_CAP_BYTES,
   ciphertextCapBytes: ciphertextCapBytes(),
@@ -260,6 +265,8 @@ export const DEFAULT_CONFIG: RelicConfig = {
   abuseSlaHours: 24,
 
   publishRateLimit: { limit: 60, windowSeconds: 3600 },
+  errorReportRateLimit: { limit: 30, windowSeconds: 3600 },
+  errorReportGlobalRateLimit: { limit: 600, windowSeconds: 3600 },
   mintRateLimit: { limit: 240, windowSeconds: 3600 },
   authRateLimit: { limit: 10, windowSeconds: 3600 },
   notificationRateLimit: { limit: 1, windowSeconds: 10 * 60 },
@@ -335,7 +342,16 @@ export const DEFAULT_CONFIG: RelicConfig = {
 export const GCS_MAX_SIGNED_URL_SECONDS = 604_800;
 
 export function assertConfig(config: RelicConfig): void {
+  if (config.revision === undefined) {
+    if (process.env['NODE_ENV'] === 'production') {
+      throw new Error('RELIC_REVISION is required in production');
+    }
+  } else if (!/^[0-9a-f]{40}$(?![\s\S])/.test(config.revision)) {
+    throw new Error('RELIC_REVISION must be a 40-character lowercase git SHA');
+  }
   for (const [name, budget] of [
+    ['errorReportRateLimit', config.errorReportRateLimit],
+    ['errorReportGlobalRateLimit', config.errorReportGlobalRateLimit],
     ['signingRateLimit', config.signingRateLimit],
     ['signingReadRateLimit', config.signingReadRateLimit],
     ['signingMailRateLimit', config.signingMailRateLimit],

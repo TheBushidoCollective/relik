@@ -4,6 +4,11 @@ import { createApp, type RelicApp } from './app.ts';
 import { diskAssets } from './assets.ts';
 import { assertConfig, DEFAULT_CONFIG, type RelicConfig } from './config.ts';
 import {
+  createErrorReporter,
+  type ErrorReporter,
+  serverErrorResponse,
+} from './error-report.ts';
+import {
   gcsStorage,
   metadataAccessToken,
   metadataSigner,
@@ -142,6 +147,7 @@ export function startRelicServer(options: {
   readonly config: RelicConfig;
   readonly app?: RelicApp;
   readonly role?: RelicRole;
+  readonly errorReporter?: ErrorReporter | undefined;
 }): Bun.Server<PresenceSocketData> {
   const role = options.role ?? roleFromEnv();
   if (role !== 'presence' && options.app === undefined) {
@@ -156,12 +162,26 @@ export function startRelicServer(options: {
     });
   }
   const relay = createPresenceRelay(options.config);
+  const reporter =
+    options.errorReporter ??
+    createErrorReporter({ revision: options.config.revision });
   return Bun.serve<PresenceSocketData>({
     port: options.port,
     fetch(request, server) {
       const path = new URL(request.url).pathname;
-      if (path.startsWith('/api/presence/'))
-        return relay.fetch(request, server);
+      if (path.startsWith('/api/presence/')) {
+        try {
+          return relay.fetch(request, server);
+        } catch (error) {
+          return serverErrorResponse(
+            error,
+            'GET',
+            '/api/presence/room',
+            options.config.revision,
+            reporter
+          );
+        }
+      }
       if (role === 'all' && app !== undefined) return app.fetch(request);
       if (path === '/health' && request.method === 'GET') {
         return Response.json({ status: 'ok' });
@@ -180,6 +200,7 @@ if (import.meta.main) {
       process.env['RELIC_SERVICE_ORIGIN'] ?? 'http://localhost:8080',
     usercontentOrigin:
       process.env['RELIC_USERCONTENT_ORIGIN'] ?? 'http://localhost:8081',
+    revision: process.env['RELIC_REVISION'] || undefined,
     killSwitchEngaged: process.env['RELIC_KILL_SWITCH'] === 'true',
     ...(process.env['RELIC_TRUSTED_PROXY_HOPS'] !== undefined
       ? { trustedProxyHops: Number(process.env['RELIC_TRUSTED_PROXY_HOPS']) }

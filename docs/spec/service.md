@@ -520,6 +520,8 @@ Items 1 to 10 describe public reliks, whose key is in the URL fragment. The para
 
 **Live presence disclosure.** `/policy` must describe presence on public and private reliks before anyone publishes. It must say that a signed-in reader receives presence while viewing a supported relik, and sends one encrypted, fixed-size update per second only while suggesting with the tab visible. It must name what the relay and the edge can observe: the key-derived room ID, IP address, user agent, connection and disconnection times, number of sockets in a room, frame sizes, and sending cadence. That cadence reveals when a reader is suggesting. The room ID does not name the relik, but the operator can usually correlate it with other requests by IP address and time. The browser also sends its same-origin session cookie; the relay does not read it. The disclosure must identify applicable connection-log retention and say that the relay cannot read cursor positions, typing ranges, display names, or typed text. Section 8.1 specifies the endpoint and limits.
 
+**Error report disclosure.** The service and viewer report uncaught errors automatically; the relic-mcp client reports only when its user sets `RELIC_ERROR_REPORTS=1`. The report fields are exactly `v`, `source`, `errorClass`, `route`, `revision`, `frames` and `count`, published in the public Relik issue tracker. Reports exclude content, keys, fragments, relik IDs, email addresses, IP addresses, user file names, URLs, error messages and free text. The request carrying a report is logged with the sender's IP address, so it can be matched by time and address. An automated agent may read a public report and propose a change; a person reviews it before it ships. Error report records in logs are kept 30 days. The public issue stays until deleted.
+
 
 10. **Decisions, passkeys, and version digests.**
 > **Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relik's link can read its decisions. Decisions are never edited or deleted, except that removing a relik removes its decisions with it.
@@ -1166,3 +1168,13 @@ it, and does not establish whether a signature is legally binding. Statement
 times come from the signer's clock and are checked within the challenge window;
 recorded, served, and completion times are unsigned service records. Deleting
 the whole relik removes the server's signing records.
+
+## 13. Error reports
+
+`POST /api/error-reports` accepts `application/json`, with an optional media-type parameter and no Origin requirement. Bodies are bounded to 4,096 bytes. The version 1 allowlist contains exactly `v`, `source`, `errorClass`, `route`, `revision`, `frames` and `count`; clients submit `source` of `viewer` or `mcp` and `count: 1`. Viewer revisions must match the server build, and viewer frame files must be assets the server actually serves. MCP revisions are checked by the issue filer against releases. Unknown or extra fields are refused.
+
+Accepted reports, including duplicates or reports dropped by aggregation caps, return `204` with an empty body and `cache-control: no-store`. Malformed input returns `400 invalid_error_report`, without logging the input. Other methods return `405`. Per instance, requests are limited to 30 per IP per hour and 600 globally per hour. A limit returns `429 error_report_rate_limited` with `retry-after`.
+
+An uncaught server error returns status 500, content type `text/plain`, and body `Something went wrong!`. The report replaces the request path with a fixed route template. For an uncaught exception, the reporter logs only a structured event with `severity`, `message`, `event`, `fingerprint` and `report`, where `event` is `relik.error_report.v1`. It emits the first occurrence immediately, combines later occurrences and flushes them on a later report at least 600 seconds after the previous emission. It uses no timer, so counts are lower bounds. Server and client fingerprints have separate 200-entry caps; client entries expire 24 hours after first sight.
+
+Production requires the 40-hex `RELIC_REVISION` supplied by the image build. Development without a revision emits no reports and prints uncaught errors locally. Error report log records are kept 30 days. Public issues remain until deleted.

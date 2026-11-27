@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   attestationChallenge,
@@ -2145,11 +2145,16 @@ describe('a designation whose sweep failed (PS2-06)', () => {
     await registerIdentity(second);
 
     const restore = failWrapSweeps();
-    await expect(
-      app.fetch(
-        req('/api/identity/recovery', await designationRequest(owner, second))
-      )
-    ).rejects.toThrow('store unavailable');
+    const sweep = spyOn(store, 'deleteWrapIf');
+    // Reverse the former rejection assertion: the boundary returns a generic 500.
+    const failedResponse = await app.fetch(
+      req('/api/identity/recovery', await designationRequest(owner, second))
+    );
+    expect(sweep).toHaveBeenCalled();
+    expect(failedResponse.status).toBe(500);
+    expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+    expect(await failedResponse.text()).toBe('Something went wrong!');
+    sweep.mockRestore();
     restore();
     expect(await store.getWrap(RELIC_ID, 1, firstKem.keyId)).toBeDefined();
 

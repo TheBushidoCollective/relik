@@ -1844,9 +1844,14 @@ describe('security review: server fixes', () => {
     const path = `/api/devices/${device}/revoke`;
 
     const restore = failNextSweep();
-    await expect(app.fetch(req(path, await revocationFor()))).rejects.toThrow(
-      'store unavailable'
-    );
+    const sweep = spyOn(store, 'deleteWrapIf');
+    // Reverse the former rejection assertion: the boundary returns a generic 500.
+    const failedResponse = await app.fetch(req(path, await revocationFor()));
+    expect(sweep).toHaveBeenCalled();
+    expect(failedResponse.status).toBe(500);
+    expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+    expect(await failedResponse.text()).toBe('Something went wrong!');
+    sweep.mockRestore();
     restore();
     expect((await store.getDevice(device))?.revokedAt).toBeDefined();
 

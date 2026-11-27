@@ -138,14 +138,21 @@ describe('the shell references what is actually served', () => {
   test('a disk source without valid build metadata refuses the shell', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'relic-shell-test-'));
     try {
-      const server = app(diskAssets(dir));
-      await expect(
-        server.fetch(get('/aaaaaaaaaaaaaaaaaaaaaaaaaa'))
-      ).rejects.toThrow('Missing or invalid shell-build.txt');
+      const source = diskAssets(dir);
+      const server = app(source);
+      // Reverse the former rejection assertion: the boundary returns a generic 500.
+      const missing = await server.fetch(get('/aaaaaaaaaaaaaaaaaaaaaaaaaa'));
+      expect(await source.get('shell-build.txt')).toBeUndefined();
+      expect(missing.status).toBe(500);
+      expect(missing.headers.get('content-type')).toBe('text/plain');
+      expect(await missing.text()).toBe('Something went wrong!');
       await writeFile(join(dir, 'shell-build.txt'), '');
-      await expect(
-        server.fetch(get('/aaaaaaaaaaaaaaaaaaaaaaaaaa'))
-      ).rejects.toThrow('Missing or invalid shell-build.txt');
+      // Reverse the former rejection assertion: the boundary returns a generic 500.
+      const empty = await server.fetch(get('/aaaaaaaaaaaaaaaaaaaaaaaaaa'));
+      expect((await source.get('shell-build.txt'))?.body.byteLength).toBe(0);
+      expect(empty.status).toBe(500);
+      expect(empty.headers.get('content-type')).toBe('text/plain');
+      expect(await empty.text()).toBe('Something went wrong!');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

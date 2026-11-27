@@ -21,6 +21,7 @@ import {
   COVER_WIDTH,
   crc32,
 } from '@relic/format/cover';
+import { ERROR_REPORT_DISCLOSED_FIELDS } from '@relic/format/error-report';
 import {
   createApp,
   type Mailer,
@@ -740,6 +741,33 @@ describe('reserved segments beat ids at the router', () => {
 
   test('/policy publishes the disclosure statement', async () => {
     const body = await app.fetch(req('/policy')).then((r) => r.text());
+    expect(body).toContain(
+      `Error reports are published in the public Relik issue tracker with only these report fields: ${ERROR_REPORT_DISCLOSED_FIELDS.map((field) => `\`${field}\``).join(', ')}.`
+    );
+    expect(body).toContain(
+      'Reports never include content, keys, fragments, relik IDs, email addresses, IP addresses, your file names, URLs, error messages or free text.'
+    );
+    expect(body).toContain(
+      'These limits prevent accidental capture; a person submitting a report can still choose valid values.'
+    );
+    expect(body).toContain(
+      'The service and web viewer report errors automatically.'
+    );
+    expect(body).toContain(
+      'The relic-mcp client reports only when its user sets `RELIC_ERROR_REPORTS=1`.'
+    );
+    expect(body).toContain(
+      "The request carrying a report is logged with the sender's IP address like any other request, so it can be matched by time and address."
+    );
+    expect(body).toContain(
+      'An automated agent may read a public report and propose a change; a person reviews it before it ships.'
+    );
+    expect(body).toContain(
+      'Error report records in our logs: 30 days. The public issue stays until we delete it.'
+    );
+    expect(body.indexOf('## Error reports')).toBeLessThan(
+      body.indexOf('## Retention, per sink')
+    );
     expect(body).toContain('Your browser never sends the');
     expect(body).toContain('enters the model');
     expect(body).toContain('Deleted does not mean erased');
@@ -2760,18 +2788,25 @@ describe('delete by id', () => {
     storage.put(`${id}/v2`, await encrypted('second version', key));
 
     const digest = storage.digest.bind(storage);
+    let injected = false;
     storage.digest = async (objectKey) => {
-      if (objectKey === `${id}/v2`) throw new Error('digest failed with 503');
+      if (objectKey === `${id}/v2`) {
+        injected = true;
+        throw new Error('digest failed with 503');
+      }
       return digest(objectKey);
     };
-    await expect(
-      app.fetch(
-        req(`/api/relics/${id}`, {
-          method: 'DELETE',
-          headers: { authorization: 'Bearer operator-secret' },
-        })
-      )
-    ).rejects.toThrow('digest failed with 503');
+    // Reverse the former rejection assertion: the boundary returns a generic 500.
+    const response = await app.fetch(
+      req(`/api/relics/${id}`, {
+        method: 'DELETE',
+        headers: { authorization: 'Bearer operator-secret' },
+      })
+    );
+    expect(injected).toBe(true);
+    expect(response.status).toBe(500);
+    expect(response.headers.get('content-type')).toBe('text/plain');
+    expect(await response.text()).toBe('Something went wrong!');
 
     expect(await app.store.getTombstone(id)).toBeUndefined();
     expect(await app.store.isBlocklisted(v1Hash)).toBe(false);

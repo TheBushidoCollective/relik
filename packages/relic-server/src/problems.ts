@@ -14,6 +14,8 @@ import type { CoverValidationFailure } from '@relic/format/cover';
 
 /** Every code the app server can emit. */
 export type ProblemCode =
+  | 'invalid_error_report'
+  | 'error_report_rate_limited'
   // The twelve cases (`spec/service.md` 1.1)
   | 'relic_not_found'
   | 'relic_expired'
@@ -139,6 +141,8 @@ export type ProblemCode =
   | 'grant_not_found';
 
 const STATUS: Readonly<Record<ProblemCode, number>> = {
+  invalid_error_report: 400,
+  error_report_rate_limited: 429,
   relic_not_found: 404,
   relic_expired: 410,
   relic_removed: 410,
@@ -243,6 +247,8 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
 
 /** `title` SHOULD NOT change from occurrence to occurrence, per RFC 9457. */
 const TITLE: Readonly<Record<ProblemCode, string>> = {
+  invalid_error_report: 'Invalid error report',
+  error_report_rate_limited: 'Too many error reports',
   relic_not_found: 'No such relik',
   relic_expired: 'Relik expired',
   relic_removed: 'Relik removed',

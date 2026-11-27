@@ -38,6 +38,8 @@ RUN bun run --filter '@relic/viewer' build
 FROM oven/bun:1.4.3-alpine AS runtime
 WORKDIR /app
 
+ARG RELIC_REVISION
+ENV RELIC_REVISION=${RELIC_REVISION}
 ENV NODE_ENV=production
 # Refuses to start on memory storage under NODE_ENV=production, so a
 # misconfigured deploy fails at boot rather than silently losing every relic.
