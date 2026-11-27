@@ -11,6 +11,7 @@
     "./csv": "./src/csv.ts",
     "./cover": "./src/cover.ts",
     "./epub-package": "./src/epub-package.ts",
+    "./error-report": "./src/error-report.ts",
     "./epub-render": "./src/epub-render.ts",
     "./image-identity": "./src/image-identity.ts",
     "./json-tree": "./src/json-tree.ts",
