@@ -15,6 +15,8 @@ resource "google_project_service" "relic" {
     "iamcredentials.googleapis.com",
     # The Resend API key is mounted from Secret Manager.
     "secretmanager.googleapis.com",
+    # The error-report sink, bucket, and log view.
+    "logging.googleapis.com",
   ])
 
   project = var.project_id

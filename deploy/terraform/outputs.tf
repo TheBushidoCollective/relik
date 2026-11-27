@@ -68,3 +68,8 @@ output "app_service_account" {
   description = "Identity both Cloud Run services run as."
   value       = module.relic.app_service_account
 }
+
+output "error_report_reader_email" {
+  description = "Identity used by the error-report issue filer."
+  value       = google_service_account.error_report_reader.email
+}
