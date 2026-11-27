@@ -1,7 +1,17 @@
-import type { ValidEntry } from './entries.ts';
-import type { GitHub, Issue } from './github.ts';
+import type { KnownSets } from '@relic/format/error-report';
+import type { RevisionAuthority, ValidEntry } from './entries.ts';
+import {
+  type GitHub,
+  type Issue,
+  type IssueAuthor,
+  isFilerAuthor,
+} from './github.ts';
 import {
   type IssueData,
+  BEGIN,
+  END,
+  authorizeIssueData,
+  framesForIssue,
   issueTitle,
   parseRegion,
   renderRegion,
@@ -33,6 +43,7 @@ export interface Plan {
   actions: Action[];
   candidates: Candidate[];
   truncated: number;
+  isolated: { invalid: number; duplicate: number };
 }
 
 interface Group {
@@ -55,7 +66,7 @@ function aggregate(entries: readonly ValidEntry[]): Group[] {
       if (newest === undefined) throw new Error('Empty aggregate');
       const builds = new Map<
         string,
-        { revision: string; frames: typeof newest.report.frames }
+        { revision: string; frames: IssueData['builds'][number]['frames'] }
       >();
       let count7d = 0;
       for (const record of records) {
@@ -64,7 +75,7 @@ function aggregate(entries: readonly ValidEntry[]): Group[] {
         if (!builds.has(record.report.revision))
           builds.set(record.report.revision, {
             revision: record.report.revision,
-            frames: record.report.frames,
+            frames: framesForIssue(record.report.source, record.report.frames),
           });
       }
       const data: IssueData = {
@@ -92,49 +103,106 @@ function aggregate(entries: readonly ValidEntry[]): Group[] {
 export async function planReports(
   entries: readonly ValidEntry[],
   github: GitHub,
-  options: { now: number; autofix: 'on' | 'off' }
+  options: {
+    now: number;
+    autofix: 'on' | 'off';
+    authority: RevisionAuthority;
+    known?: KnownSets;
+    filerAuthor?: IssueAuthor;
+  }
 ): Promise<Plan> {
-  const issues = await github.listIssues();
-  const byFingerprint = new Map<string, Issue>();
+  const issues = (await github.listIssues()).filter(
+    (issue) =>
+      isFilerAuthor(issue.author, options.filerAuthor) &&
+      (issue.labels.includes('error-report') ||
+        /^Error report: .+ \[[0-9a-f]{16}\]$/.test(issue.title) ||
+        issue.body.includes(BEGIN))
+  );
+  const records: Array<{ issue: Issue; data: IssueData; claims: Set<string> }> =
+    [];
+  const claimCounts = new Map<string, number>();
+  const blocked = new Set<string>();
+  let invalid = 0;
+  for (const issue of issues) {
+    const claims = new Set<string>();
+    const titleFingerprint = / \[([0-9a-f]{16})\]$/.exec(issue.title)?.[1];
+    if (titleFingerprint) claims.add(titleFingerprint);
+    const data = parseRegion(issue.body);
+    if (data) claims.add(data.fingerprint);
+    // A damaged region can still claim a fingerprint without being trusted data.
+    const begin = issue.body.indexOf(BEGIN);
+    const end = issue.body.lastIndexOf(END);
+    const region =
+      begin < 0 ? '' : issue.body.slice(begin, end < begin ? undefined : end);
+    for (const match of region.matchAll(/```json\n([\s\S]*?)\n```/g)) {
+      try {
+        const claim: unknown = JSON.parse(match[1] ?? '');
+        if (
+          typeof claim === 'object' &&
+          claim !== null &&
+          'fingerprint' in claim &&
+          typeof claim.fingerprint === 'string' &&
+          /^[0-9a-f]{16}$/.test(claim.fingerprint)
+        )
+          claims.add(claim.fingerprint);
+      } catch {
+        // An invalid JSON block can claim only the fingerprint in the title.
+      }
+    }
+    for (const fingerprint of claims)
+      claimCounts.set(fingerprint, (claimCounts.get(fingerprint) ?? 0) + 1);
+    if (
+      data === null ||
+      issue.title !== issueTitle(data) ||
+      !authorizeIssueData(data, options.authority, options.known)
+    ) {
+      invalid++;
+      for (const fingerprint of claims) blocked.add(fingerprint);
+      continue;
+    }
+    records.push({ issue, data, claims });
+  }
+  let duplicate = 0;
+  for (const [fingerprint, count] of claimCounts) {
+    if (count > 1) {
+      blocked.add(fingerprint);
+      duplicate++;
+    }
+  }
+  const byFingerprint = new Map<string, { issue: Issue; data: IssueData }>();
   let serverCreated = 0;
   let clientCreated = 0;
-  for (const issue of issues) {
-    const titleFingerprint = / \[([0-9a-f]{16})\]$/.exec(issue.title)?.[1];
-    const data = parseRegion(issue.body);
-    if (data && titleFingerprint && data.fingerprint !== titleFingerprint)
-      throw new Error('Existing issue has conflicting fingerprints');
-    const fingerprint = data?.fingerprint ?? titleFingerprint;
-    if (fingerprint !== undefined) {
-      if (byFingerprint.has(fingerprint))
-        throw new Error('Duplicate error report fingerprint');
-      byFingerprint.set(fingerprint, issue);
-    }
+  for (const { issue, data, claims } of records) {
+    if ([...claims].some((fingerprint) => blocked.has(fingerprint))) continue;
+    byFingerprint.set(data.fingerprint, { issue, data });
     if (Date.parse(issue.createdAt) >= options.now - DAY) {
       const server =
-        issue.labels.includes('source:server') || data?.source === 'server';
+        issue.labels.includes('source:server') || data.source === 'server';
       const client =
         issue.labels.includes('source:viewer') ||
         issue.labels.includes('source:mcp') ||
-        data?.source === 'viewer' ||
-        data?.source === 'mcp';
+        data.source === 'viewer' ||
+        data.source === 'mcp';
       if (server || !client) serverCreated++;
       if (client || !server) clientCreated++;
     }
   }
   let autofixUsed = 0;
   if (options.autofix === 'on') {
-    for (const issue of issues) {
+    for (const { issue } of byFingerprint.values()) {
       for (const time of await github.autofixLabelTimes(issue.number)) {
         if (Date.parse(time) >= options.now - DAY) autofixUsed++;
       }
     }
   }
-  const all = aggregate(entries);
+  const all = aggregate(entries).filter(
+    (group) => !blocked.has(group.data.fingerprint)
+  );
   const actions: Action[] = [];
   const candidates: Candidate[] = [];
   for (const group of all.slice(0, MAX_FINGERPRINTS)) {
     const data = group.data;
-    const issue = byFingerprint.get(data.fingerprint);
+    const issue = byFingerprint.get(data.fingerprint)?.issue;
     const sourceLabel = `source:${data.source}`;
     if (issue === undefined) {
       if (
@@ -153,8 +221,6 @@ export async function planReports(
         labels: ['error-report', sourceLabel],
       });
     } else {
-      if (issue.title !== issueTitle(data))
-        throw new Error('Existing issue title does not match report');
       const body = replaceRegion(issue.body, data);
       if (body !== issue.body)
         actions.push({
@@ -209,16 +275,13 @@ export async function planReports(
   // A seven-day count must decay to zero when the last hit ages out.
   const active = new Set(all.map((group) => group.data.fingerprint));
   const stale: Array<{ issue: Issue; data: IssueData }> = [];
-  for (const [fingerprint, issue] of byFingerprint) {
+  for (const [fingerprint, { issue, data }] of byFingerprint) {
     if (active.has(fingerprint)) continue;
-    const data = parseRegion(issue.body);
     if (data && data.count7d > 0) stale.push({ issue, data });
   }
   stale.sort((a, b) => a.issue.number - b.issue.number);
   const remaining = Math.max(0, MAX_FINGERPRINTS - all.length);
   for (const { issue, data } of stale.slice(0, remaining)) {
-    if (issue.title !== issueTitle(data))
-      throw new Error('Existing issue title does not match report');
     actions.push({
       kind: 'update',
       fingerprint: data.fingerprint,
@@ -235,6 +298,7 @@ export async function planReports(
   return {
     actions,
     candidates,
+    isolated: { invalid, duplicate },
     truncated:
       Math.max(0, all.length - MAX_FINGERPRINTS) +
       Math.max(0, stale.length - remaining),

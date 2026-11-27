@@ -24,7 +24,7 @@ import {
   attestBrowserHeadless,
   createBrowserHeadlessLaunch,
 } from '../../relic-mcp/test/browser-headless.ts';
-import { parseRegion, renderRegion } from '../src/render.ts';
+import { framesForIssue, parseRegion, renderRegion } from '../src/render.ts';
 
 const args = process.argv.slice(2);
 if (
@@ -110,7 +110,12 @@ function check(source: ErrorReport['source']): void {
     source: report.source,
     errorClass: report.errorClass,
     route: report.route,
-    builds: [{ revision: report.revision, frames: report.frames }],
+    builds: [
+      {
+        revision: report.revision,
+        frames: framesForIssue(report.source, report.frames),
+      },
+    ],
     count7d: report.count,
   });
   assert.ok(parseRegion(body));

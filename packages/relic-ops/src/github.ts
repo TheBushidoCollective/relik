@@ -1,7 +1,65 @@
 import { BEGIN } from './render.ts';
 
+export const FILER_AUTHOR_LOGIN = 'github-actions[bot]';
+export const FILER_AUTHOR_ID = 41898282;
+export const FILER_AUTHOR_TYPE = 'Bot';
+
+export interface IssueAuthor {
+  login: string;
+  id: number;
+  type: string;
+}
+
+export const DEFAULT_FILER_AUTHOR: IssueAuthor = Object.freeze({
+  login: FILER_AUTHOR_LOGIN,
+  id: FILER_AUTHOR_ID,
+  type: FILER_AUTHOR_TYPE,
+});
+
+export function filerAuthorFromEnv(
+  env: Record<string, string | undefined>
+): IssueAuthor {
+  const login = env.ERROR_REPORT_FILER_LOGIN ?? FILER_AUTHOR_LOGIN;
+  const id = env.ERROR_REPORT_FILER_ID ?? String(FILER_AUTHOR_ID);
+  const type = env.ERROR_REPORT_FILER_TYPE ?? FILER_AUTHOR_TYPE;
+  if (
+    !login ||
+    !type ||
+    !/^[1-9]\d*$/.test(id) ||
+    !Number.isSafeInteger(Number(id))
+  )
+    throw new Error('Invalid error report filer identity');
+  return { login, id: Number(id), type };
+}
+
+function decodeAuthor(value: unknown): IssueAuthor | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return null;
+  const author = value as Record<string, unknown>;
+  if (
+    typeof author.login !== 'string' ||
+    !Number.isSafeInteger(author.id) ||
+    (author.id as number) < 1 ||
+    typeof author.type !== 'string'
+  )
+    return null;
+  return { login: author.login, id: author.id as number, type: author.type };
+}
+
+export function isFilerAuthor(
+  author: IssueAuthor | null | undefined,
+  expected: IssueAuthor = DEFAULT_FILER_AUTHOR
+): boolean {
+  return (
+    author?.login === expected.login &&
+    author.id === expected.id &&
+    author.type === expected.type
+  );
+}
+
 export interface Issue {
   number: number;
+  author: IssueAuthor | null;
   title: string;
   body: string;
   state: 'open' | 'closed';
@@ -52,6 +110,7 @@ function decodeIssue(value: unknown): Issue {
   });
   return {
     number: data.number as number,
+    author: decodeAuthor(data.user),
     title: data.title,
     body: data.body ?? '',
     state: data.state,
@@ -71,7 +130,8 @@ export class GitHubRest implements GitHub {
     private readonly request: (
       input: RequestInfo | URL,
       init?: RequestInit
-    ) => Promise<Response> = fetch
+    ) => Promise<Response> = fetch,
+    private readonly filerAuthor: IssueAuthor = DEFAULT_FILER_AUTHOR
   ) {
     if (!token) throw new Error('Missing GitHub token');
   }
@@ -119,7 +179,9 @@ export class GitHubRest implements GitHub {
         (value) =>
           typeof value === 'object' &&
           value !== null &&
-          !('pull_request' in value)
+          !('pull_request' in value) &&
+          'user' in value &&
+          isFilerAuthor(decodeAuthor(value.user), this.filerAuthor)
       )
       .map(decodeIssue)
       .filter(
@@ -216,7 +278,8 @@ export class MemoryGitHub implements GitHub {
   writes = 0;
   constructor(
     issues: Issue[] = [],
-    private readonly now = () => new Date().toISOString()
+    private readonly now = () => new Date().toISOString(),
+    private readonly filerAuthor: IssueAuthor = DEFAULT_FILER_AUTHOR
   ) {
     this.issues = structuredClone(issues);
   }
@@ -242,6 +305,7 @@ export class MemoryGitHub implements GitHub {
     this.writes++;
     const issue: Issue = {
       number: Math.max(0, ...this.issues.map((value) => value.number)) + 1,
+      author: { ...this.filerAuthor },
       title,
       body,
       labels: [...labels],

@@ -2,13 +2,26 @@ import {
   type ErrorFrame,
   type ErrorReport,
   fingerprintOf,
+  type KnownSets,
   parseLoggedReport,
 } from '@relic/format/error-report';
+import { authorizeReport, type RevisionAuthority } from './entries.ts';
 
 export const BEGIN = '<!-- relik-error-report:begin -->';
 export const END = '<!-- relik-error-report:end -->';
 const INTRO =
   'This report contains only allowlisted diagnostic fields. Counts are lower bounds.';
+
+export type IssueFrame = ErrorFrame | { file: string };
+
+export function framesForIssue(
+  source: ErrorReport['source'],
+  frames: ErrorFrame[]
+): IssueFrame[] {
+  return source === 'server'
+    ? frames.map((frame) => ({ ...frame }))
+    : frames.map(({ file }) => ({ file }));
+}
 
 export interface IssueData {
   v: 1;
@@ -16,7 +29,7 @@ export interface IssueData {
   source: ErrorReport['source'];
   errorClass: ErrorReport['errorClass'];
   route: string;
-  builds: Array<{ revision: string; frames: ErrorFrame[] }>;
+  builds: Array<{ revision: string; frames: IssueFrame[] }>;
   count7d: number;
 }
 
@@ -62,23 +75,40 @@ export function parseIssueData(value: unknown): IssueData | null {
     )
       return null;
     const item = build as Record<string, unknown>;
+    if (!Array.isArray(item.frames)) return null;
+    const client = input.source === 'viewer' || input.source === 'mcp';
+    if (
+      !item.frames.every(
+        (frame: unknown) =>
+          typeof frame === 'object' &&
+          frame !== null &&
+          !Array.isArray(frame) &&
+          exactKeys(frame, client ? ['file'] : ['file', 'line', 'column'])
+      )
+    )
+      return null;
+    const frames = client
+      ? item.frames.map((frame: { file: unknown }) => ({
+          file: frame.file,
+          line: 1,
+          column: 0,
+        }))
+      : item.frames;
     const report = parseLoggedReport({
       v: 1,
       source: input.source,
       errorClass: input.errorClass,
       route: input.route,
       revision: item.revision,
-      frames: item.frames,
+      frames,
       count: 1,
     });
-    if (
-      report === null ||
-      fingerprintOf(report) !== input.fingerprint ||
-      revisions.has(report.revision)
-    )
+    if (report === null || revisions.has(report.revision)) return null;
+    const issueFrames = framesForIssue(report.source, report.frames);
+    if (fingerprintOf({ ...report, frames: issueFrames }) !== input.fingerprint)
       return null;
     revisions.add(report.revision);
-    builds.push({ revision: report.revision, frames: report.frames });
+    builds.push({ revision: report.revision, frames: issueFrames });
   }
   const first = builds[0];
   if (first === undefined) return null;
@@ -88,7 +118,10 @@ export function parseIssueData(value: unknown): IssueData | null {
     errorClass: input.errorClass,
     route: input.route,
     revision: first.revision,
-    frames: first.frames,
+    frames:
+      input.source === 'server'
+        ? first.frames
+        : first.frames.map(({ file }) => ({ file, line: 1, column: 0 })),
     count: 1,
   });
   if (report === null) return null;
@@ -103,6 +136,33 @@ export function parseIssueData(value: unknown): IssueData | null {
   };
 }
 
+export function authorizeIssueData(
+  data: IssueData,
+  authority: RevisionAuthority,
+  known?: KnownSets
+): boolean {
+  for (const build of data.builds) {
+    const report = parseLoggedReport({
+      v: 1,
+      source: data.source,
+      errorClass: data.errorClass,
+      route: data.route,
+      revision: build.revision,
+      frames:
+        data.source === 'server'
+          ? build.frames
+          : build.frames.map(({ file }) => ({ file, line: 1, column: 0 })),
+      count: 1,
+    });
+    if (
+      report === null ||
+      'reason' in authorizeReport(report, authority, known)
+    )
+      return false;
+  }
+  return true;
+}
+
 export function renderRegion(data: IssueData): string {
   const safe = parseIssueData(data);
   if (safe === null) throw new Error('Invalid issue data');
@@ -111,7 +171,11 @@ export function renderRegion(data: IssueData): string {
     frames.length === 0
       ? 'No frames.'
       : frames
-          .map((frame) => `- \`${frame.file}:${frame.line}:${frame.column}\``)
+          .map((frame) =>
+            'line' in frame
+              ? `- \`${frame.file}:${frame.line}:${frame.column}\``
+              : `- \`${frame.file}\``
+          )
           .join('\n');
   return [
     BEGIN,

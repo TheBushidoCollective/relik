@@ -11,13 +11,17 @@ import {
   type RevisionAuthority,
   validateEntries,
 } from '../src/entries.ts';
-import { GitHubRest, MemoryGitHub } from '../src/github.ts';
+import {
+  DEFAULT_FILER_AUTHOR,
+  GitHubRest,
+  MemoryGitHub,
+} from '../src/github.ts';
 import {
   CloudLoggingTransport,
   LOG_VIEW,
   readLogEntries,
 } from '../src/logging.ts';
-import { applyPlan, planReports } from '../src/plan.ts';
+import { applyPlan, planReports as planWithAuthority } from '../src/plan.ts';
 import {
   issueTitle,
   parseRegion,
@@ -40,6 +44,13 @@ const authority: RevisionAuthority = {
   commitDate: () => REV_DATE,
   serverFrameExists: () => true,
 };
+function planReports(
+  entries: Parameters<typeof planWithAuthority>[0],
+  github: Parameters<typeof planWithAuthority>[1],
+  options: Omit<Parameters<typeof planWithAuthority>[2], 'authority'>
+) {
+  return planWithAuthority(entries, github, { ...options, authority });
+}
 const clock = () => new Date(NOW).toISOString();
 let scratch: string;
 
@@ -101,6 +112,14 @@ async function mutant(
   source = source.replaceAll(
     "'./render.ts'",
     JSON.stringify(fileURLToPathForRender())
+  );
+  source = source.replaceAll(
+    "'./entries.ts'",
+    JSON.stringify(new URL('../src/entries.ts', import.meta.url).pathname)
+  );
+  source = source.replaceAll(
+    "'./github.ts'",
+    JSON.stringify(new URL('../src/github.ts', import.meta.url).pathname)
   );
   const path = join(scratch, `${file}-${crypto.randomUUID()}.ts`);
   await writeFile(path, source);
@@ -341,6 +360,7 @@ describe('filing and grammar', () => {
     const brokenSecond = await broken.planReports(entries, github, {
       now: NOW,
       autofix: 'off',
+      authority,
     });
     expect(() => assertNoActions(brokenSecond.actions.length)).toThrow();
   });
@@ -392,7 +412,7 @@ describe('filing and grammar', () => {
         ],
         clock
       ),
-      { now: NOW + 8 * 86_400_000, autofix: 'off' }
+      { now: NOW + 8 * 86_400_000, autofix: 'off', authority }
     );
     expect(() => assert.equal(unsafe.actions.length, 1)).toThrow();
   });
@@ -430,6 +450,7 @@ describe('filing and grammar', () => {
     const unsafe = await broken.planReports(entries, github, {
       now: NOW,
       autofix: 'on',
+      authority,
     });
     const unsafeCount = (source: string) =>
       unsafe.actions.filter(
@@ -449,6 +470,7 @@ describe('filing and grammar', () => {
     const unsafeAutofix = await brokenAutofix.planReports(entries, github, {
       now: NOW,
       autofix: 'on',
+      authority,
     });
     expect(() => assert.equal(unsafeAutofix.candidates.length, 3)).toThrow();
     await applyPlan(plan, github, 'live');
@@ -514,6 +536,7 @@ describe('filing and grammar', () => {
       [
         {
           number: 1,
+          author: DEFAULT_FILER_AUTHOR,
           title: issueTitle(data),
           body: old,
           state: 'open',
@@ -584,6 +607,7 @@ describe('filing and grammar', () => {
     const unsafe = await broken.planReports(entries, github, {
       now: NOW,
       autofix: 'off',
+      authority,
     });
     expect(() => assert.equal(hasSeenLabel(unsafe), false)).toThrow();
   });
@@ -600,6 +624,7 @@ test('discovers a report even when its title and labels were changed', async () 
   const original = memory.issues[0]!;
   const response = {
     number: original.number,
+    user: original.author,
     title: 'Renamed by an owner',
     body: original.body,
     state: 'open',
@@ -614,9 +639,9 @@ test('discovers a report even when its title and labels were changed', async () 
   };
   const github = new GitHubRest('fake-token', request);
   assert.equal((await github.listIssues()).length, 1);
-  await expect(
-    planReports(entries, github, { now: NOW, autofix: 'off' })
-  ).rejects.toThrow('Existing issue title does not match report');
+  const plan = await planReports(entries, github, { now: NOW, autofix: 'off' });
+  assert.equal(plan.isolated.invalid, 1);
+  assert.equal(plan.actions.length, 0);
 });
 
 test('offline fixture CLI prints its dry-run plan and refuses live or cloud', async () => {

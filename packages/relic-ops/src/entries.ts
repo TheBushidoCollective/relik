@@ -65,19 +65,31 @@ export class GitAuthority implements RevisionAuthority {
     try {
       const ref =
         source === 'mcp' ? `refs/tags/relic-mcp-v${revision}` : revision;
-      execFileSync('git', ['cat-file', '-e', `${ref}^{commit}`], {
-        stdio: 'ignore',
-      });
+      const commit = execFileSync(
+        'git',
+        ['rev-parse', '--verify', `${ref}^{commit}`],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }
+      ).trim();
+      if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('Invalid commit');
       if (source !== 'mcp') {
         execFileSync(
           'git',
-          ['merge-base', '--is-ancestor', revision, this.main],
-          { stdio: 'ignore' }
+          ['merge-base', '--is-ancestor', commit, this.main],
+          {
+            stdio: 'ignore',
+          }
         );
       }
-      const value = execFileSync('git', ['show', '-s', '--format=%cI', ref], {
-        encoding: 'utf8',
-      }).trim();
+      const value = execFileSync(
+        'git',
+        ['show', '-s', '--format=%cI', commit],
+        {
+          encoding: 'utf8',
+        }
+      ).trim();
       if (Number.isFinite(Date.parse(value)))
         date = new Date(value).toISOString();
     } catch {
@@ -114,6 +126,27 @@ export class GitAuthority implements RevisionAuthority {
     const length = this.files.get(key);
     return length !== null && length !== undefined && line <= length;
   }
+}
+
+/** Apply the same build and source authority to log entries and stored issues. */
+export function authorizeReport(
+  report: ErrorReport,
+  authority: RevisionAuthority,
+  known?: KnownSets
+): { committedAt: string } | { reason: 'revision' | 'frame' } {
+  if (known && parseLoggedReport(report, known) === null)
+    return { reason: 'revision' };
+  const committedAt = authority.commitDate(report.source, report.revision);
+  if (committedAt === null) return { reason: 'revision' };
+  if (
+    report.source === 'server' &&
+    report.frames.some(
+      (frame) =>
+        !authority.serverFrameExists(report.revision, frame.file, frame.line)
+    )
+  )
+    return { reason: 'frame' };
+  return { committedAt };
 }
 
 export type DropReason =
@@ -194,23 +227,9 @@ export function validateEntries(
       dropped.fingerprint++;
       continue;
     }
-    if (options.known && parseLoggedReport(p.report, options.known) === null) {
-      dropped.revision++;
-      continue;
-    }
-    const committedAt = authority.commitDate(report.source, report.revision);
-    if (committedAt === null) {
-      dropped.revision++;
-      continue;
-    }
-    if (
-      report.source === 'server' &&
-      report.frames.some(
-        (frame) =>
-          !authority.serverFrameExists(report.revision, frame.file, frame.line)
-      )
-    ) {
-      dropped.frame++;
+    const authorized = authorizeReport(report, authority, options.known);
+    if ('reason' in authorized) {
+      dropped[authorized.reason]++;
       continue;
     }
     if (typeof entry.insertId === 'string') {
@@ -225,7 +244,7 @@ export function validateEntries(
       timestamp: new Date(timestamp).toISOString(),
       fingerprint: p.fingerprint,
       report,
-      committedAt,
+      committedAt: authorized.committedAt,
     });
   }
   return { entries, dropped };

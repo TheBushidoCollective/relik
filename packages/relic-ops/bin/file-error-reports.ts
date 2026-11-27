@@ -1,6 +1,6 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { GitAuthority, validateEntries } from '../src/entries.ts';
-import { GitHubRest, MemoryGitHub } from '../src/github.ts';
+import { filerAuthorFromEnv, GitHubRest, MemoryGitHub } from '../src/github.ts';
 import { CloudLoggingTransport, readLogEntries } from '../src/logging.ts';
 import { applyPlan, planReports } from '../src/plan.ts';
 
@@ -66,16 +66,24 @@ const entries: unknown =
 if (!Array.isArray(entries) || entries.length > 50_000)
   throw new Error('Entries must be an array of at most 50000 records');
 const authority = new GitAuthority();
+const known = authority.knownSets();
 const checked = validateEntries(entries, authority, {
   now,
   since,
-  known: authority.knownSets(),
+  known,
 });
+const filerAuthor = filerAuthorFromEnv(process.env);
 const github =
   fixture === 'empty'
-    ? new MemoryGitHub()
-    : new GitHubRest(process.env.GITHUB_TOKEN ?? '');
-const plan = await planReports(checked.entries, github, { now, autofix });
+    ? new MemoryGitHub([], undefined, filerAuthor)
+    : new GitHubRest(process.env.GITHUB_TOKEN ?? '', fetch, filerAuthor);
+const plan = await planReports(checked.entries, github, {
+  now,
+  autofix,
+  authority,
+  known,
+  filerAuthor,
+});
 const candidates = await applyPlan(plan, github, mode);
 const summary = JSON.stringify(
   {
@@ -83,6 +91,7 @@ const summary = JSON.stringify(
     accepted: checked.entries.length,
     dropped: checked.dropped,
     truncated: plan.truncated,
+    isolated: plan.isolated,
     actions: plan.actions.map((action) => ({
       kind: action.kind,
       fingerprint: action.fingerprint,

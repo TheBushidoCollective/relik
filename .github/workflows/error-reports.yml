@@ -51,6 +51,9 @@ jobs:
           REPORT_MODE: ${{ inputs.mode || vars.ERROR_REPORTS_MODE || 'dry-run' }}
           LIVE_SINCE: ${{ vars.ERROR_REPORTS_LIVE_SINCE }}
           AUTOFIX_MODE: ${{ vars.AUTOFIX_MODE || 'off' }}
+          ERROR_REPORT_FILER_LOGIN: 'github-actions[bot]'
+          ERROR_REPORT_FILER_ID: '41898282'
+          ERROR_REPORT_FILER_TYPE: 'Bot'
         run: |
           set -euo pipefail
           bun packages/relic-ops/bin/file-error-reports.ts \
