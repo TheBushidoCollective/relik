@@ -367,6 +367,11 @@ jobs:
           '
 
       - name: Build the readable bundle without recompiling native prebuilds
+        # The only build that may report errors. A bundle built anywhere else,
+        # including every local and CI test build, is never stamped as a
+        # release, and relic-mcp refuses to send an error report from it.
+        env:
+          RELIC_RELEASE_BUILD: '1'
         run: |
           set -euo pipefail
           bun run --filter 'relic-mcp' build:bundle
