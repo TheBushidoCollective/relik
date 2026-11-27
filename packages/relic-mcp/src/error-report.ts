@@ -62,6 +62,7 @@ export async function reportMcpError(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(report),
+      redirect: 'error',
       signal: AbortSignal.timeout(2000),
     });
   } catch {

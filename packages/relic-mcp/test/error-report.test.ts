@@ -317,6 +317,51 @@ describe('MCP error reports', () => {
     expect(count).toBe(1);
   });
 
+  test('does not send reports to a cross-origin 307 or 308 redirect', async () => {
+    process.env['RELIC_ERROR_REPORTS'] = '1';
+    const deliveries: string[] = [];
+    const collector = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request) {
+        deliveries.push(await request.text());
+        return new Response(null, { status: 204 });
+      },
+    });
+    let initialRequests = 0;
+    try {
+      for (const [status, error] of [
+        [307, new SyntaxError('private detail')],
+        [308, new RangeError('private detail')],
+      ] as const) {
+        const redirector = Bun.serve({
+          hostname: '127.0.0.1',
+          port: 0,
+          fetch() {
+            initialRequests++;
+            return new Response(null, {
+              status,
+              headers: {
+                location: `http://127.0.0.1:${collector.port}/collect`,
+              },
+            });
+          },
+        });
+        try {
+          await fixture.reportMcpError(error, 'process', {
+            serviceOrigin: `http://127.0.0.1:${redirector.port}`,
+          });
+        } finally {
+          redirector.stop(true);
+        }
+      }
+      expect(initialRequests).toBe(2);
+      expect(deliveries).toEqual([]);
+    } finally {
+      collector.stop(true);
+    }
+  });
+
   test('the privacy assertion fails on a deliberately broken serializer', async () => {
     process.env['RELIC_ERROR_REPORTS'] = '1';
     const source = await readFile(reporterPath, 'utf8');
