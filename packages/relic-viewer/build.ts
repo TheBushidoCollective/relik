@@ -10,7 +10,7 @@
  * carries the metadata demuxer.
  */
 
-import { copyFile, mkdir, readdir } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, rm } from 'node:fs/promises';
 import { REGISTER_SW_JS } from '../relic-server/src/assets.ts';
 
 const pkgDir = new URL('.', import.meta.url).pathname;
@@ -196,6 +196,14 @@ export async function buildViewer(options?: {
 }): Promise<string> {
   const out = options?.outdir ?? `${pkgDir}dist/`;
   await mkdir(out, { recursive: true });
+  const sourceMaps = process.env['RELIC_VIEWER_SOURCEMAP'] === '1';
+  if (!sourceMaps) {
+    // A previous symbolication build must not leave maps in a normal build.
+    const oldMaps = (await readdir(out)).filter((name) =>
+      name.endsWith('.js.map')
+    );
+    await Promise.all(oldMaps.map((name) => rm(`${out}${name}`)));
+  }
   const mediabunny = await readMediabunnyDistribution();
 
   // Build renderer code separately so the parent can transfer it as text.
@@ -239,6 +247,7 @@ export async function buildViewer(options?: {
     format: 'esm',
     minify: true,
     splitting: true,
+    sourcemap: sourceMaps ? 'external' : 'none',
     naming: '[name].js',
     // React picks its development or production build by reading
     // `process.env.NODE_ENV`; with no define the bundler keeps the development
@@ -327,6 +336,7 @@ export async function buildViewer(options?: {
       format: 'esm',
       minify: true,
       splitting: false,
+      sourcemap: sourceMaps && entry === 'model-view' ? 'external' : 'none',
       naming: '[name].js',
     });
     if (!modelBuild.success) {
@@ -345,6 +355,7 @@ export async function buildViewer(options?: {
   // `main.js` is served as `viewer.js`, because that is the name the shell and
   // the service worker's cache list both reference.
   await copyFile(`${out}main.js`, `${out}viewer.js`);
+  if (sourceMaps) await copyFile(`${out}main.js.map`, `${out}viewer.js.map`);
   await Bun.write(
     `${out}styles.css`,
     new Blob([
