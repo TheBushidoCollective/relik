@@ -55,6 +55,24 @@ For any client that takes a JSON config:
 Call the `relic_describe_client` tool and it will tell you all of this itself,
 without reading a file or making a request.
 
+## Error reports
+
+Error reports are off by default. Set `RELIC_ERROR_REPORTS=1` in the MCP
+server's environment to opt in. Release versions send reports for unexpected
+tool failures and process crashes to the configured Relik service. Development
+builds do not send reports. `relic_describe_client` shows whether reporting is
+on or off.
+Expected validation and refusal outcomes are not reported, including
+validation refusals from `relic_apply_suggestions`.
+
+Each report contains the schema version, source (`mcp`), error class, tool
+name or `process`, client version, up to eight code locations (bundled file,
+line, and column), and count. It excludes error messages, relik IDs, keys,
+email addresses, shared file names, and input text. Reports may be published as
+public issues and read by an automated agent that proposes a fix for human
+review. The service logs the report request's IP address like any other
+request, so it can be correlated by time and address.
+
 ## What it does not protect against
 
 The tool returns the full URL, and the key lives in that URL's fragment,

@@ -39,6 +39,7 @@ import {
   readComments,
   resolveComment,
 } from './comments.ts';
+import { mcpErrorReportsEnabled, reportMcpError } from './error-report.ts';
 import { FolderReadError } from './folder-reader.ts';
 import {
   type ListResult,
@@ -2509,8 +2510,24 @@ export async function handleMessage(
         },
       };
 
-    case 'tools/call':
-      return callTool(id, message.params ?? {}, deps);
+    case 'tools/call': {
+      try {
+        return await callTool(id, message.params ?? {}, deps);
+      } catch (error) {
+        if (
+          !(error instanceof PublishError) &&
+          !(error instanceof FolderReadError) &&
+          !(error instanceof ServerRefusal)
+        ) {
+          const name = message.params?.['name'];
+          await reportMcpError(error, typeof name === 'string' ? name : '', {
+            serviceOrigin: deps.serviceOrigin,
+            fetch: deps.fetch,
+          });
+        }
+        return { jsonrpc: '2.0', id, result: toolError(error, false) };
+      }
+    }
 
     default:
       return errorResponse(
@@ -2588,6 +2605,7 @@ async function callTool(
             'at most one email per person per relik per 10 minutes, and one stop link stops every email about that relik',
           sharing:
             "For a public relik, relic_share sends addresses to the service and composes the key-bearing share email locally for the owner to send. On a private relik, relic_share composes grant_url for the owner's browser; grants and invitations always need the owner's passkey. The private call sends nothing to the service.",
+          error_reports: mcpErrorReportsEnabled() ? 'on' : 'off',
           service_origin: deps.serviceOrigin,
         },
         isError: false,
@@ -4677,7 +4695,10 @@ const REFUSAL_GUIDANCE: Readonly<Record<string, string>> = {
  * publish as a protocol error would hide it from the model, which then cannot
  * tell the user what went wrong or act on it.
  */
-function toolError(error: unknown): Record<string, unknown> {
+function toolError(
+  error: unknown,
+  propagateUnexpected = true
+): Record<string, unknown> {
   if (error instanceof PublishError || error instanceof FolderReadError) {
     return {
       content: [{ type: 'text', text: `${error.code}: ${error.message}` }],
@@ -4700,6 +4721,7 @@ function toolError(error: unknown): Record<string, unknown> {
       isError: true,
     };
   }
+  if (propagateUnexpected) throw error;
   return {
     content: [{ type: 'text', text: `the call failed: ${String(error)}` }],
     structuredContent: { code: 'unknown' },
@@ -4741,6 +4763,12 @@ What happens when you publish a file:
 What the service operator can see: that a relik exists, roughly how big it is,
 what coarse class it was declared as, the title, the publishing IP, and when it
 was fetched. Never the contents, and never the key.
+
+Error reports: ${mcpErrorReportsEnabled() ? 'on' : 'off'}. Release builds report
+unexpected failures only when RELIC_ERROR_REPORTS=1. The report contains the
+error class, tool name, client version, code locations and count, never an
+error message, shared file name, relik ID or key. Reports may become public issues.
+The request is logged with the sender's IP like any other service request.
 
 What this keeps on disk: for each relik you publish, its id, source identity,
 key, and publish token, in a 0600 file under your user config directory. The

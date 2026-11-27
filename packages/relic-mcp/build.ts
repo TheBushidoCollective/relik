@@ -51,6 +51,9 @@ const built = await Bun.build({
   // drift from the tarball the way a literal in the source did.
   define: {
     'process.env.RELIC_MCP_VERSION': JSON.stringify(pkg.version),
+    __RELIC_RELEASE_BUILD__: JSON.stringify(
+      process.env.RELIC_RELEASE_BUILD === '1'
+    ),
     'process.env.RELIC_MCP_COVER_DIR': JSON.stringify('./cover/'),
     __RELIC_PROGRAM_ASSET_BASE__: JSON.stringify('./program/'),
   },
