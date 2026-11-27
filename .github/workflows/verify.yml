@@ -19,7 +19,9 @@ permissions:
 # the race could just as easily have killed the run that gates the deploy
 # rather than the redundant standalone one. On main, deploy owns verification.
 concurrency:
-  group: verify-${{ github.ref }}-${{ github.event_name }}
+  # github.workflow is the caller's name inside a reusable call, so a direct
+  # run, a deploy's gate and a release's gate never cancel one another.
+  group: verify-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 env:

@@ -158,10 +158,25 @@ fi
 
 say "Workload Identity provider: ${PROVIDER_ID}"
 # The attribute condition is the security boundary. Without it, any GitHub
-# repository in the world could mint a token for this pool. It pins the
-# numeric repository ID so a rename or transfer cannot silently break deploys.
-MAPPING="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_id=assertion.repository_id,attribute.ref=assertion.ref"
-CONDITION="assertion.repository_id == '${REPO_ID}'"
+# repository in the world could mint a token for this pool.
+#
+# Two phases, so a wrong claim can never lock deploys out in one step:
+#   default run:         the condition is the numeric repository ID (a rename or
+#                        transfer cannot silently break deploys), the pinned
+#                        member is added and the old repository-wide member is
+#                        KEPT. Deploy once and watch it succeed.
+#   RETIRE_REPO_WIDE=1:  the condition also requires the exact main ref and the
+#                        deploy workflow's identity, and the repository-wide
+#                        member is removed. If the next deploy fails to
+#                        authenticate, run with RESTORE_REPO_WIDE=1.
+MAPPING="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_id=assertion.repository_id,attribute.ref=assertion.ref,attribute.job_workflow_ref=assertion.job_workflow_ref"
+BROAD_CONDITION="assertion.repository_id == '${REPO_ID}'"
+STRICT_CONDITION="assertion.repository_id == '${REPO_ID}' && assertion.ref == 'refs/heads/main' && assertion.job_workflow_ref == '${REPO}/.github/workflows/deploy.yml@refs/heads/main'"
+if [ "${RETIRE_REPO_WIDE:-0}" = "1" ] && [ "${RESTORE_REPO_WIDE:-0}" != "1" ]; then
+  CONDITION="${STRICT_CONDITION}"
+else
+  CONDITION="${BROAD_CONDITION}"
+fi
 if ! g iam workload-identity-pools providers describe "${PROVIDER_ID}" \
       --location=global --workload-identity-pool="${POOL_ID}" >/dev/null 2>&1; then
   g iam workload-identity-pools providers create-oidc "${PROVIDER_ID}" \
@@ -193,19 +208,27 @@ g iam service-accounts add-iam-policy-binding "${DEPLOYER_EMAIL}" \
   --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/subject/${DEPLOYER_SUBJECT}" \
   >/dev/null
 
-# Removed only after the pinned member exists, so a failure in between leaves
-# deploys working rather than locked out.
 REPO_WIDE_MEMBER="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository_id/${REPO_ID}"
-EXISTING_REPO_WIDE_MEMBER="$(g iam service-accounts get-iam-policy "${DEPLOYER_EMAIL}" \
-  --flatten="bindings[].members" \
-  --filter="bindings.role:roles/iam.workloadIdentityUser AND bindings.members:${REPO_WIDE_MEMBER}" \
-  --format="value(bindings.members)")"
-if [ -n "${EXISTING_REPO_WIDE_MEMBER}" ]; then
-  say "Removing repository-wide impersonation of the deployer"
-  g iam service-accounts remove-iam-policy-binding "${DEPLOYER_EMAIL}" \
+if [ "${RETIRE_REPO_WIDE:-0}" = "1" ] && [ "${RESTORE_REPO_WIDE:-0}" != "1" ]; then
+  EXISTING_REPO_WIDE_MEMBER="$(g iam service-accounts get-iam-policy "${DEPLOYER_EMAIL}" \
+    --flatten="bindings[].members" \
+    --filter="bindings.role:roles/iam.workloadIdentityUser AND bindings.members:${REPO_WIDE_MEMBER}" \
+    --format="value(bindings.members)")"
+  if [ -n "${EXISTING_REPO_WIDE_MEMBER}" ]; then
+    say "Removing repository-wide impersonation of the deployer"
+    g iam service-accounts remove-iam-policy-binding "${DEPLOYER_EMAIL}" \
+      --role=roles/iam.workloadIdentityUser \
+      --member="${REPO_WIDE_MEMBER}" \
+      >/dev/null
+  fi
+else
+  # Not retiring: make sure the old member is present, so this is also the
+  # restore path. The pinned member stays either way.
+  g iam service-accounts add-iam-policy-binding "${DEPLOYER_EMAIL}" \
     --role=roles/iam.workloadIdentityUser \
     --member="${REPO_WIDE_MEMBER}" \
     >/dev/null
+  echo "  The repository-wide member is still present. Deploy once, then rerun with RETIRE_REPO_WIDE=1."
 fi
 
 for PREVIOUS_REPO in ${PREVIOUS_REPOS}; do
@@ -222,6 +245,24 @@ for PREVIOUS_REPO in ${PREVIOUS_REPOS}; do
       >/dev/null
   fi
 done
+
+say "Who can impersonate the deployer now"
+DEPLOYER_MEMBERS="$(g iam service-accounts get-iam-policy "${DEPLOYER_EMAIL}" \
+  --flatten="bindings[].members" \
+  --filter="bindings.role:roles/iam.workloadIdentityUser" \
+  --format="value(bindings.members)")"
+echo "${DEPLOYER_MEMBERS}" | sed 's/^/  /'
+if ! echo "${DEPLOYER_MEMBERS}" | grep -qF "subject/${DEPLOYER_SUBJECT}"; then
+  echo "  FAILED: the pinned production-environment member is missing" >&2
+  exit 1
+fi
+if [ "${RETIRE_REPO_WIDE:-0}" = "1" ] && [ "${RESTORE_REPO_WIDE:-0}" != "1" ]; then
+  if echo "${DEPLOYER_MEMBERS}" | grep -qF "attribute.repository_id/${REPO_ID}"; then
+    echo "  FAILED: the repository-wide member is still present" >&2
+    exit 1
+  fi
+  echo "  Only the pinned member remains. The next deploy must authenticate."
+fi
 
 WIF_PROVIDER="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
 
