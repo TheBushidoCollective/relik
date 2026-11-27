@@ -3,6 +3,13 @@ name: verify
 on:
   pull_request:
   workflow_call:
+  # Lets a workflow dispatch this on a branch whose pull request was opened by
+  # GITHUB_TOKEN, which GitHub does not start pull_request runs for.
+  workflow_dispatch:
+
+# Read-only. Every job here only reads the repository; nothing needs to write.
+permissions:
+  contents: read
 
 # Deliberately not `push: branches: [main]`.
 #

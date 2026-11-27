@@ -27,6 +27,10 @@ on:
       - '**.md'
       - 'docs/**'
 
+# Read-only. It uploads evidence as artifacts and writes nothing else.
+permissions:
+  contents: read
+
 # A newer push to the same pull request supersedes the run in flight. Each
 # push to main keeps its own report.
 concurrency:

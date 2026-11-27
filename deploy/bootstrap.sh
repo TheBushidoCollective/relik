@@ -127,7 +127,8 @@ for ROLE in \
   roles/iam.serviceAccountAdmin \
   roles/iam.serviceAccountUser \
   roles/resourcemanager.projectIamAdmin \
-  roles/serviceusage.serviceUsageAdmin
+  roles/serviceusage.serviceUsageAdmin \
+  roles/logging.configWriter
 do
   # Retried for the same propagation reason.
   for ATTEMPT in $(seq 1 10); do
@@ -179,11 +180,33 @@ else
     --attribute-condition="${CONDITION}"
 fi
 
-say "Letting repository ${REPO_ID} (${REPO}) impersonate the deployer"
+say "Letting ${REPO}'s production environment impersonate the deployer"
+# Pinned to one OIDC subject, not to the whole repository. The old member was
+# attribute.repository_id, which let any job in the repository with
+# id-token: write, on any branch, act as the deployer. Only a job that runs in
+# the `production` environment carries this subject, and that environment can
+# deploy from main only. The subject names the repository as GitHub spells it
+# when the token is minted, so a repository rename needs this script rerun.
+DEPLOYER_SUBJECT="repo:${REPO}:environment:production"
 g iam service-accounts add-iam-policy-binding "${DEPLOYER_EMAIL}" \
   --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository_id/${REPO_ID}" \
+  --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/subject/${DEPLOYER_SUBJECT}" \
   >/dev/null
+
+# Removed only after the pinned member exists, so a failure in between leaves
+# deploys working rather than locked out.
+REPO_WIDE_MEMBER="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository_id/${REPO_ID}"
+EXISTING_REPO_WIDE_MEMBER="$(g iam service-accounts get-iam-policy "${DEPLOYER_EMAIL}" \
+  --flatten="bindings[].members" \
+  --filter="bindings.role:roles/iam.workloadIdentityUser AND bindings.members:${REPO_WIDE_MEMBER}" \
+  --format="value(bindings.members)")"
+if [ -n "${EXISTING_REPO_WIDE_MEMBER}" ]; then
+  say "Removing repository-wide impersonation of the deployer"
+  g iam service-accounts remove-iam-policy-binding "${DEPLOYER_EMAIL}" \
+    --role=roles/iam.workloadIdentityUser \
+    --member="${REPO_WIDE_MEMBER}" \
+    >/dev/null
+fi
 
 for PREVIOUS_REPO in ${PREVIOUS_REPOS}; do
   PREVIOUS_MEMBER="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${PREVIOUS_REPO}"

@@ -41,6 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
+    # A manual dispatch from any other branch would otherwise run the production
+    # job from that branch's workflow file. Deploys come from main only.
+    if: github.ref == 'refs/heads/main'
 
     steps:
       - uses: actions/checkout@v4
