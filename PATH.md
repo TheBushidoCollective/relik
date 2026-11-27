@@ -1,3 +1,24 @@
+# Scrubbed error reports
+
+The loopback proof exercises a server exception, a viewer error in the built viewer, and an opted-in release-stamped MCP crash. Each reaches the in-memory report recorder and an allowlisted issue body. It makes no GitHub or Google API calls.
+
+```sh
+bun run --cwd packages/relic-viewer build
+RELIC_CHROME_PATH=/absolute/path/to/owned/headless/chrome bun run packages/relic-ops/bin/error-report-path.ts --leg all
+```
+
+Success prints `ERROR_REPORT_SERVER_PATH_OK`, `ERROR_REPORT_VIEWER_PATH_OK`, `ERROR_REPORT_MCP_PATH_OK`, and `ERROR_REPORT_PATH_OK`. Without a Chrome path the local viewer leg is explicitly skipped and the all-legs command prints `ERROR_REPORT_PATH_PARTIAL`, not a pass. CI requires Chrome. The individual legs can be selected with `--leg server`, `--leg viewer`, or `--leg mcp`.
+
+## Production read check before live filing
+
+1. Keep `ERROR_REPORTS_MODE=dry-run` and `AUTOFIX_MODE=off`. Confirm the logging sink, dedicated bucket, reader account and main-ref Workload Identity binding are deployed.
+2. Run the `error reports` workflow on main in dry-run mode. Confirm the file job authenticates and reads the dedicated view, the step summary shows accepted and dropped counts, and no issue or label write occurs. A quiet bucket does not prove a report reached it.
+3. When a legitimate report exists, confirm its log record is visible to this identity and that the dry-run plan contains only allowlisted report fields. Do not create a production error or test issue to manufacture a record.
+4. After that read check, set `ERROR_REPORTS_LIVE_SINCE` to the intended RFC 3339 cutoff and explicitly set `ERROR_REPORTS_MODE=live`. Records before the cutoff are ignored. The first live run creates missing fixed labels as needed and is capped at five server and five client issues per rolling 24 hours.
+5. Audit an issue with `GITHUB_TOKEN=<read-token> bun packages/relic-ops/bin/audit-issue.ts <issue-number>`. `ERROR_REPORT_ISSUE_AUDIT_OK` proves the filer-owned region matches the allowlist grammar, not that the logged error is reproducible.
+
+The current workflow only files issues and emits a capped autofix candidate list. It does not run an autofix job.
+
 # Deployment smoke safety
 
 After `bun run build`, run `bun scripts/deploy-smoke-path.ts`. It executes both deployment smoke scripts against a loopback application with in-memory state and checks the exact read-only request sequence. Success ends with `DEPLOY_SMOKE_PATH_OK`, after concurrent runs preserve planted symlinks and clean up their private temporary directories, both restored POST probes are rejected, and a missing asset fails the smoke check. No production requests are made.

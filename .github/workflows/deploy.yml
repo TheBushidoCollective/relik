@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           REPO="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/relic/server"
-          docker build -f deploy/docker/server/Dockerfile -t "$REPO:${{ github.sha }}" .
+          docker build --build-arg RELIC_REVISION=${{ github.sha }} -f deploy/docker/server/Dockerfile -t "$REPO:${{ github.sha }}" .
           docker push "$REPO:${{ github.sha }}"
 
           # Deploy by digest, never by tag. A tag can be moved, which makes
@@ -181,6 +181,7 @@ jobs:
       - name: Smoke test the deployment
         env:
           SERVICE: ${{ steps.urls.outputs.service }}
+          EXPECTED_REVISION: ${{ github.sha }}
           # The presence module is applied unconditionally above, so the relay
           # must answer through the load balancer or this deploy is red.
           PRESENCE_DEPLOYED: "true"

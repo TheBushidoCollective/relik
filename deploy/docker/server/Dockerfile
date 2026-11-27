@@ -22,6 +22,7 @@ COPY packages/relic-format/package.json packages/relic-format/
 COPY packages/relic-server/package.json packages/relic-server/
 COPY packages/relic-mcp/package.json packages/relic-mcp/
 COPY packages/relic-viewer/package.json packages/relic-viewer/
+COPY packages/relic-ops/package.json packages/relic-ops/
 RUN bun install --frozen-lockfile
 
 COPY . .

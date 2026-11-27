@@ -98,6 +98,9 @@ jobs:
       - name: Build MCP bundle
         run: bun run --cwd packages/relic-mcp build
 
+      - name: Error report path
+        run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun run packages/relic-ops/bin/error-report-path.ts --leg all
+
       - name: Cover path
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/cover-path.ts
       - name: Notify path
@@ -472,7 +475,7 @@ jobs:
       - name: Build the deploy image without pushing it
         run: |
           set -euo pipefail
-          docker build -f deploy/docker/server/Dockerfile -t "$IMAGE" .
+          docker build --build-arg RELIC_REVISION=${{ github.sha }} -f deploy/docker/server/Dockerfile -t "$IMAGE" .
 
       - name: Boot the image and smoke its served assets
         run: |

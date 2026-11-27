@@ -1,0 +1,14 @@
+{
+  "name": "@relic/ops",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@relic/format": "workspace:*",
+    "@relic/server": "workspace:*",
+    "relic-mcp": "workspace:*"
+  }
+}
