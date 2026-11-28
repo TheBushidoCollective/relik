@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { checkPatch } from '../src/patch-policy.ts';
 import {
+  isOriginalTestPath,
   passesOriginalTests,
   proveRegression,
   type TestRun,
@@ -117,7 +118,7 @@ try {
     }
   )
     .split('\0')
-    .filter((path) => /\.test\.ts$/.test(path));
+    .filter(isOriginalTestPath);
   if (
     !originalPackages.every((name) =>
       originalTests.some((path) => path.startsWith(`packages/${name}/test/`))

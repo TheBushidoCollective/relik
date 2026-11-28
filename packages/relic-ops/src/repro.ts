@@ -5,6 +5,14 @@ export interface TestRun {
   errors: number;
 }
 
+export function isOriginalTestPath(path: string): boolean {
+  return (
+    /^packages\/relic-(?:format|server|viewer|mcp)\/test\/.+\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(
+      path
+    ) && !path.split('/').includes('..')
+  );
+}
+
 export function passesOriginalTests(result: TestRun): boolean {
   return (
     result.exitCode === 0 &&

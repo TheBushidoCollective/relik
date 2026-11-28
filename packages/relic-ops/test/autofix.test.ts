@@ -5,7 +5,11 @@ import { issueTitle, renderRegion } from '../src/render.ts';
 import { issueInput } from '../src/issue-input.ts';
 import { makePrompt } from '../src/prompt.ts';
 import { checkPatch, hasCredential } from '../src/patch-policy.ts';
-import { passesOriginalTests, proveRegression } from '../src/repro.ts';
+import {
+  isOriginalTestPath,
+  passesOriginalTests,
+  proveRegression,
+} from '../src/repro.ts';
 
 const report = (
   await Bun.file(new URL('../fixtures/reports.json', import.meta.url)).json()
@@ -288,5 +292,20 @@ describe('regression proof', () => {
     expect(
       passesOriginalTests({ exitCode: 0, failed: 0, errors: 0, passed: 0 })
     ).toBe(false);
+  });
+  test('includes supported original test and spec extensions', () => {
+    for (const name of [
+      'a.test.ts',
+      'b.spec.ts',
+      'c.test.tsx',
+      'd.spec.js',
+      'e.test.mjs',
+    ])
+      expect(isOriginalTestPath(`packages/relic-viewer/test/${name}`)).toBe(
+        true
+      );
+    expect(isOriginalTestPath('packages/relic-viewer/test/fixture.ts')).toBe(
+      false
+    );
   });
 });

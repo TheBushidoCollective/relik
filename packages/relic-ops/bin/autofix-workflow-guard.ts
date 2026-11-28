@@ -395,6 +395,7 @@ export function guardReplaySource(source: string): void {
     "'ls-files'",
     'originalPackages.every(',
     'sourceIncludes',
+    '.filter(isOriginalTestPath)',
     'passesOriginalTests(originalResult)',
     'constants.O_NOFOLLOW',
     'constants.O_NONBLOCK',

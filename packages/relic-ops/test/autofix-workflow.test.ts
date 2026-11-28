@@ -58,6 +58,7 @@ test('replay wrapper refuses mutations that expose the host or credentials', () 
     replaySource.replace('constants.O_NOFOLLOW', '0'),
     replaySource.replace('constants.O_NONBLOCK', '0'),
     replaySource.replace("'ls-files'", "'status'"),
+    replaySource.replace('.filter(isOriginalTestPath)', '.filter(() => true)'),
     replaySource.replace('originalPackages.every(', 'originalPackages.some('),
   ];
   for (const mutant of mutants) {
