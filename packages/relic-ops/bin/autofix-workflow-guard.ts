@@ -155,6 +155,11 @@ export function guardWorkflows(
       scan.run.includes('autofix-check-canary.ts')
   );
   requireIt(
+    scan.run.includes(
+      'autofix-scan.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/omp-agent/agent.db" "$RUNNER_TEMP/omp-agent-writable/agent.db"'
+    )
+  );
+  requireIt(
     scan.run.includes('GIT_TERMINAL_PROMPT=0') &&
       scan.run.includes(
         'GIT_OBJECT_DIRECTORY="$RUNNER_TEMP/autofix-objects"'
@@ -178,6 +183,10 @@ export function guardWorkflows(
         'rm -rf -- "$RUNNER_TEMP/autofix-work" "$RUNNER_TEMP/autofix-objects"'
       ) &&
       cleanup.run.includes("|| { echo 'Autofix cleanup refused' >&2; exit 1; }")
+  );
+  requireIt(
+    cleanup.run.includes('rm -rf -- "$RUNNER_TEMP/omp-agent-writable"') &&
+      cleanup.run.includes('chmod u+w "$RUNNER_TEMP/omp-agent"')
   );
   const install = stepByName(
     sandbox,
@@ -423,7 +432,14 @@ export function guardLauncherSource(source: string): void {
     '--security-opt no-new-privileges',
     '--pids-limit 256',
     '--ulimit fsize=1048576:1048576',
-    'src=$agent,dst=$agent,readonly',
+    'agent_copy="$RUNNER_TEMP/omp-agent-writable"',
+    'mkdir -m 700 "$agent_copy"',
+    'chmod 0400 "$agent/$name"',
+    'install -m 0600 "$agent/$name" "$agent_copy/$name"',
+    'chmod 0500 "$agent"',
+    '--mount "type=bind,src=$agent_copy,dst=$agent"',
+    'python3 "$RUNNER_TEMP/omp-runtime/runtime.py" verify',
+    '--agent-dir "$agent" --runtime-dir "$RUNNER_TEMP/omp-runtime" --require-credential',
     '! -S /var/run/docker.sock',
     '! command -v sudo',
     '[[ $$ == 1',
@@ -432,6 +448,20 @@ export function guardLauncherSource(source: string): void {
     "' >/dev/null 2>&1",
   ])
     requireIt(source.includes(required));
+  const verified = source.indexOf(
+    'python3 "$RUNNER_TEMP/omp-runtime/runtime.py" verify'
+  );
+  const copied = source.indexOf(
+    'install -m 0600 "$agent/$name" "$agent_copy/$name"'
+  );
+  const mounted = source.indexOf(
+    '--mount "type=bind,src=$agent_copy,dst=$agent"'
+  );
+  requireIt(verified >= 0 && copied > verified && mounted > copied);
+  requireIt(
+    !source.includes('--agent-dir "$agent_copy"') &&
+      !/src=\$agent(?:\/|,)/.test(source)
+  );
   requireIt(
     !/--env\s+["']?(?:ACTIONS_|GITHUB_TOKEN|GH_TOKEN|OMP_VAULT_)/.test(source)
   );

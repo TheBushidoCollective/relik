@@ -288,6 +288,21 @@ test('privileged checkout, scan root and disposable git objects are guarded', ()
   expect(() => guard(reusable, caller, sandbox, changed)).toThrow();
 });
 
+test('workflow scans both original and final writable credentials and always cleans both', () => {
+  const original = '"$RUNNER_TEMP/omp-agent/agent.db"';
+  const writable = '"$RUNNER_TEMP/omp-agent-writable/agent.db"';
+  const copy = '"$RUNNER_TEMP/omp-agent-writable"';
+  expect(sandbox).toContain(`${original} ${writable}`);
+  expect(sandbox).toContain(`rm -rf -- ${copy}`);
+  for (const changed of [
+    sandbox.replace(`${original} ${writable}`, original),
+    sandbox.replace(`rm -rf -- ${copy}`, 'true'),
+  ]) {
+    expect(changed).not.toBe(sandbox);
+    expect(() => guard(reusable, caller, changed)).toThrow();
+  }
+});
+
 test('canary has no proposer, repository writes or path into proposal', () => {
   const mutants = [
     canary.replace(

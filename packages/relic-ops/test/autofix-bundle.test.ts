@@ -42,6 +42,25 @@ async function run(kind: string, wrongPin = false) {
   };
 }
 describe('pinned bundle boundary', () => {
+  test('pins the reviewed bundle and its unchanged eight-member allowlist', async () => {
+    const pin = await readFile(
+      new URL('../../../.github/omp-context.pin', import.meta.url),
+      'utf8'
+    );
+    expect(pin.trim()).toBe(
+      '9fa8832a5b1c8eb134d68b397bc07262c9719f20467eafb8c3dcffd57d1b4e92'
+    );
+    expect((await readFile(list, 'utf8')).trim().split('\n')).toEqual([
+      'bin/install-omp',
+      'bin/prepare-relik.sh',
+      'memory/relik/snapshot.db',
+      'projects/relik/RULES.md',
+      'projects/relik/bundle-files.txt',
+      'projects/relik/empty-agent.db',
+      'projects/relik/runtime.py',
+      'projects/relik/settings.json',
+    ]);
+  });
   test('extracts the exact allowlist only after hash verification', async () => {
     const { result, target } = await run('valid');
     expect(result.status).toBe(0);
