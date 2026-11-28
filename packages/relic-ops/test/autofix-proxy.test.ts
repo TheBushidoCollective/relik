@@ -19,15 +19,23 @@ assert 0 < proxy.HANDSHAKE_TIMEOUT <= 30
 assert 0 < proxy.IDLE_TIMEOUT <= 60
 
 started = queue.Queue()
+processed = queue.Queue()
 finished = queue.Queue()
 release = threading.Event()
 
-class HoldingHandler:
-    def __init__(self, request, address, server):
-        started.put(None)
-        release.wait()
+original_exact = proxy.exact
+def observed_exact(stream, count, deadline):
+    started.put(None)
+    release.wait()
+    return original_exact(stream, count, deadline)
+proxy.exact = observed_exact
 
 class ObservedServer(proxy.Server):
+    def process_request(self, request, address):
+        requests.append(request)
+        super().process_request(request, address)
+        processed.put(request.fileno() != -1)
+
     def process_request_thread(self, request, address):
         try:
             super().process_request_thread(request, address)
@@ -45,38 +53,42 @@ elif len(sys.argv) > 2 and sys.argv[2] == '--lose-release':
     import socketserver
     proxy.Server.process_request_thread = socketserver.ThreadingTCPServer.process_request_thread
 
-server = ObservedServer(('127.0.0.1', 0), HoldingHandler)
+server = ObservedServer(('127.0.0.1', 0), proxy.Handler)
 assert server.server_address[0] == '127.0.0.1'
 assert server.server_address[1] != 0
 peers = []
 requests = []
+
+def connect():
+    worker = threading.Thread(target=server.handle_request)
+    worker.start()
+    peer = socket.create_connection(server.server_address)
+    peers.append(peer)
+    accepted = processed.get()
+    worker.join()
+    return peer, accepted
+
 try:
     for _ in range(proxy.MAX_CONNECTIONS):
-        peer, request = socket.socketpair()
-        peers.append(peer)
-        requests.append(request)
-        server.process_request(request, ('127.0.0.1', 0))
-    for _ in range(proxy.MAX_CONNECTIONS):
+        peer, accepted = connect()
+        assert accepted, 'available slot was not admitted'
         started.get()
 
-    peer, request = socket.socketpair()
-    peers.append(peer)
-    requests.append(request)
-    server.process_request(request, ('127.0.0.1', 0))
-    assert request.fileno() == -1, 'overflow connection was not rejected'
+    peer, accepted = connect()
+    assert not accepted, 'overflow connection was not rejected'
     assert peer.recv(1) == b'', 'rejected peer did not receive EOF'
+    for client in peers:
+        client.close()
 
     release.set()
     for _ in range(proxy.MAX_CONNECTIONS):
         finished.get()
     release.clear()
 
-    peer, request = socket.socketpair()
-    peers.append(peer)
-    requests.append(request)
-    server.process_request(request, ('127.0.0.1', 0))
-    assert request.fileno() != -1, 'released slot was not reusable'
+    peer, accepted = connect()
+    assert accepted, 'released slot was not reusable'
     started.get()
+    peer.close()
     release.set()
     finished.get()
 finally:
