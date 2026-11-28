@@ -161,6 +161,18 @@ export async function proveCommentConfirmations(
     ),
     '1'
   );
+  await session.waitFor(
+    `!document.querySelector(${JSON.stringify(remove(ids[0]!))}) && ` +
+      `!document.querySelector(${JSON.stringify(remove(ids[1]!))}) && ` +
+      "!!document.querySelector('.action-comments .action-count')"
+  );
+  const countBeforeDelete = await session.evaluate<number>(
+    "Number(document.querySelector('.action-comments .action-count').textContent)"
+  );
+  assert.ok(
+    Number.isSafeInteger(countBeforeDelete) && countBeforeDelete > 0,
+    'the taskbar shows a valid comment count before deletion'
+  );
   const held = fixture.holdNextDelete(ids[2]!);
   await click(session, remove(ids[2]!));
   const sent = await Promise.race([
@@ -183,12 +195,10 @@ export async function proveCommentConfirmations(
   await session.waitFor(
     "!!document.querySelector('dialog.skipped-panel[open]')"
   );
-  await session.evaluate(
-    "globalThis.__confirmOldBar = document.querySelector('.bar')"
-  );
   held.release();
   await session.waitFor(
-    "document.querySelector('.bar') !== globalThis.__confirmOldBar"
+    `!document.querySelector(${JSON.stringify(remove(ids[2]!))}) && ` +
+      `Number(document.querySelector('.action-comments .action-count')?.textContent) === ${countBeforeDelete - 1}`
   );
   await absent(fixture, ids[2]!);
   await session.waitFor(
