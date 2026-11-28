@@ -11,9 +11,6 @@ on:
 permissions:
   contents: read
 
-permissions:
-  contents: read
-
 # Deliberately not `push: branches: [main]`.
 #
 # The deploy workflow calls this one as its gate, so a push to main used to
