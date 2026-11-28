@@ -1191,7 +1191,7 @@ Production requires the 40-hex `RELIC_REVISION` supplied by the image build. Dev
 
 ### Autofix operations
 
-The default is `ERROR_REPORTS_MODE=dry-run` and `AUTOFIX_MODE=off`. In the command palette, the operator publishes the reviewed Relik-only bundle with the private context repository's `bin/operator-publish-relik-bundle.py`, then uses `bin/operator-build-relik-credential.py` to publish a dedicated model credential. Do not use a shared credential or a private-repository deploy key. Set repository variables `OMP_VAULT_WIF_PROVIDER`, `OMP_VAULT_WIF_SERVICE_ACCOUNT`, and `OMP_VAULT_BUCKET` to the vault's provider, service account, and bucket. The bundle digest and its exact member list are pinned in `.github/omp-context.pin` and `.github/omp-context-members.txt`.
+The default is `ERROR_REPORTS_MODE=dry-run` and `AUTOFIX_MODE=off`. In the command palette, the operator publishes the reviewed Relik-only bundle with the private context repository's `bin/operator-publish-relik-bundle.py`, then uses `bin/operator-build-relik-credential.py` to publish a dedicated model credential. Do not use a shared credential or a private-repository deploy key. Set repository variables `OMP_VAULT_WIF_PROVIDER` and `OMP_VAULT_BUCKET` to the vault's provider and bucket. The sandbox exchanges its GitHub OIDC token directly for a federated credential; it does not impersonate a service account. The bundle digest and its exact member list are pinned in `.github/omp-context.pin` and `.github/omp-context-members.txt`.
 
 The private context repository's scheduled `relik-credential-refresh.yml` is configured to refresh the dedicated credential. Confirm its runs succeed before relying on the stored credential.
 

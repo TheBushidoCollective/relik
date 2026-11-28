@@ -77,34 +77,26 @@ jobs:
           else
             exit 1
           fi
-      - id: vault
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.OMP_VAULT_WIF_PROVIDER }}
-          service_account: ${{ vars.OMP_VAULT_WIF_SERVICE_ACCOUNT }}
-          token_format: access_token
-          create_credentials_file: false
+      - name: Exchange vault identity
+        env:
+          OMP_VAULT_WIF_PROVIDER: ${{ vars.OMP_VAULT_WIF_PROVIDER }}
+        run: python3 .github/scripts/autofix-vault-token.py
       - name: Fetch pinned context and credential
         env:
-          ACCESS_TOKEN: ${{ steps.vault.outputs.access_token }}
           VAULT_BUCKET: ${{ vars.OMP_VAULT_BUCKET }}
         run: |
           set -euo pipefail
-          umask 077
+          trap 'rm -f -- "$RUNNER_TEMP/autofix-curl.conf"' EXIT
           [[ "$VAULT_BUCKET" =~ ^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$ ]]
-          [[ "$ACCESS_TOKEN" =~ ^[A-Za-z0-9._-]+$ ]]
           pin="$(tr -d '\n' < .github/omp-context.pin)"
           [[ "$pin" =~ ^[0-9a-f]{64}$ ]]
           config="$RUNNER_TEMP/autofix-curl.conf"
-          trap 'rm -f -- "$config"' EXIT
-          printf 'header = "Authorization: Bearer %s"\n' "$ACCESS_TOKEN" > "$config"
-          unset ACCESS_TOKEN
-          curl --fail --silent --show-error --config "$config" --max-filesize 4194304 \
+          curl --fail --silent --config "$config" --max-filesize 4194304 \
             --output "$RUNNER_TEMP/relik-context.tar.gz" \
-            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fcontext%2F$pin.tar.gz?alt=media"
-          curl --fail --silent --show-error --config "$config" --max-filesize 1048576 \
+            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fcontext%2F$pin.tar.gz?alt=media" || { echo 'Vault download refused' >&2; exit 1; }
+          curl --fail --silent --config "$config" --max-filesize 1048576 \
             --output "$RUNNER_TEMP/relik-agent.db" \
-            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fagent.db?alt=media"
+            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fagent.db?alt=media" || { echo 'Vault download refused' >&2; exit 1; }
       - name: Prepare pinned context
         run: |
           set -euo pipefail

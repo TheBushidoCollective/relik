@@ -43,6 +43,7 @@ test('always cleanup removes read-only original and writable copy without follow
     await chmod(join(original, 'agent.db'), 0o400);
     await chmod(original, 0o500);
     await writeFile(join(copy, 'agent.db'), 'fixture refreshed credential');
+    await writeFile(join(runner, 'autofix-curl.conf'), 'fixture credential');
     const outside = join(root, 'outside');
     await writeFile(outside, 'untouched');
     await chmod(outside, 0o400);
@@ -55,6 +56,7 @@ test('always cleanup removes read-only original and writable copy without follow
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(existsSync(original)).toBe(false);
     expect(existsSync(copy)).toBe(false);
+    expect(existsSync(join(runner, 'autofix-curl.conf'))).toBe(false);
     expect(await readFile(outside, 'utf8')).toBe('untouched');
     expect((await stat(outside)).mode & 0o777).toBe(0o400);
   } finally {
