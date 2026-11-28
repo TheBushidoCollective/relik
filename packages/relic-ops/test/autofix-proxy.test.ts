@@ -6,6 +6,7 @@ const python = `import importlib.util, socket, sys, threading, time\ns=importlib
 test('host proxy bounds admission, byte budgets and deadlines', () => {
   const result = spawnSync('python3', ['-c', python, proxy], {
     encoding: 'utf8',
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
     timeout: 10_000,
   });
   expect(result.status).toBe(0);
@@ -41,6 +42,7 @@ else: raise AssertionError('expired handshake accepted')
 `;
   const result = spawnSync('python3', ['-c', script, proxy], {
     encoding: 'utf8',
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
     timeout: 10_000,
   });
   expect(result.status).toBe(0);
