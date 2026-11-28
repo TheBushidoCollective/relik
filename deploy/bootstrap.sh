@@ -171,7 +171,12 @@ say "Workload Identity provider: ${PROVIDER_ID}"
 #                        authenticate, run with RESTORE_REPO_WIDE=1.
 MAPPING="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_id=assertion.repository_id,attribute.ref=assertion.ref,attribute.job_workflow_ref=assertion.job_workflow_ref"
 BROAD_CONDITION="assertion.repository_id == '${REPO_ID}'"
-STRICT_CONDITION="assertion.repository_id == '${REPO_ID}' && assertion.ref == 'refs/heads/main' && assertion.job_workflow_ref == '${REPO}/.github/workflows/deploy.yml@refs/heads/main'"
+# The provider admits two workflows on main: deploy.yml (the deployer's member is
+# pinned to the production environment subject on top of this) and
+# error-reports.yml (the report reader's member is pinned to the main-ref
+# subject). Either admission alone grants nothing; each service account has its
+# own subject-pinned binding.
+STRICT_CONDITION="assertion.repository_id == '${REPO_ID}' && assertion.ref == 'refs/heads/main' && assertion.job_workflow_ref in ['${REPO}/.github/workflows/deploy.yml@refs/heads/main', '${REPO}/.github/workflows/error-reports.yml@refs/heads/main']"
 if [ "${RETIRE_REPO_WIDE:-0}" = "1" ] && [ "${RESTORE_REPO_WIDE:-0}" != "1" ]; then
   CONDITION="${STRICT_CONDITION}"
 else
