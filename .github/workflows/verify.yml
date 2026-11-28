@@ -3,6 +3,13 @@ name: verify
 on:
   pull_request:
   workflow_call:
+  # Lets a workflow dispatch this on a branch whose pull request was opened by
+  # GITHUB_TOKEN, which GitHub does not start pull_request runs for.
+  workflow_dispatch:
+
+# Read-only. Every job here only reads the repository; nothing needs to write.
+permissions:
+  contents: read
 
 # Deliberately not `push: branches: [main]`.
 #
@@ -12,7 +19,9 @@ on:
 # the race could just as easily have killed the run that gates the deploy
 # rather than the redundant standalone one. On main, deploy owns verification.
 concurrency:
-  group: verify-${{ github.ref }}-${{ github.event_name }}
+  # github.workflow is the caller's name inside a reusable call, so a direct
+  # run, a deploy's gate and a release's gate never cancel one another.
+  group: verify-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 env:

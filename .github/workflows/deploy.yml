@@ -41,6 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
+    # A manual dispatch from any other branch would otherwise run the production
+    # job from that branch's workflow file. Deploys come from main only.
+    if: github.ref == 'refs/heads/main'
 
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +87,17 @@ jobs:
       - name: Force-unlock a leftover lock
         if: ${{ inputs.unlock_lock_id != '' }}
         working-directory: deploy/terraform
-        run: terraform force-unlock -force "${{ inputs.unlock_lock_id }}"
+        # The input reaches the shell as an environment variable, never as
+        # workflow text, and must be a state lock ID: the GCS backend names its
+        # lock by object generation, which is digits only.
+        env:
+          UNLOCK_LOCK_ID: ${{ inputs.unlock_lock_id }}
+        run: |
+          if ! [[ "$UNLOCK_LOCK_ID" =~ ^[0-9]{1,24}$ ]]; then
+            echo "unlock_lock_id must be the numeric lock ID" >&2
+            exit 1
+          fi
+          terraform force-unlock -force "$UNLOCK_LOCK_ID"
 
 
       - name: Terraform format check
