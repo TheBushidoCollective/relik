@@ -14,9 +14,10 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { checkPatch } from '../src/patch-policy.ts';
 
-const root = new URL('../../../', import.meta.url).pathname;
+const root = fileURLToPath(new URL('../../../', import.meta.url));
 const scanner = join(root, 'packages/relic-ops/bin/autofix-scan.ts');
 const prBody = join(root, 'packages/relic-ops/bin/autofix-pr-body.ts');
 const bootstrap = join(root, '.github/scripts/checkout-omp-context.sh');

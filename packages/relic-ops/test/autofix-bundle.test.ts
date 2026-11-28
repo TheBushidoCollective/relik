@@ -5,13 +5,14 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const checker = new URL('../bin/autofix-verify-bundle.py', import.meta.url)
-  .pathname;
-const list = new URL(
-  '../../../.github/omp-context-members.txt',
-  import.meta.url
-).pathname;
+const checker = fileURLToPath(
+  new URL('../bin/autofix-verify-bundle.py', import.meta.url)
+);
+const list = fileURLToPath(
+  new URL('../../../.github/omp-context-members.txt', import.meta.url)
+);
 let dir: string;
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'relik-bundle-test-'));

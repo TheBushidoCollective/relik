@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import {
   appendFile,
   chmod,
@@ -8,15 +9,20 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { checkPatch } from '../src/patch-policy.ts';
 
-const scanner = new URL('../bin/autofix-scan.ts', import.meta.url).pathname;
+const scanner = fileURLToPath(
+  new URL('../bin/autofix-scan.ts', import.meta.url)
+);
 const secret = 'secret-data-aaaaa-ccccc';
 const alternate = 'other-cred-aaaaa-bbbbb';
 const tableSecret = 'table-cred-aaaaa-ccccc';
@@ -118,6 +124,40 @@ test('rejects final writable credentials, including deleted values still in the 
   }
 });
 
+test('detects credential bytes in a present shared-memory sidecar without changing it', async () => {
+  const path = join(dir, 'shared-memory.db');
+  const sqlite = new Database(path);
+  try {
+    sqlite.exec(
+      'PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE auth_credentials (data TEXT)'
+    );
+    sqlite.query('INSERT INTO auth_credentials VALUES (?)').run('valid');
+    const shmPath = `${path}-shm`;
+    const shmSecret = 'shared-memory-cred-aaaaa-ccccc';
+    await appendFile(shmPath, `\0${shmSecret}\0`);
+    const original = await readFile(shmPath);
+    const originalMtime = (await stat(shmPath, { bigint: true })).mtimeNs;
+    const patch = join(dir, 'shm.diff');
+    for (const [value, status] of [
+      ['new', 0],
+      [shmSecret, 1],
+    ] as const) {
+      await writeFile(patch, diff(value));
+      const result = spawnSync('bun', [scanner, patch, db, path], {
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(status);
+      expect(result.stdout + result.stderr).not.toContain(shmSecret);
+      expect((await readFile(shmPath)).equals(original)).toBe(true);
+      expect((await stat(shmPath, { bigint: true })).mtimeNs).toBe(
+        originalMtime
+      );
+    }
+  } finally {
+    sqlite.close();
+  }
+});
+
 test('refuses a missing writable database rather than silently scanning the original alone', async () => {
   const path = join(dir, 'missing-copy.diff');
   await writeFile(path, diff('new'));
@@ -145,11 +185,15 @@ test('refuses aliased databases and symlinked SQLite sidecars', async () => {
     .run(JSON.stringify({ access: refreshed }));
   sqlite.close();
   await symlink(db, `${safeDb}-wal`);
+  const scratch = join(dir, 'refused-scan-scratch');
+  await mkdir(scratch);
   const linked = spawnSync('bun', [scanner, patchPath, db, safeDb], {
     encoding: 'utf8',
+    env: { ...process.env, RUNNER_TEMP: scratch },
   });
   expect(linked.status).not.toBe(0);
   expect(linked.stderr.trim()).toBe('Autofix patch refused');
+  expect(await readdir(scratch)).toEqual([]);
 });
 
 test('scans a read-only WAL-mode original without modifying it', async () => {
@@ -167,6 +211,18 @@ test('scans a read-only WAL-mode original without modifying it', async () => {
   await chmod(original, 0o400);
   await chmod(sourceDir, 0o500);
   try {
+    const paths = [
+      original,
+      writableDb,
+      `${writableDb}-wal`,
+      `${writableDb}-shm`,
+    ];
+    const snapshots = await Promise.all(
+      paths.map(async (path) => ({
+        bytes: await readFile(path),
+        mtime: (await stat(path, { bigint: true })).mtimeNs,
+      }))
+    );
     const patchPath = join(dir, 'readonly.diff');
     await writeFile(patchPath, diff('new'));
     const result = spawnSync(
@@ -175,7 +231,89 @@ test('scans a read-only WAL-mode original without modifying it', async () => {
       { encoding: 'utf8' }
     );
     expect(result.status, result.stderr).toBe(0);
+    for (const [index, path] of paths.entries()) {
+      expect((await readFile(path)).equals(snapshots[index]!.bytes)).toBe(true);
+      expect((await stat(path, { bigint: true })).mtimeNs).toBe(
+        snapshots[index]!.mtime
+      );
+    }
   } finally {
     await chmod(sourceDir, 0o700);
+  }
+});
+
+test('scans detached WAL databases without changing files or creating sidecars', async () => {
+  const originals = [
+    join(dir, 'detached-original', 'agent.db'),
+    join(dir, 'detached-writable', 'agent.db'),
+  ];
+  const createWal = `
+import os, sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute('PRAGMA journal_mode=WAL')
+db.execute('PRAGMA wal_autocheckpoint=0')
+db.execute('CREATE TABLE auth_credentials (data TEXT)')
+db.execute('INSERT INTO auth_credentials VALUES (?)', (sys.argv[2],))
+db.commit()
+os._exit(0)
+`;
+  for (const [index, path] of originals.entries()) {
+    const parent = join(
+      dir,
+      index === 0 ? 'detached-original' : 'detached-writable'
+    );
+    await mkdir(parent);
+    const create = spawnSync(
+      'python3',
+      ['-c', createWal, path, index === 0 ? secret : refreshed],
+      {
+        encoding: 'utf8',
+      }
+    );
+    expect(create.status).toBe(0);
+    expect((await stat(`${path}-wal`)).size).toBeGreaterThan(0);
+    await rm(`${path}-shm`, { force: true });
+  }
+  await chmod(originals[0]!, 0o400);
+  await chmod(`${originals[0]}-wal`, 0o400);
+  await chmod(join(dir, 'detached-original'), 0o500);
+  const paths = originals.flatMap((path) => [path, `${path}-wal`]);
+  const snapshots = await Promise.all(
+    paths.map(async (path) => ({
+      bytes: await readFile(path),
+      mtime: (await stat(path, { bigint: true })).mtimeNs,
+    }))
+  );
+  try {
+    const patchPath = join(dir, 'detached.diff');
+    const scratch = join(dir, 'scan scratch');
+    await mkdir(scratch);
+    for (const [value, allowed] of [
+      ['new', true],
+      [secret, false],
+      [refreshed, false],
+    ] as const) {
+      await writeFile(patchPath, diff(value));
+      const result = spawnSync('bun', [scanner, patchPath, ...originals], {
+        encoding: 'utf8',
+        env: { ...process.env, RUNNER_TEMP: scratch },
+      });
+      expect(result.status).toBe(allowed ? 0 : 1);
+      expect(result.stdout + result.stderr).not.toContain(secret);
+      expect(result.stdout + result.stderr).not.toContain(refreshed);
+      for (const [index, path] of paths.entries()) {
+        expect((await readFile(path)).equals(snapshots[index]!.bytes)).toBe(
+          true
+        );
+        expect((await stat(path, { bigint: true })).mtimeNs).toBe(
+          snapshots[index]!.mtime
+        );
+      }
+      expect(await readdir(scratch)).toEqual([]);
+      for (const path of originals)
+        expect(existsSync(`${path}-shm`)).toBe(false);
+    }
+  } finally {
+    await chmod(join(dir, 'detached-original'), 0o700);
   }
 });

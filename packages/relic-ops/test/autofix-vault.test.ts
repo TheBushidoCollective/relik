@@ -11,10 +11,13 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 test('direct vault federation uses both HTTP exchanges without exposing tokens', () => {
   const fixture = new URL('./autofix-vault-fixture.py', import.meta.url);
-  const result = spawnSync('python3', [fixture.pathname], { encoding: 'utf8' });
+  const result = spawnSync('python3', [fileURLToPath(fixture)], {
+    encoding: 'utf8',
+  });
   expect(result.status).toBe(0);
 });
 
@@ -23,7 +26,7 @@ test('vault exchange CLI refuses missing runner identity without outputting it',
     '../../../.github/scripts/autofix-vault-token.py',
     import.meta.url
   );
-  const result = spawnSync('python3', [script.pathname], {
+  const result = spawnSync('python3', [fileURLToPath(script)], {
     encoding: 'utf8',
     env: { PATH: process.env.PATH },
   });
@@ -83,7 +86,7 @@ done
       const config = join(runner, 'autofix-curl.conf');
       await writeFile(config, 'fixture credential', { mode: 0o600 });
       const result = spawnSync('bash', ['-c', fetch!.run!], {
-        cwd: new URL('../../../', import.meta.url).pathname,
+        cwd: fileURLToPath(new URL('../../../', import.meta.url)),
         env: {
           PATH: `${bin}:${process.env.PATH}`,
           RUNNER_TEMP: runner,

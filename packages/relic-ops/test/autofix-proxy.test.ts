@@ -1,7 +1,10 @@
 import { expect, test } from 'bun:test';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const proxy = new URL('../bin/autofix-proxy.py', import.meta.url).pathname;
+const proxy = fileURLToPath(
+  new URL('../bin/autofix-proxy.py', import.meta.url)
+);
 const python = `
 import importlib.util
 import queue
