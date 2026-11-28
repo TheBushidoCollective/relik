@@ -1678,6 +1678,8 @@ export function sandboxFrame(
     const type = (event.data as { type?: unknown } | null)?.type;
     if (type === 'relic:sandbox-ready') {
       if (!handshake.onReady()) return;
+      // The shim installs its file-drag listener before announcing readiness.
+      frame.setAttribute('data-file-drag-ready', '');
       if (pendingPayload !== undefined) post(pendingPayload, pendingTransfer);
       pendingPayload = undefined;
       pendingTransfer = [];
@@ -1828,6 +1830,7 @@ export function sandboxFrame(
     // No payload here. The payload waits for the frame's own ready message, and
     // a later load means the document changed, which FrameHandshake records.
     handshake.onLoad();
+    if (handshake.navigated) frame.removeAttribute('data-file-drag-ready');
     frame.dispatchEvent(
       new CustomEvent('relic:frame-navigation', { bubbles: true })
     );
@@ -1842,6 +1845,7 @@ export function sandboxFrame(
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      frame.removeAttribute('data-file-drag-ready');
       pendingPayload = undefined;
       pendingTransfer = [];
       visibility?.disconnect();
@@ -11539,7 +11543,7 @@ export function renderReady(
       if (entryPreparation === controller) entryPreparation = undefined;
     });
   };
-  /** The attached taskbar, so a count arriving can replace just that row. */
+  /** The attached taskbar, updated in place as collaboration data arrives. */
   let bar: HTMLElement | undefined;
   let commentCount: number | undefined;
   let thread: ThreadHandle | undefined;
@@ -11553,25 +11557,76 @@ export function renderReady(
   const versionStore = versionsFor(relicId, view, deps);
 
   /**
-   * Swaps the band for a rebuilt one. A control a page decorator added to the
-   * band (`data-band-extra`, the private owner's Access control) belongs to
-   * the page rather than to one build of the band, so it moves across:
-   * without this, the first count to land took the owner's Access away.
+   * Keep existing controls mounted while counts and capabilities arrive. A
+   * replacement between pointerdown and pointerup drops the reader's click.
    */
-  const swapBar = (current: HTMLElement, replacement: HTMLElement): void => {
-    for (const extra of Array.from(current.children)) {
-      if (extra.getAttribute('data-band-extra') !== null) {
-        replacement.append(extra);
-      }
-    }
-    current.replaceWith(replacement);
-    bar = replacement;
-  };
-
-  /** Swaps in a band carrying the new counts, while this page still shows it. */
-  const replaceBar = (): void => {
+  const updateBar = (): void => {
     if (bar === undefined || bar.isConnected !== true) return;
-    swapBar(bar, barFor(false));
+    const actions = bar.querySelector<HTMLElement>('.actions');
+    if (!actions) return;
+
+    const comments = actions.querySelector<HTMLElement>('.action-comments');
+    if (comments && commentCount !== undefined) {
+      let count = comments.querySelector<HTMLElement>('.action-count');
+      if (!count) {
+        count = document.createElement('span');
+        count.className = 'action-count';
+        comments.appendChild(count);
+      }
+      count.textContent = String(commentCount);
+      comments.title = threadCountLabel(commentCount);
+    }
+
+    const signing = actions.querySelector<HTMLButtonElement>(
+      '[data-action="open-signing"]'
+    );
+    if (signingOpen === undefined) {
+      signing?.remove();
+    } else if (!signing) {
+      const control = button('Signing', ICONS.stamp, () => signingOpen?.());
+      control.dataset['action'] = 'open-signing';
+      actions.insertBefore(
+        control,
+        actions.querySelector('.action-history, [data-action="copy-link"]')
+      );
+    }
+
+    let decide = actions.querySelector<HTMLButtonElement>(
+      '[data-decision-open]'
+    );
+    const tally = decisionTally;
+    if (
+      tally === undefined ||
+      tally === null ||
+      activeView.viewOnly === true ||
+      activeView.settings?.decisions === false
+    ) {
+      decide?.remove();
+    } else {
+      if (!decide) {
+        const control = button('Decisions', ICONS.stamp, () =>
+          toggleDecisions(control)
+        );
+        decorateDecisionControl(control, activeView.version, tally);
+        actions.insertBefore(
+          control,
+          actions.querySelector(
+            '[data-action="open-signing"], .action-history, [data-action="copy-link"]'
+          )
+        );
+        decide = control;
+      } else if (
+        decide.getAttribute('data-decision-approvals') !==
+          String(tally.approve) ||
+        decide.getAttribute('data-decision-rejections') !== String(tally.reject)
+      ) {
+        const expanded = decide.getAttribute('aria-expanded');
+        decide.querySelector('.decision-tally')?.remove();
+        decorateDecisionControl(decide, activeView.version, tally);
+        if (expanded !== null) decide.setAttribute('aria-expanded', expanded);
+      }
+      decisionPanel?.setOpener(decide);
+    }
   };
 
   const refreshDecisionTally = (shown: ReadyView): void => {
@@ -11585,7 +11640,7 @@ export function renderReady(
     void access.listDecisions().then((listed) => {
       if (activeView !== shown) return;
       decisionTally = tallyFromList(listed, shown.version);
-      replaceBar();
+      updateBar();
     });
   };
 
@@ -11628,7 +11683,7 @@ export function renderReady(
           onTally: (tally) => {
             if (activeView !== shown) return;
             decisionTally = tally;
-            replaceBar();
+            updateBar();
           },
           onOpenVersion: (version) => {
             void showVersion(version);
@@ -11675,7 +11730,9 @@ export function renderReady(
         ? {}
         : { onDecide: toggleDecisions }),
       ...(decisionTally === undefined ? {} : { decisionTally }),
-      ...(signingOpen === undefined ? {} : { onSigning: signingOpen }),
+      ...(signingOpen === undefined
+        ? {}
+        : { onSigning: () => signingOpen?.() }),
       ...(thread === undefined
         ? {}
         : {
@@ -11713,8 +11770,6 @@ export function renderReady(
       });
       more?.appendChild(downloadAll);
     }
-    // The band is rebuilt whenever a count lands; an open sheet follows its
-    // control so focus and `aria-expanded` land on the one on screen.
     const decide = built.querySelector?.<HTMLElement>('[data-decision-open]');
     if (decisionPanel !== undefined && decide) decisionPanel.setOpener(decide);
     installSkippedConfirmations(
@@ -11765,9 +11820,9 @@ export function renderReady(
         relicId,
         deps,
         (count) => {
+          if (activeView !== viewToShow) return;
           commentCount = count;
-          if (bar === undefined) return;
-          swapBar(bar, barFor(false));
+          updateBar();
         },
         (version) => {
           void showVersion(version);
@@ -11865,7 +11920,7 @@ export function renderReady(
           onAvailable: (open) => {
             if (disposed || activeView !== viewToShow) return;
             signingOpen = open;
-            replaceBar();
+            updateBar();
           },
           onOpenVersion: (version) => {
             void showVersion(version);
