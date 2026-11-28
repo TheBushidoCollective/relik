@@ -1532,7 +1532,11 @@ export async function compareDuringCommentRefresh(
     const enabled = await b.evaluate<boolean>(
       `(() => { const button = ${buttonNamed('Compare versions')}; window.__compareBefore = button; window.__compareEvents = []; for (const name of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) document.addEventListener(name, (event) => window.__compareEvents.push({type: name, target: event.target.closest('button')?.textContent.trim() ?? event.target.tagName}), true); return !!button && !button.disabled; })()`
     );
-    assert.equal(enabled, true, `${label}: Compare is enabled before the count`);
+    assert.equal(
+      enabled,
+      true,
+      `${label}: Compare is enabled before the count`
+    );
     const point = await b.press(buttonNamed('Compare versions'), label);
     await b.evaluate('window.__releaseComments()');
     assert.equal(
@@ -1557,7 +1561,11 @@ export async function compareDuringCommentRefresh(
       `${label}: release must open comparison; same button=${sameButton}; events=${JSON.stringify(state.events)}`
     );
     assert.equal(sameButton, true, `${label}: the button survives the count`);
-    assert.equal(await settledSummary(b), SUMMARY.xlsx, `${label}: result line`);
+    assert.equal(
+      await settledSummary(b),
+      SUMMARY.xlsx,
+      `${label}: result line`
+    );
     console.log(
       `VERSION_COMPARE_COUNT_RACE ${viewport.width}x${viewport.height} passed`
     );
