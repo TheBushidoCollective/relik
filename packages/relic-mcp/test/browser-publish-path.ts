@@ -608,14 +608,44 @@ try {
   );
 
   // 9. A relic that takes file drops itself keeps them: the page does not
-  //    raise its curtain over a drag the relic claimed.
+  //    raise its curtain over a drag the relic claimed. Install the listener
+  //    before navigation, because the fixture may signal before the iframe
+  //    element is visible to the test.
+  const readyScript = (await browser.cdp.send(
+    'Page.addScriptToEvaluateOnNewDocument',
+    {
+      source: `if (window === window.top) {
+        const { promise, resolve } = Promise.withResolvers();
+        window.__claimDropReady = promise;
+        window.addEventListener('message', function onReady(e) {
+          if (e.data?.type !== 'relic-file-drop-ready' ||
+              e.source !== document.querySelector('iframe')?.contentWindow) return;
+          window.removeEventListener('message', onReady);
+          resolve();
+        });
+      }`,
+    },
+    browser.sessionId
+  )) as { identifier: string };
   await openHtmlRelic(
     'claims-drops.html',
     `<!doctype html><title>Claims</title><body style="margin:0"><h1>Drop a file here</h1><script>
       window.addEventListener('dragover', (e) => e.preventDefault());
       window.addEventListener('drop', (e) => { e.preventDefault(); parent.postMessage({ type: 'relic-got-file' }, '*'); });
+      parent.postMessage({ type: 'relic-file-drop-ready' }, '*');
     </script></body>`
   );
+  await browser.cdp.send(
+    'Page.removeScriptToEvaluateOnNewDocument',
+    { identifier: readyScript.identifier },
+    browser.sessionId
+  );
+  await browser.evaluate<void>(`(() => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const timer = setTimeout(() => reject(new Error('timed out waiting for relik drop handlers to be ready')), 5000);
+    window.__claimDropReady.then(() => { clearTimeout(timer); resolve(); });
+    return promise;
+  })()`);
   const claimed = await frameCentre();
   await browser.evaluate<void>(
     `window.__got = []; window.addEventListener('message', (e) => window.__got.push(e.data && e.data.type));`
@@ -623,16 +653,8 @@ try {
   const claimedPath = await draggedFile('claimed.md');
   await sendDrag('dragEnter', claimed.x, claimed.y, claimedPath);
   await sendDrag('dragOver', claimed.x, claimed.y, claimedPath);
-  // Real time: the shim decides after the relic's listeners have run, so the
-  // absence of a curtain can only be shown by letting that moment pass.
-  await Bun.sleep(1500);
-  assert.equal(
-    await browser.evaluate<boolean>(
-      `!document.querySelector('[data-file-curtain]')`
-    ),
-    true,
-    'the page took a drag the relik had claimed'
-  );
+  // The drop acknowledgement below proves this drag reached the frame. The
+  // curtain check alone can pass after its watchdog has already hidden it.
   await sendDrag('dragOver', claimed.x, claimed.y, claimedPath);
   await sendDrag('drop', claimed.x, claimed.y, claimedPath);
   // The relik's message crosses postMessage asynchronously. A fixed sleep was
@@ -646,6 +668,13 @@ try {
     if (!received) await Bun.sleep(100);
   }
   assert.ok(received, 'the relik did not receive its own drop');
+  assert.equal(
+    await browser.evaluate<boolean>(
+      `!document.querySelector('[data-file-curtain]')`
+    ),
+    true,
+    'the page took a drag the relik had claimed'
+  );
   assert.equal(
     await browser.evaluate<boolean>(
       `!document.querySelector('dialog.pub-dialog')`

@@ -27,6 +27,7 @@ on:
       - '**.md'
       - 'docs/**'
 
+# Read-only. It uploads evidence as artifacts and writes nothing else.
 permissions:
   contents: read
 
