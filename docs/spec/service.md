@@ -1179,8 +1179,22 @@ An uncaught server error returns status 500, content type `text/plain`, and body
 
 The filer accepts only issues authored by the configured bot identity, pinned in the workflow to `github-actions[bot]`, numeric ID `41898282`, and type `Bot`. It checks every stored build and server source position against Git before reusing an issue. Invalid or duplicate claims isolate their fingerprints without blocking other reports. Public issue regions include Git-validated server positions but retain only file names for viewer and MCP frames, including in the embedded JSON. The report fingerprint depends on source, class, route, and frame file names, not positions.
 
+Viewer and MCP issues contain the error class, route, builds, and frame file names, but no line or column positions. The fixer must reproduce from the class and route. If it cannot, it ends without a patch.
+
 No issues were filed using the earlier position-bearing client grammar; filing remained in dry-run.
 
 The filer reads server and client logs separately, with a 50,000-entry ceiling for each. Client truncation emits a count-only warning instead of preventing server reports from being processed.
 
 Production requires the 40-hex `RELIC_REVISION` supplied by the image build. Development without a revision emits no reports and prints uncaught errors locally. Error report log records are kept 30 days. Public issues remain until deleted.
+
+### Autofix operations
+
+The default is `ERROR_REPORTS_MODE=dry-run` and `AUTOFIX_MODE=off`. In the command palette, the operator publishes the reviewed Relik-only bundle with the private context repository's `bin/operator-publish-relik-bundle.py`, then uses `bin/operator-build-relik-credential.py` to publish a dedicated model credential. Do not use a shared credential or a private-repository deploy key. Set repository variables `OMP_VAULT_WIF_PROVIDER`, `OMP_VAULT_WIF_SERVICE_ACCOUNT`, and `OMP_VAULT_BUCKET` to the vault's provider, service account, and bucket. The bundle digest and its exact member list are pinned in `.github/omp-context.pin` and `.github/omp-context-members.txt`.
+
+The checked bundle entrypoint runs `bash "$GITHUB_WORKSPACE/.omp-agent-context/bin/prepare-relik.sh" --agent-db "$LOCAL_SOURCE_DB"`. It writes `$RUNNER_TEMP/omp-agent` and `$RUNNER_TEMP/omp-runtime`; the workflow verifies it with `python3 "$RUNNER_TEMP/omp-runtime/runtime.py" verify --agent-dir "$RUNNER_TEMP/omp-agent" --runtime-dir "$RUNNER_TEMP/omp-runtime" --require-credential`. The runtime directory is never mounted into the fixer. The model credential stays in the sandbox job and is not an artifact.
+
+Run the `autofix-canary.yml` workflow on main while both modes remain off. It uses the checked-in regression fixture, cannot open a PR, and publishes only a fixed test result artifact. Confirm its sandbox, credential scan, regression replay, and full verify pass before enabling production filing. Then set `ERROR_REPORTS_LIVE_SINCE`, `ERROR_REPORTS_MODE=live`, and `AUTOFIX_MODE=on`. To stop new proposals, restore `dry-run` and `off`. A surviving `autofix/error-<fingerprint>` branch blocks that fingerprint without consuming a rolling dispatch slot. A closed, unmerged autofix PR also blocks redispatch. A human must remove the obsolete branch or resolve the closed PR before a retry.
+
+The read-only test job's full verify is a convenience signal, not a security boundary. Patched code runs on that job's host for the Docker-dependent native build. Clearing the ordinary token environment does not prevent hostile code from inspecting same-user processes or modifying that runner. The proposer uses the result only to decide whether to open a PR; a person still reviews the diff and merges it.
+
+The first real issue and PR remain a post-production gate: audit the issue, inspect the patch and the run's full-verify result, and verify that the runner sandbox reaches only the model provider. A bot-created PR does not start normal PR checks. A human must close and reopen it, or push to its branch, to start those checks before reviewing and merging it. Nothing in this workflow approves or merges a PR.

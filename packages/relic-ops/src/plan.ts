@@ -115,10 +115,11 @@ export async function planReports(
   const filerIssues = (await github.listIssues()).filter((issue) =>
     isFilerAuthor(issue.author, options.filerAuthor)
   );
-  const issues = filerIssues.filter((issue) =>
-    issue.labels.includes('error-report') ||
-    /^Error report: .+ \[[0-9a-f]{16}\]$/.test(issue.title) ||
-    issue.body.includes(BEGIN)
+  const issues = filerIssues.filter(
+    (issue) =>
+      issue.labels.includes('error-report') ||
+      /^Error report: .+ \[[0-9a-f]{16}\]$/.test(issue.title) ||
+      issue.body.includes(BEGIN)
   );
   const records: Array<{ issue: Issue; data: IssueData; claims: Set<string> }> =
     [];
@@ -183,9 +184,13 @@ export async function planReports(
     const created = Date.parse(issue.createdAt);
     if (created < options.now - DAY || created > options.now) continue;
     const data = parseRegion(issue.body);
-    const server = issue.labels.includes('source:server') || data?.source === 'server';
-    const client = issue.labels.includes('source:viewer') ||
-      issue.labels.includes('source:mcp') || data?.source === 'viewer' || data?.source === 'mcp';
+    const server =
+      issue.labels.includes('source:server') || data?.source === 'server';
+    const client =
+      issue.labels.includes('source:viewer') ||
+      issue.labels.includes('source:mcp') ||
+      data?.source === 'viewer' ||
+      data?.source === 'mcp';
     if (server || !client) serverCreated++;
     if (client || !server) clientCreated++;
   }
@@ -196,12 +201,19 @@ export async function planReports(
     const labelCounts = new Map<string, number>();
     const prCounts = new Map<string, number>();
     for (const issue of filerIssues) {
-      const fingerprint = parseRegion(issue.body)?.fingerprint ?? `issue:${issue.number}`;
-      const recent = (await github.autofixLabelTimes(issue.number)).filter((time) => {
-        const created = Date.parse(time);
-        return created >= options.now - DAY && created <= options.now;
-      }).length;
-      if (recent) labelCounts.set(fingerprint, (labelCounts.get(fingerprint) ?? 0) + recent);
+      const fingerprint =
+        parseRegion(issue.body)?.fingerprint ?? `issue:${issue.number}`;
+      const recent = (await github.autofixLabelTimes(issue.number)).filter(
+        (time) => {
+          const created = Date.parse(time);
+          return created >= options.now - DAY && created <= options.now;
+        }
+      ).length;
+      if (recent)
+        labelCounts.set(
+          fingerprint,
+          (labelCounts.get(fingerprint) ?? 0) + recent
+        );
     }
     for (const branch of history.branches) unavailable.add(branch.fingerprint);
     for (const pr of history.pullRequests) {
@@ -211,8 +223,14 @@ export async function planReports(
       if (created >= options.now - DAY && created <= options.now)
         prCounts.set(pr.fingerprint, (prCounts.get(pr.fingerprint) ?? 0) + 1);
     }
-    for (const fingerprint of new Set([...labelCounts.keys(), ...prCounts.keys()]))
-      autofixUsed += Math.max(labelCounts.get(fingerprint) ?? 0, prCounts.get(fingerprint) ?? 0);
+    for (const fingerprint of new Set([
+      ...labelCounts.keys(),
+      ...prCounts.keys(),
+    ]))
+      autofixUsed += Math.max(
+        labelCounts.get(fingerprint) ?? 0,
+        prCounts.get(fingerprint) ?? 0
+      );
   }
   const all = aggregate(entries).filter(
     (group) => !blocked.has(group.data.fingerprint)

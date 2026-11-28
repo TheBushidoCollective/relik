@@ -1,0 +1,8 @@
+bin/install-omp
+bin/prepare-relik.sh
+memory/relik/snapshot.db
+projects/relik/RULES.md
+projects/relik/bundle-files.txt
+projects/relik/empty-agent.db
+projects/relik/runtime.py
+projects/relik/settings.json

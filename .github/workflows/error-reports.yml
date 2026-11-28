@@ -24,6 +24,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: read
       id-token: write
     outputs:
       autofix: ${{ steps.file.outputs.autofix }}
@@ -60,4 +61,19 @@ jobs:
             --entries cloud --mode "$REPORT_MODE" --live-since "$LIVE_SINCE" \
             --autofix "$AUTOFIX_MODE" --github-output "$GITHUB_OUTPUT"
 
-  # AUTOFIX JOB: the parent will add the reusable workflow after it exists.
+  autofix:
+    needs: file
+    if: github.ref == 'refs/heads/main' && vars.ERROR_REPORTS_MODE == 'live' && vars.AUTOFIX_MODE == 'on' && (inputs.mode || vars.ERROR_REPORTS_MODE || 'dry-run') == 'live' && needs.file.outputs.autofix != '' && needs.file.outputs.autofix != '[]'
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        candidate: ${{ fromJSON(needs.file.outputs.autofix) }}
+    uses: ./.github/workflows/autofix.yml
+    with:
+      issue: ${{ matrix.candidate.issue }}
+      fingerprint: ${{ matrix.candidate.fingerprint }}

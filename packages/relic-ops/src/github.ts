@@ -77,7 +77,6 @@ export interface AutofixHistory {
   }>;
 }
 
-
 export interface GitHub {
   listIssues(): Promise<Issue[]>;
   autofixLabelTimes(issue: number): Promise<string[]>;
@@ -229,29 +228,57 @@ export class GitHubRest implements GitHub {
     ]);
     const branches: AutofixHistory['branches'] = [];
     for (const value of refs) {
-      if (typeof value !== 'object' || value === null || !('ref' in value) || typeof value.ref !== 'string')
+      if (
+        typeof value !== 'object' ||
+        value === null ||
+        !('ref' in value) ||
+        typeof value.ref !== 'string'
+      )
         throw new Error('Malformed GitHub ref');
-      const match = /^refs\/heads\/autofix\/error-([0-9a-f]{16})$/.exec(value.ref);
+      const match = /^refs\/heads\/autofix\/error-([0-9a-f]{16})$/.exec(
+        value.ref
+      );
       if (match?.[1]) branches.push({ fingerprint: match[1] });
     }
     const pullRequests: AutofixHistory['pullRequests'] = [];
     for (const value of pulls) {
-      if (typeof value !== 'object' || value === null || !('head' in value) ||
-          typeof value.head !== 'object' || value.head === null || !('ref' in value.head) ||
-          typeof value.head.ref !== 'string') throw new Error('Malformed GitHub pull request');
+      if (
+        typeof value !== 'object' ||
+        value === null ||
+        !('head' in value) ||
+        typeof value.head !== 'object' ||
+        value.head === null ||
+        !('ref' in value.head) ||
+        typeof value.head.ref !== 'string'
+      )
+        throw new Error('Malformed GitHub pull request');
       const match = /^autofix\/error-([0-9a-f]{16})$/.exec(value.head.ref);
       if (!match?.[1]) continue;
-      if (!('repo' in value.head) || typeof value.head.repo !== 'object' ||
-          value.head.repo === null || !('full_name' in value.head.repo) ||
-          typeof value.head.repo.full_name !== 'string') throw new Error('Malformed GitHub pull request');
-      if (value.head.repo.full_name !== 'TheBushidoCollective/relik') continue;
-      if (!('created_at' in value) || typeof value.created_at !== 'string' ||
-          !Number.isFinite(Date.parse(value.created_at)) || !('state' in value) ||
-          (value.state !== 'open' && value.state !== 'closed') || !('merged_at' in value) ||
-          (value.merged_at !== null && typeof value.merged_at !== 'string'))
+      if (
+        !('repo' in value.head) ||
+        typeof value.head.repo !== 'object' ||
+        value.head.repo === null ||
+        !('full_name' in value.head.repo) ||
+        typeof value.head.repo.full_name !== 'string'
+      )
         throw new Error('Malformed GitHub pull request');
-      pullRequests.push({ fingerprint: match[1], createdAt: value.created_at,
-        state: value.state, merged: value.merged_at !== null });
+      if (value.head.repo.full_name !== 'TheBushidoCollective/relik') continue;
+      if (
+        !('created_at' in value) ||
+        typeof value.created_at !== 'string' ||
+        !Number.isFinite(Date.parse(value.created_at)) ||
+        !('state' in value) ||
+        (value.state !== 'open' && value.state !== 'closed') ||
+        !('merged_at' in value) ||
+        (value.merged_at !== null && typeof value.merged_at !== 'string')
+      )
+        throw new Error('Malformed GitHub pull request');
+      pullRequests.push({
+        fingerprint: match[1],
+        createdAt: value.created_at,
+        state: value.state,
+        merged: value.merged_at !== null,
+      });
     }
     return { branches, pullRequests };
   }
