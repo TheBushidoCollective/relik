@@ -101,6 +101,35 @@ test('settings control follows access and disabled suggestions never mount', asy
       await checkControl('public',true,true); await checkControl('public',false,true); await checkControl('public',false,false);
       await checkControl('private',true,true); await checkControl('private',false,true); await checkControl('private',false,false);
       {
+        const comments=Promise.withResolvers(), decisions=Promise.withResolvers(), signing=Promise.withResolvers();
+        const seen=new Set();
+        let records=[];
+        const deps={serviceOrigin:location.origin,locationHref:location.href,keyVault:{remember(){},recall(){},forget(){}},fetch:async(url)=>{
+          url=String(url);
+          if(url.endsWith('/comments')){seen.add('comments');await comments.promise;return Response.json([])}
+          if(url.endsWith('/decisions/list')){seen.add('decisions');await decisions.promise;return Response.json({current_version:2,decisions:records})}
+          if(url.endsWith('/signing/read')){seen.add('signing');await signing.promise;return Response.json({requests:[]})}
+          return Response.json({email:null});
+        }};
+        renderReady({...base,route:'markdown',access:'private',manage:true,keyFor:async()=>key,version:2,currentVersion:2,settings:{...settings,decisions:true}},id,location.origin,deps);
+        const bar=document.querySelector('.bar'), history=bar.querySelector('.action-history');
+        const extra=document.createElement('button');extra.dataset.bandExtra='';bar.append(extra);
+        await until(()=>seen.size===3,'collaboration responses were not requested');
+        decisions.resolve();await until(()=>!!bar.querySelector('[data-decision-open]'),'decision control did not arrive');
+        const decide=bar.querySelector('[data-decision-open]');
+        check(decide.getAttribute('data-decision-approvals')==='0','initial decision tally');
+        records=[{id:'a',version:2,verdict:'approve',author:'reader@example.test',created_at:'2026-01-01T00:00:00Z',version_digest:'0'.repeat(64)}];
+        decide.click();await until(()=>decide.getAttribute('aria-expanded')==='true','decision panel did not open');
+        await until(()=>decide.getAttribute('data-decision-approvals')==='1','decision tally did not update');
+        signing.resolve();comments.resolve();
+        await until(()=>!!bar.querySelector('[data-action="open-signing"]')&&bar.querySelector('.action-count')?.textContent==='0','signing or comment count did not arrive');
+        check(document.querySelector('.bar')===bar&&bar.querySelector('.action-history')===history,'a refresh replaced the bar or comparison control');
+        check(bar.querySelector('[data-decision-open]')===decide&&decide.getAttribute('aria-expanded')==='true','a refresh replaced or closed the decision opener');
+        check(bar.contains(extra),'a refresh removed a page decorator control');
+        const order=[...bar.querySelector('.actions').children];
+        check(order.indexOf(decide)<order.indexOf(bar.querySelector('[data-action="open-signing"]'))&&order.indexOf(bar.querySelector('[data-action="open-signing"]'))<order.indexOf(history),'collaboration controls changed order');
+      }
+      {
         const calls=[];
         const deps={serviceOrigin:location.origin,locationHref:location.href,keyVault:{remember(){},recall(){},forget(){}},fetch:async(url)=>{calls.push(String(url));return Response.json({email:null})}};
         renderReady({...base,route:'markdown',access:'private',viewOnly:true,keyFor:async()=>key},id,location.origin,deps);

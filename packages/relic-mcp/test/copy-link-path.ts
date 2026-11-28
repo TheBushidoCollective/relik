@@ -1358,7 +1358,6 @@ try {
     `(() => {
     const option = document.querySelector('.version-option[data-version="1"]');
     if (!option) return false;
-    window.__preSwitchBar = document.querySelector('header.bar');
     option.click();
     return true;
   })()`
@@ -1369,7 +1368,7 @@ try {
       (await evaluate<boolean>(
         b1.cdp,
         b1.sessionId,
-        `Boolean(window.__preSwitchBar && !window.__preSwitchBar.isConnected && document.querySelector('.version-long')?.textContent === 'Version 1 of 2' && document.querySelector('.stage h1')?.textContent === 'Secret Notes')`
+        `Boolean(document.querySelector('.version-long')?.textContent === 'Version 1 of 2' && document.querySelector('.stage h1')?.textContent === 'Secret Notes')`
       )) === true,
     'step 9 version 1 rendered'
   );
