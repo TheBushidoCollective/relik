@@ -513,6 +513,26 @@ export class Browser {
     await loaded;
   }
 
+  /** Hold the first comment response until the test releases it. */
+  async holdCommentResponse(): Promise<void> {
+    await this.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `(() => {
+        const fetchOriginal = window.fetch;
+        const gate = new Promise((resolve) => { window.__releaseComments = resolve; });
+        window.fetch = async (...args) => {
+          const response = await fetchOriginal(...args);
+          const input = args[0];
+          const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+          if (url.pathname.endsWith('/comments') && (args[1]?.method ?? 'GET') === 'GET') {
+            window.__commentResponseHeld = true;
+            await gate;
+          }
+          return response;
+        };
+      })()`,
+    });
+  }
+
   async evaluate<T>(expression: string): Promise<T> {
     const response = await this.send('Runtime.evaluate', {
       expression,
@@ -646,8 +666,11 @@ export class Browser {
     return point;
   }
 
-  /** A press and a release at the element's centre, as a reader's mouse makes them. */
-  async click(element: string, label: string): Promise<void> {
+  /** Press at the element's centre; release may be interleaved with a response. */
+  async press(
+    element: string,
+    label: string
+  ): Promise<{ readonly x: number; readonly y: number }> {
     const point = await this.center(element, label);
     await this.send('Input.dispatchMouseEvent', {
       type: 'mouseMoved',
@@ -656,14 +679,33 @@ export class Browser {
       button: 'none',
       clickCount: 0,
     });
-    for (const type of ['mousePressed', 'mouseReleased'])
-      await this.send('Input.dispatchMouseEvent', {
-        type,
-        x: point.x,
-        y: point.y,
-        button: 'left',
-        clickCount: 1,
-      });
+    await this.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      clickCount: 1,
+    });
+    return point;
+  }
+
+  async release(point: {
+    readonly x: number;
+    readonly y: number;
+  }): Promise<void> {
+    await this.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      clickCount: 1,
+    });
+  }
+
+  /** A press and a release at the element's centre, as a reader's mouse makes them. */
+  async click(element: string, label: string): Promise<void> {
+    const point = await this.press(element, label);
+    await this.release(point);
   }
 
   /**
@@ -1464,6 +1506,66 @@ async function expectGridMirror(b: Browser, label: string): Promise<void> {
   );
 }
 
+/**
+ * A comment count may arrive while the reader is pressing Compare. It must
+ * update the band without removing the button between press and release.
+ */
+export async function compareDuringCommentRefresh(
+  h: Harness,
+  pair: RelicPair,
+  viewport: Viewport
+): Promise<void> {
+  const label = `compare during comment refresh ${viewport.width}x${viewport.height}`;
+  const b = await Browser.open(viewport, h.scratch);
+  try {
+    await b.holdCommentResponse();
+    assert.equal(await openRelic(b, pair.url), 'Compare versions', label);
+    assert.equal(
+      await settle<boolean>(
+        b,
+        'window.__commentResponseHeld === true',
+        Boolean
+      ),
+      true,
+      `${label}: the comment response is held`
+    );
+    const enabled = await b.evaluate<boolean>(
+      `(() => { const button = ${buttonNamed('Compare versions')}; window.__compareBefore = button; window.__compareEvents = []; for (const name of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) document.addEventListener(name, (event) => window.__compareEvents.push({type: name, target: event.target.closest('button')?.textContent.trim() ?? event.target.tagName}), true); return !!button && !button.disabled; })()`
+    );
+    assert.equal(enabled, true, `${label}: Compare is enabled before the count`);
+    const point = await b.press(buttonNamed('Compare versions'), label);
+    await b.evaluate('window.__releaseComments()');
+    assert.equal(
+      await settle<string>(
+        b,
+        `document.querySelector('.action-count')?.textContent ?? ''`,
+        (count) => count === '0'
+      ),
+      '0',
+      `${label}: the comment count arrived while pressed`
+    );
+    const sameButton = await b.evaluate<boolean>(
+      `window.__compareBefore === ${buttonNamed('Compare versions')}`
+    );
+    await b.release(point);
+    const state = await b.evaluate<{ mounted: boolean; events: unknown[] }>(
+      `({ mounted: !!document.querySelector('.stage-diff'), events: window.__compareEvents })`
+    );
+    assert.equal(
+      state.mounted,
+      true,
+      `${label}: release must open comparison; same button=${sameButton}; events=${JSON.stringify(state.events)}`
+    );
+    assert.equal(sameButton, true, `${label}: the button survives the count`);
+    assert.equal(await settledSummary(b), SUMMARY.xlsx, `${label}: result line`);
+    console.log(
+      `VERSION_COMPARE_COUNT_RACE ${viewport.width}x${viewport.height} passed`
+    );
+  } finally {
+    await b.close();
+  }
+}
+
 /** A workbook pair at one viewport. A spreadsheet comparison draws grids, never frames. */
 async function proveSpreadsheet(
   h: Harness,
@@ -1757,6 +1859,10 @@ async function main(): Promise<void> {
   const formats: readonly Format[] = ['docx', 'epub', 'xlsx'];
   const widths = [DESKTOP, PHONE];
   try {
+    const [raceBefore, raceAfter] = await uploadsFor('xlsx');
+    const racePair = await publishPair(h, 'count-race', raceBefore, raceAfter);
+    for (const viewport of widths)
+      await compareDuringCommentRefresh(h, racePair, viewport);
     for (const format of formats) {
       const [first, second] = await uploadsFor(format);
       const pair = await publishPair(h, format, first, second);
