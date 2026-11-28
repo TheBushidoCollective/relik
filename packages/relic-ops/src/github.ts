@@ -1,5 +1,3 @@
-import { BEGIN } from './render.ts';
-
 export const FILER_AUTHOR_LOGIN = 'github-actions[bot]';
 export const FILER_AUTHOR_ID = 41898282;
 export const FILER_AUTHOR_TYPE = 'Bot';
@@ -69,9 +67,21 @@ export interface Issue {
   locked: boolean;
 }
 
+export interface AutofixHistory {
+  branches: Array<{ fingerprint: string }>;
+  pullRequests: Array<{
+    fingerprint: string;
+    createdAt: string;
+    state: 'open' | 'closed';
+    merged: boolean;
+  }>;
+}
+
+
 export interface GitHub {
   listIssues(): Promise<Issue[]>;
   autofixLabelTimes(issue: number): Promise<string[]>;
+  autofixHistory(): Promise<AutofixHistory>;
   ensureLabels(labels: readonly string[]): Promise<void>;
   createIssue(title: string, body: string, labels: string[]): Promise<Issue>;
   updateIssue(number: number, body: string): Promise<void>;
@@ -183,13 +193,7 @@ export class GitHubRest implements GitHub {
           'user' in value &&
           isFilerAuthor(decodeAuthor(value.user), this.filerAuthor)
       )
-      .map(decodeIssue)
-      .filter(
-        (issue) =>
-          issue.labels.includes('error-report') ||
-          /^Error report: .+ \[[0-9a-f]{16}\]$/.test(issue.title) ||
-          issue.body.includes(BEGIN)
-      );
+      .map(decodeIssue);
   }
 
   async autofixLabelTimes(issue: number): Promise<string[]> {
@@ -216,6 +220,40 @@ export class GitHubRest implements GitHub {
       times.push(event.created_at);
     }
     return times;
+  }
+
+  async autofixHistory(): Promise<AutofixHistory> {
+    const [refs, pulls] = await Promise.all([
+      this.pages('/git/matching-refs/heads/autofix/error-'),
+      this.pages('/pulls?state=all'),
+    ]);
+    const branches: AutofixHistory['branches'] = [];
+    for (const value of refs) {
+      if (typeof value !== 'object' || value === null || !('ref' in value) || typeof value.ref !== 'string')
+        throw new Error('Malformed GitHub ref');
+      const match = /^refs\/heads\/autofix\/error-([0-9a-f]{16})$/.exec(value.ref);
+      if (match?.[1]) branches.push({ fingerprint: match[1] });
+    }
+    const pullRequests: AutofixHistory['pullRequests'] = [];
+    for (const value of pulls) {
+      if (typeof value !== 'object' || value === null || !('head' in value) ||
+          typeof value.head !== 'object' || value.head === null || !('ref' in value.head) ||
+          typeof value.head.ref !== 'string') throw new Error('Malformed GitHub pull request');
+      const match = /^autofix\/error-([0-9a-f]{16})$/.exec(value.head.ref);
+      if (!match?.[1]) continue;
+      if (!('repo' in value.head) || typeof value.head.repo !== 'object' ||
+          value.head.repo === null || !('full_name' in value.head.repo) ||
+          typeof value.head.repo.full_name !== 'string') throw new Error('Malformed GitHub pull request');
+      if (value.head.repo.full_name !== 'TheBushidoCollective/relik') continue;
+      if (!('created_at' in value) || typeof value.created_at !== 'string' ||
+          !Number.isFinite(Date.parse(value.created_at)) || !('state' in value) ||
+          (value.state !== 'open' && value.state !== 'closed') || !('merged_at' in value) ||
+          (value.merged_at !== null && typeof value.merged_at !== 'string'))
+        throw new Error('Malformed GitHub pull request');
+      pullRequests.push({ fingerprint: match[1], createdAt: value.created_at,
+        state: value.state, merged: value.merged_at !== null });
+    }
+    return { branches, pullRequests };
   }
 
   async ensureLabels(labels: readonly string[]): Promise<void> {
@@ -288,6 +326,9 @@ export class MemoryGitHub implements GitHub {
   }
   async autofixLabelTimes(issue: number): Promise<string[]> {
     return [...(this.labelEvents.get(issue) ?? [])];
+  }
+  async autofixHistory(): Promise<AutofixHistory> {
+    return { branches: [], pullRequests: [] };
   }
   async ensureLabels(labels: readonly string[]): Promise<void> {
     for (const label of labels) {

@@ -21,6 +21,7 @@ import {
 const DAY = 86_400_000;
 const MAX_PER_SOURCE = 5;
 const MAX_AUTOFIX = 3;
+const BLOCK_CLOSED_UNMERGED_AUTOFIX = true;
 const MAX_FINGERPRINTS = 50;
 
 export type Action =
@@ -111,12 +112,13 @@ export async function planReports(
     filerAuthor?: IssueAuthor;
   }
 ): Promise<Plan> {
-  const issues = (await github.listIssues()).filter(
-    (issue) =>
-      isFilerAuthor(issue.author, options.filerAuthor) &&
-      (issue.labels.includes('error-report') ||
-        /^Error report: .+ \[[0-9a-f]{16}\]$/.test(issue.title) ||
-        issue.body.includes(BEGIN))
+  const filerIssues = (await github.listIssues()).filter((issue) =>
+    isFilerAuthor(issue.author, options.filerAuthor)
+  );
+  const issues = filerIssues.filter((issue) =>
+    issue.labels.includes('error-report') ||
+    /^Error report: .+ \[[0-9a-f]{16}\]$/.test(issue.title) ||
+    issue.body.includes(BEGIN)
   );
   const records: Array<{ issue: Issue; data: IssueData; claims: Set<string> }> =
     [];
@@ -175,25 +177,42 @@ export async function planReports(
   for (const { issue, data, claims } of records) {
     if ([...claims].some((fingerprint) => blocked.has(fingerprint))) continue;
     byFingerprint.set(data.fingerprint, { issue, data });
-    if (Date.parse(issue.createdAt) >= options.now - DAY) {
-      const server =
-        issue.labels.includes('source:server') || data.source === 'server';
-      const client =
-        issue.labels.includes('source:viewer') ||
-        issue.labels.includes('source:mcp') ||
-        data.source === 'viewer' ||
-        data.source === 'mcp';
-      if (server || !client) serverCreated++;
-      if (client || !server) clientCreated++;
-    }
+  }
+  // A damaged or isolated authenticated issue has still spent its creation slot.
+  for (const issue of filerIssues) {
+    const created = Date.parse(issue.createdAt);
+    if (created < options.now - DAY || created > options.now) continue;
+    const data = parseRegion(issue.body);
+    const server = issue.labels.includes('source:server') || data?.source === 'server';
+    const client = issue.labels.includes('source:viewer') ||
+      issue.labels.includes('source:mcp') || data?.source === 'viewer' || data?.source === 'mcp';
+    if (server || !client) serverCreated++;
+    if (client || !server) clientCreated++;
   }
   let autofixUsed = 0;
+  const unavailable = new Set<string>();
   if (options.autofix === 'on') {
-    for (const { issue } of byFingerprint.values()) {
-      for (const time of await github.autofixLabelTimes(issue.number)) {
-        if (Date.parse(time) >= options.now - DAY) autofixUsed++;
-      }
+    const history = await github.autofixHistory();
+    const labelCounts = new Map<string, number>();
+    const prCounts = new Map<string, number>();
+    for (const issue of filerIssues) {
+      const fingerprint = parseRegion(issue.body)?.fingerprint ?? `issue:${issue.number}`;
+      const recent = (await github.autofixLabelTimes(issue.number)).filter((time) => {
+        const created = Date.parse(time);
+        return created >= options.now - DAY && created <= options.now;
+      }).length;
+      if (recent) labelCounts.set(fingerprint, (labelCounts.get(fingerprint) ?? 0) + recent);
     }
+    for (const branch of history.branches) unavailable.add(branch.fingerprint);
+    for (const pr of history.pullRequests) {
+      if (pr.state === 'open' || (BLOCK_CLOSED_UNMERGED_AUTOFIX && !pr.merged))
+        unavailable.add(pr.fingerprint);
+      const created = Date.parse(pr.createdAt);
+      if (created >= options.now - DAY && created <= options.now)
+        prCounts.set(pr.fingerprint, (prCounts.get(pr.fingerprint) ?? 0) + 1);
+    }
+    for (const fingerprint of new Set([...labelCounts.keys(), ...prCounts.keys()]))
+      autofixUsed += Math.max(labelCounts.get(fingerprint) ?? 0, prCounts.get(fingerprint) ?? 0);
   }
   const all = aggregate(entries).filter(
     (group) => !blocked.has(group.data.fingerprint)
@@ -261,6 +280,7 @@ export async function planReports(
     if (
       options.autofix === 'on' &&
       autofixUsed < MAX_AUTOFIX &&
+      !unavailable.has(data.fingerprint) &&
       (issue === undefined ||
         (issue.state === 'open' && !issue.labels.includes('autofix')))
     ) {
@@ -334,9 +354,12 @@ export async function applyPlan(
       await github.addLabels(action.issue, action.labels);
     else await github.lockIssue(action.issue);
   }
-  return plan.candidates.map((candidate) => {
+  const candidates = plan.candidates.map((candidate) => {
     const issue = candidate.issue ?? created.get(candidate.fingerprint);
     if (issue === undefined) throw new Error('Autofix candidate has no issue');
     return { ...candidate, issue };
   });
+  for (const candidate of candidates)
+    await github.addLabels(candidate.issue, ['autofix']);
+  return candidates;
 }
