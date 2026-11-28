@@ -18,6 +18,7 @@ import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { coverAssetDir } from './cover/assets.ts';
 import { chromeCoverRenderer, DEFAULT_DEADLINE_MS } from './cover/render.ts';
+import { reportMcpError } from './error-report.ts';
 import { nodeFiles } from './files.ts';
 import { createHttpHandler } from './http.ts';
 import { runInstall, USAGE } from './installer.ts';
@@ -45,15 +46,14 @@ if (typeof globalThis.crypto === 'undefined') {
     configurable: true,
   });
 }
-process.on('uncaughtException', (err) => {
-  process.stderr.write(
-    `UNCAUGHT EXCEPTION IN RELIC-MCP: ${err?.stack || err}\n`
-  );
+process.on('uncaughtException', async (err) => {
+  await reportMcpError(err, 'process');
+  process.stderr.write('UNCAUGHT EXCEPTION IN RELIC-MCP\n');
   process.exit(1);
 });
-process.on('unhandledRejection', (err) => {
-  const stack = err instanceof Error ? err.stack : String(err);
-  process.stderr.write(`UNHANDLED REJECTION IN RELIC-MCP: ${stack}\n`);
+process.on('unhandledRejection', async (err) => {
+  await reportMcpError(err, 'process');
+  process.stderr.write('UNHANDLED REJECTION IN RELIC-MCP\n');
   process.exit(1);
 });
 installProgramSignalCleanup();

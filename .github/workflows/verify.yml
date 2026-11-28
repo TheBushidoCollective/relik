@@ -34,6 +34,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: jdx/mise-action@v2
         with:
@@ -106,6 +108,9 @@ jobs:
 
       - name: Build MCP bundle
         run: bun run --cwd packages/relic-mcp build
+
+      - name: Error report path
+        run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun run packages/relic-ops/bin/error-report-path.ts --leg all
 
       - name: Cover path
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/cover-path.ts
@@ -298,6 +303,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Prepare large relic proof receipt
         run: |
@@ -382,6 +389,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: jdx/mise-action@v2
         with:
@@ -471,6 +480,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Prepare image smoke receipt
         run: |
@@ -481,7 +492,7 @@ jobs:
       - name: Build the deploy image without pushing it
         run: |
           set -euo pipefail
-          docker build -f deploy/docker/server/Dockerfile -t "$IMAGE" .
+          docker build --build-arg RELIC_REVISION=${{ github.sha }} -f deploy/docker/server/Dockerfile -t "$IMAGE" .
 
       - name: Boot the image and smoke its served assets
         run: |

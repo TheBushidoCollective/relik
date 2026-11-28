@@ -19,7 +19,7 @@ Each is a case where every component behaves correctly and an unspecified bounda
 1. **Attacker bytes become markup on the viewing origin**, and that markup reads `location.hash`. Closed by 1.1 through 1.5, by 1.9, and by §3.1 putting Markdown on the usercontent origin.
 2. **A blob URL built from attacker bytes gets navigated to on the viewing origin**, inheriting it, so a document the viewer never authored runs there. Closed by 1.6.
 3. **A redirect without a fragment hands the key to its target**, with no bug in any component. Closed by 1.7.
-4. **The viewing origin writes the key or the ID down**, into a `Referer`, a console line, storage, or an error object. Closed by 1.8.
+4. **The viewing origin writes the key or the ID down**, into a `Referer`, a console line, storage, or an error report. Closed by 1.8.
 
 ### 1.1 The renderer class never routes
 
@@ -112,7 +112,9 @@ Redirects and rewrites performed by third parties, including link shorteners and
 
 **The viewing origin sends `Referrer-Policy: no-referrer`.** The relik ID appears in that origin's own `Referer` on any outbound request (`format.md` §0), and this closes it. **That's an ID control and not a key control**, and the distinction is worth a sentence, because "the referrer policy handles it" is how somebody later concludes the fragment is covered and stops looking. Fragments are never sent in a `Referer` to begin with. `Referrer-Policy` was never protecting the key and can't.
 
-**The key is closed by a separate rule: no code path writes the fragment or the key to the console, to storage, or into an error object.** Error objects are the leak nobody plans: a thrown error carrying the URL gets logged, serialized, or displayed, and the honest reason the viewing origin has no error reporting (a locked precondition) is that an error reporter is a same-origin script that reads whatever it's handed.
+**The fragment and key never go to the console, storage, or an error report.** A thrown error can contain a URL or document text, so the viewer reports only the error class, a fixed surface name, the build revision, and allowlisted asset locations and positions. It discards errors without a surviving viewer frame, sends at most five reports per page, and never sends an error message or raw stack. Reports use a same-origin request without credentials or a referrer. Reporting runs only when the shell supplies a valid build revision.
+
+The allowlist prevents accidental disclosure by an ordinary client. A hostile client can choose values that match the schema, so the server also checks the revision and asset names against its own build.
 
 ### 1.9 The filename is untrusted display text
 

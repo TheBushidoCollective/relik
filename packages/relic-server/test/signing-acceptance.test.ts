@@ -642,9 +642,18 @@ test.each(['identical', 'different'] as const)(
       }
       return original(...args);
     };
-    await expect(
-      f.post(f.a, `${root}/signing/signatures`, first, f.first.cookie)
-    ).rejects.toThrow('injected crash');
+    // Reverse the former rejection assertion: the boundary returns a generic 500.
+    const failedResponse = await f.a.fetch(
+      new Request(`${origin}${root}/signing/signatures`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: f.first.cookie },
+        body: JSON.stringify(first),
+      })
+    );
+    expect(fault).toBe(false);
+    expect(failedResponse.status).toBe(500);
+    expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+    expect(await failedResponse.text()).toBe('Something went wrong!');
     expect(
       (await f.store.getSigningRequest(RELIC_ID, request.request_id))
         ?.signedBy ?? []

@@ -1,0 +1,80 @@
+name: error reports
+
+on:
+  schedule:
+    - cron: '0,30 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Filing mode'
+        type: choice
+        options: [dry-run, live]
+        default: dry-run
+
+permissions: {}
+
+jobs:
+  file:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: error-report-filer
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      id-token: write
+    outputs:
+      autofix: ${{ steps.file.outputs.autofix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@v2
+        with:
+          cache: true
+      - run: bun install --frozen-lockfile
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.ERROR_REPORT_READER_SA }}
+          token_format: access_token
+          create_credentials_file: false
+      - id: file
+        name: Validate and file reports
+        env:
+          GOOGLE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPORT_MODE: ${{ inputs.mode || vars.ERROR_REPORTS_MODE || 'dry-run' }}
+          LIVE_SINCE: ${{ vars.ERROR_REPORTS_LIVE_SINCE }}
+          AUTOFIX_MODE: ${{ vars.ERROR_REPORTS_MODE == 'live' && (inputs.mode || vars.ERROR_REPORTS_MODE || 'dry-run') == 'live' && (vars.AUTOFIX_MODE || 'off') || 'off' }}
+          ERROR_REPORT_FILER_LOGIN: 'github-actions[bot]'
+          ERROR_REPORT_FILER_ID: '41898282'
+          ERROR_REPORT_FILER_TYPE: 'Bot'
+        run: |
+          set -euo pipefail
+          bun packages/relic-ops/bin/file-error-reports.ts \
+            --entries cloud --mode "$REPORT_MODE" --live-since "$LIVE_SINCE" \
+            --autofix "$AUTOFIX_MODE" --github-output "$GITHUB_OUTPUT"
+
+  autofix:
+    needs: file
+    if: github.ref == 'refs/heads/main' && vars.ERROR_REPORTS_MODE == 'live' && vars.AUTOFIX_MODE == 'on' && (inputs.mode || vars.ERROR_REPORTS_MODE || 'dry-run') == 'live' && needs.file.outputs.autofix != '' && needs.file.outputs.autofix != '[]'
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        candidate: ${{ fromJSON(needs.file.outputs.autofix) }}
+    uses: ./.github/workflows/autofix.yml
+    with:
+      issue: ${{ matrix.candidate.issue }}
+      fingerprint: ${{ matrix.candidate.fingerprint }}

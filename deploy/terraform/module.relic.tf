@@ -6,10 +6,11 @@ module "relic" {
   image       = var.image
   bucket_name = local.bucket_name
 
-  service_name     = local.service_name
-  usercontent_name = local.usercontent_name
-  service_url      = local.service_url
-  usercontent_url  = local.usercontent_url
+  service_name                   = local.service_name
+  usercontent_name               = local.usercontent_name
+  service_url                    = local.service_url
+  usercontent_url                = local.usercontent_url
+  usercontent_trusted_proxy_hops = 1
 
   soft_delete_retention_days = var.soft_delete_retention_days
   kill_switch_engaged        = var.kill_switch_engaged

@@ -21,6 +21,9 @@ const viewer = fileURLToPath(
   new URL('../packages/relic-viewer/dist/', import.meta.url)
 );
 const scratch = await mkdtemp(join(tmpdir(), 'relik-smoke-proof-'));
+const revision = 'a'.repeat(40);
+const disclosure =
+  'Scrubbed reports may become public issues in the Relik issue tracker.';
 const tools = join(scratch, 'tools');
 const logs = join(scratch, 'logs');
 await mkdir(tools);
@@ -58,6 +61,10 @@ const requests: string[] = [];
 let missingAsset = false;
 let unversionedShell = false;
 let mismatchedWorker = false;
+let mismatchedRevision = false;
+let removedDisclosure = false;
+let revisionMutationApplied = false;
+let disclosureMutationApplied = false;
 let app: RelicApp;
 const service = Bun.serve({
   hostname: '127.0.0.1',
@@ -70,6 +77,21 @@ const service = Bun.serve({
     if (missingAsset && path === '/assets/viewer.js')
       return new Response('Missing', { status: 404 });
     const response = await app.fetch(request);
+    if (mismatchedRevision && path === '/aaaaaaaaaaaaaaaaaaaaaaaaaa') {
+      const original = await response.text();
+      const altered = original.replace(
+        `data-revision="${revision}"`,
+        `data-revision="${'b'.repeat(40)}"`
+      );
+      revisionMutationApplied = altered !== original;
+      return new Response(altered, { headers: response.headers });
+    }
+    if (removedDisclosure && path === '/policy') {
+      const original = await response.text();
+      const altered = original.replace(disclosure, '');
+      disclosureMutationApplied = altered !== original;
+      return new Response(altered, { headers: response.headers });
+    }
     if (unversionedShell && path === '/aaaaaaaaaaaaaaaaaaaaaaaaaa') {
       return new Response(
         (await response.text()).replace(
@@ -95,7 +117,7 @@ const retired = Bun.serve({
   fetch: () => new Response('retired', { status: 503 }),
 });
 app = createApp({
-  config: { serviceOrigin: origin, usercontentOrigin: usercontent },
+  config: { serviceOrigin: origin, usercontentOrigin: usercontent, revision },
   store: new MemoryStore(),
   storage: new MemoryStorage(),
   assets: diskAssets(viewer),
@@ -108,12 +130,17 @@ const env = {
   SERVICE: origin,
   ORIGIN: origin,
   USERCONTENT: usercontent,
+  EXPECTED_REVISION: revision,
   RUN_HOST: `http://127.0.0.1:${retired.port}`,
 };
-async function run(script: string, log?: string): Promise<number> {
+async function run(
+  script: string,
+  log?: string,
+  overrides: Record<string, string | undefined> = {}
+): Promise<number> {
   const child = Bun.spawn(['bash', script], {
     cwd: root,
-    env: { ...env, ...(log ? { CURL_LOG: log } : {}) },
+    env: { ...env, ...(log ? { CURL_LOG: log } : {}), ...overrides },
     stdout: 'pipe',
     stderr: 'pipe',
   });
@@ -259,7 +286,34 @@ try {
   unversionedShell = false;
   mismatchedWorker = true;
   assert.notEqual(await run('scripts/deploy-smoke.sh'), 0);
+  mismatchedWorker = false;
   console.log('SMOKE_UNVERSIONED_AND_MISMATCHED_WORKER_REJECTED');
+  requests.length = 0;
+  assert.notEqual(
+    await run('scripts/deploy-smoke.sh', undefined, {
+      EXPECTED_REVISION: undefined,
+    }),
+    0
+  );
+  assert.equal(requests.length, 0);
+  console.log('SMOKE_MISSING_REVISION_REJECTED');
+  assert.notEqual(
+    await run('scripts/deploy-smoke.sh', undefined, {
+      EXPECTED_REVISION: 'not-a-git-sha',
+    }),
+    0
+  );
+  assert.equal(requests.length, 0);
+  console.log('SMOKE_MALFORMED_REVISION_REJECTED');
+  mismatchedRevision = true;
+  assert.notEqual(await run('scripts/deploy-smoke.sh'), 0);
+  assert.ok(revisionMutationApplied, 'shell revision mutation was not applied');
+  mismatchedRevision = false;
+  console.log('SMOKE_WRONG_REVISION_REJECTED');
+  removedDisclosure = true;
+  assert.notEqual(await run('scripts/deploy-smoke.sh'), 0);
+  assert.ok(disclosureMutationApplied, 'policy mutation was not applied');
+  console.log('SMOKE_MISSING_DISCLOSURE_REJECTED');
   console.log('DEPLOY_SMOKE_PATH_OK');
 } finally {
   service.stop(true);

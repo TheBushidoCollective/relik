@@ -51,6 +51,17 @@ variable "usercontent_url" {
   nullable    = false
 }
 
+variable "usercontent_trusted_proxy_hops" {
+  description = "Trusted proxy hops for the usercontent service."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.usercontent_trusted_proxy_hops >= 0 && floor(var.usercontent_trusted_proxy_hops) == var.usercontent_trusted_proxy_hops
+    error_message = "The trusted proxy hop count must be a non-negative integer."
+  }
+}
+
 variable "soft_delete_retention_days" {
   description = "How long deleted objects stay recoverable."
   type        = number

@@ -1,0 +1,222 @@
+name: autofix error report
+
+on:
+  workflow_call:
+    inputs:
+      issue:
+        required: true
+        type: number
+      fingerprint:
+        required: true
+        type: string
+      fixture:
+        required: false
+        type: string
+        default: ''
+
+permissions: {}
+
+jobs:
+  sandbox:
+    if: github.ref == 'refs/heads/main' && github.repository == 'TheBushidoCollective/relik' && (inputs.fixture == 'regression' || (inputs.fixture == '' && vars.ERROR_REPORTS_MODE == 'live' && vars.AUTOFIX_MODE == 'on'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    concurrency:
+      group: autofix-${{ inputs.fingerprint }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      patch: ${{ steps.canary.outputs.patch }}
+      metadata: ${{ steps.canary.outputs.metadata }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@v2
+        with:
+          cache: false
+      - name: Install trusted dependencies and build sandbox
+        env:
+          FIXTURE: ${{ inputs.fixture }}
+        run: |
+          set -euo pipefail
+          export GIT_TERMINAL_PROMPT=0
+          bun install --frozen-lockfile --backend=copyfile
+          mkdir -m 700 "$RUNNER_TEMP/autofix-build" "$RUNNER_TEMP/autofix-objects"
+          docker build -q -t relik-autofix-sandbox -f packages/relic-ops/bin/autofix-container.Dockerfile "$RUNNER_TEMP/autofix-build" >/dev/null
+          git clone --no-local --no-hardlinks "$GITHUB_WORKSPACE" "$RUNNER_TEMP/autofix-work" >/dev/null 2>&1
+          (cd "$RUNNER_TEMP/autofix-work" && bun install --frozen-lockfile --backend=copyfile >/dev/null)
+          if [[ "$FIXTURE" == regression ]]; then
+            cp packages/relic-ops/fixtures/autofix/canary.ts "$RUNNER_TEMP/autofix-work/packages/relic-format/src/autofix-canary.ts"
+            export GIT_INDEX_FILE="$RUNNER_TEMP/autofix-seed-index"
+            export GIT_OBJECT_DIRECTORY="$RUNNER_TEMP/autofix-objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$GITHUB_WORKSPACE/.git/objects"
+            git --git-dir="$GITHUB_WORKSPACE/.git" --work-tree="$RUNNER_TEMP/autofix-work" read-tree "$GITHUB_SHA" 2>/dev/null || { echo 'Autofix setup refused' >&2; exit 1; }
+            git --git-dir="$GITHUB_WORKSPACE/.git" --work-tree="$RUNNER_TEMP/autofix-work" add -f packages/relic-format/src/autofix-canary.ts >/dev/null 2>&1 || { echo 'Autofix setup refused' >&2; exit 1; }
+            git --git-dir="$GITHUB_WORKSPACE/.git" write-tree > "$RUNNER_TEMP/autofix-base" 2>/dev/null || { echo 'Autofix setup refused' >&2; exit 1; }
+            rm -f "$RUNNER_TEMP/autofix-seed-index"
+          elif [[ -z "$FIXTURE" ]]; then
+            printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/autofix-base"
+          else
+            exit 1
+          fi
+      - name: Validate authenticated issue
+        env:
+          ISSUE: ${{ inputs.issue }}
+          FINGERPRINT: ${{ inputs.fingerprint }}
+          FIXTURE: ${{ inputs.fixture }}
+        run: |
+          set -euo pipefail
+          if [[ "$FIXTURE" == regression ]]; then
+            bun packages/relic-ops/bin/autofix-fixture.ts "$GITHUB_SHA" "$RUNNER_TEMP/autofix-prompt"
+          elif [[ -z "$FIXTURE" ]]; then
+            bun packages/relic-ops/bin/autofix-input.ts "$ISSUE" "$FINGERPRINT" "$GITHUB_SHA" "$RUNNER_TEMP/autofix-prompt"
+          else
+            exit 1
+          fi
+      - id: vault
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.OMP_VAULT_WIF_PROVIDER }}
+          service_account: ${{ vars.OMP_VAULT_WIF_SERVICE_ACCOUNT }}
+          token_format: access_token
+          create_credentials_file: false
+      - name: Fetch pinned context and credential
+        env:
+          ACCESS_TOKEN: ${{ steps.vault.outputs.access_token }}
+          VAULT_BUCKET: ${{ vars.OMP_VAULT_BUCKET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$VAULT_BUCKET" =~ ^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$ ]]
+          [[ "$ACCESS_TOKEN" =~ ^[A-Za-z0-9._-]+$ ]]
+          pin="$(tr -d '\n' < .github/omp-context.pin)"
+          [[ "$pin" =~ ^[0-9a-f]{64}$ ]]
+          config="$RUNNER_TEMP/autofix-curl.conf"
+          trap 'rm -f -- "$config"' EXIT
+          printf 'header = "Authorization: Bearer %s"\n' "$ACCESS_TOKEN" > "$config"
+          unset ACCESS_TOKEN
+          curl --fail --silent --show-error --config "$config" --max-filesize 4194304 \
+            --output "$RUNNER_TEMP/relik-context.tar.gz" \
+            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fcontext%2F$pin.tar.gz?alt=media"
+          curl --fail --silent --show-error --config "$config" --max-filesize 1048576 \
+            --output "$RUNNER_TEMP/relik-agent.db" \
+            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fagent.db?alt=media"
+      - name: Prepare pinned context
+        run: |
+          set -euo pipefail
+          bash .github/scripts/checkout-omp-context.sh "$RUNNER_TEMP/relik-context.tar.gz" "$RUNNER_TEMP/relik-agent.db"
+          env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_RUNTIME_TOKEN \
+            -u OMP_VAULT_ACCESS_TOKEN -u GOOGLE_APPLICATION_CREDENTIALS -u CLOUDSDK_AUTH_ACCESS_TOKEN_FILE \
+            -u GITHUB_TOKEN -u GH_TOKEN -u GITHUB_PATH bash "$RUNNER_TEMP/omp-runtime/install-omp" >/dev/null
+      - name: Run isolated fixer
+        run: |
+          set -euo pipefail
+          bash .github/scripts/run-agent-container.sh "$RUNNER_TEMP/autofix-work" \
+            "$RUNNER_TEMP/autofix-prompt" "$RUNNER_TEMP/omp-18.12.6/omp" "$(readlink -f "$(command -v bun)")"
+      - name: Extract and scan untrusted patch
+        env:
+          FIXTURE: ${{ inputs.fixture }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/autofix-safe" "$RUNNER_TEMP/autofix-git-home"
+          export HOME="$RUNNER_TEMP/autofix-git-home" GIT_INDEX_FILE="$RUNNER_TEMP/autofix-index"
+          export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1
+          export GIT_TERMINAL_PROMPT=0 GIT_OBJECT_DIRECTORY="$RUNNER_TEMP/autofix-objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$GITHUB_WORKSPACE/.git/objects"
+          trap 'rm -rf -- "$RUNNER_TEMP/autofix-work" "$RUNNER_TEMP/autofix-objects" >/dev/null 2>&1; rm -f -- "$RUNNER_TEMP/autofix-index" >/dev/null 2>&1' EXIT
+          unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_RUNTIME_TOKEN GITHUB_TOKEN GH_TOKEN || true
+          base="$(cat "$RUNNER_TEMP/autofix-base")"
+          [[ "$base" =~ ^[0-9a-f]{40}$ ]]
+          git -c core.hooksPath=/dev/null --git-dir="$GITHUB_WORKSPACE/.git" --work-tree="$RUNNER_TEMP/autofix-work" read-tree "$base" 2>/dev/null || { echo 'Autofix patch extraction refused' >&2; exit 1; }
+          git -c core.hooksPath=/dev/null --git-dir="$GITHUB_WORKSPACE/.git" --work-tree="$RUNNER_TEMP/autofix-work" add -A -- . >/dev/null 2>&1 || { echo 'Autofix patch extraction refused' >&2; exit 1; }
+          git -c core.hooksPath=/dev/null --git-dir="$GITHUB_WORKSPACE/.git" --work-tree="$RUNNER_TEMP/autofix-work" \
+            diff --cached --binary --no-ext-diff --no-textconv "$base" > "$RUNNER_TEMP/autofix-safe/patch.diff" 2>/dev/null || { echo 'Autofix patch extraction refused' >&2; exit 1; }
+          bun packages/relic-ops/bin/autofix-scan.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/omp-agent/agent.db"
+          if [[ "$FIXTURE" == regression ]]; then
+            bun packages/relic-ops/bin/autofix-check-canary.ts "$RUNNER_TEMP/autofix-safe/patch.diff"
+          fi
+          bun packages/relic-ops/bin/autofix-check-patch.ts create "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-safe/metadata.json"
+      - name: Remove credential material
+        if: always()
+        run: |
+          rm -rf -- "$RUNNER_TEMP/omp-agent" "$RUNNER_TEMP/omp-runtime" "$GITHUB_WORKSPACE/.omp-agent-context" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
+          rm -rf -- "$RUNNER_TEMP/autofix-work" "$RUNNER_TEMP/autofix-objects" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
+          rm -f -- "$RUNNER_TEMP/relik-agent.db" "$RUNNER_TEMP/relik-context.tar.gz" "$RUNNER_TEMP/autofix-curl.conf" "$RUNNER_TEMP/autofix-index" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
+          rm -f -- "$RUNNER_TEMP/autofix-seed-index" "$RUNNER_TEMP/autofix-base" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
+      - id: canary
+        if: success() && inputs.fixture == 'regression'
+        run: |
+          set -euo pipefail
+          printf 'patch=%s\n' "$(base64 -w 0 "$RUNNER_TEMP/autofix-safe/patch.diff")" >> "$GITHUB_OUTPUT"
+          printf 'metadata=%s\n' "$(base64 -w 0 "$RUNNER_TEMP/autofix-safe/metadata.json")" >> "$GITHUB_OUTPUT"
+      - name: Upload scanned patch only
+        if: success() && inputs.fixture == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: autofix-patch-${{ inputs.fingerprint }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/autofix-safe/patch.diff
+            ${{ runner.temp }}/autofix-safe/metadata.json
+          if-no-files-found: error
+          retention-days: 1
+
+  test:
+    needs: sandbox
+    if: github.ref == 'refs/heads/main' && github.repository == 'TheBushidoCollective/relik' && (inputs.fixture == 'regression' || (inputs.fixture == '' && vars.ERROR_REPORTS_MODE == 'live' && vars.AUTOFIX_MODE == 'on'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@v2
+        with:
+          cache: false
+      - name: Install trusted dependencies and build sandbox
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --backend=copyfile
+          mkdir -m 700 "$RUNNER_TEMP/autofix-build"
+          docker build -q -t relik-autofix-sandbox -f packages/relic-ops/bin/autofix-container.Dockerfile "$RUNNER_TEMP/autofix-build" >/dev/null
+      - uses: actions/download-artifact@v4
+        if: inputs.fixture == ''
+        with:
+          name: autofix-patch-${{ inputs.fingerprint }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/autofix-safe
+      - name: Restore scanned canary patch
+        if: inputs.fixture == 'regression'
+        env:
+          PATCH: ${{ needs.sandbox.outputs.patch }}
+          METADATA: ${{ needs.sandbox.outputs.metadata }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/autofix-safe"
+          printf '%s' "$PATCH" | base64 -d > "$RUNNER_TEMP/autofix-safe/patch.diff"
+          printf '%s' "$METADATA" | base64 -d > "$RUNNER_TEMP/autofix-safe/metadata.json"
+      - name: Verify patch and run targeted replay
+        env:
+          FIXTURE: ${{ inputs.fixture }}
+        run: |
+          set -euo pipefail
+          bun packages/relic-ops/bin/autofix-check-patch.ts verify "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-safe/metadata.json"
+          mkdir -m 700 "$RUNNER_TEMP/autofix-result"
+          if [[ "$FIXTURE" == regression ]]; then
+            bun packages/relic-ops/bin/autofix-repro.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-result/result.json" --fixture
+          else
+            bun packages/relic-ops/bin/autofix-repro.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-result/result.json"
+          fi
+      - name: Upload fixed test result only
+        uses: actions/upload-artifact@v4
+        with:
+          name: autofix-result-${{ inputs.fingerprint }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/autofix-result/result.json
+          if-no-files-found: error
+          retention-days: 1
+

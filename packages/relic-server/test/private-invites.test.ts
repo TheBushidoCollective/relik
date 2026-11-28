@@ -1438,9 +1438,21 @@ test('a claim remains readable after a post-CAS write fails', async () => {
     return append(...args);
   };
   const path = `/api/relics/${RELIC_ID}/invites/${inviteId}/claim`;
-  await expect(send(path, post(body, invitee.cookie))).rejects.toThrow(
-    'injected post-claim failure'
+  // Reverse the former rejection assertion: the boundary returns a generic 500.
+  const failedResponse = await app.fetch(
+    new Request(`${ORIGIN}${path}`, {
+      ...post(body, invitee.cookie),
+      headers: {
+        'content-type': 'application/json',
+        cookie: invitee.cookie,
+        'x-forwarded-for': '198.51.100.30, 130.211.0.1',
+      },
+    })
   );
+  expect(fail).toBe(false);
+  expect(failedResponse.status).toBe(500);
+  expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+  expect(await failedResponse.text()).toBe('Something went wrong!');
   expect((await store.getInvite(RELIC_ID, inviteId))?.status).toBe('claimed');
   const opened = await send(
     `/api/relics/${RELIC_ID}/invites/${inviteId}/open`,
@@ -1489,9 +1501,21 @@ test('a crash before invitation CAS leaves an inert index and can retry', async 
     return update(...args);
   };
   const path = `/api/relics/${RELIC_ID}/invites/${inviteId}/claim`;
-  await expect(send(path, post(body, invitee.cookie))).rejects.toThrow(
-    'injected invitation CAS failure'
+  // Reverse the former rejection assertion: the boundary returns a generic 500.
+  const failedResponse = await app.fetch(
+    new Request(`${ORIGIN}${path}`, {
+      ...post(body, invitee.cookie),
+      headers: {
+        'content-type': 'application/json',
+        cookie: invitee.cookie,
+        'x-forwarded-for': '198.51.100.30, 130.211.0.1',
+      },
+    })
   );
+  expect(fail).toBe(false);
+  expect(failedResponse.status).toBe(500);
+  expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+  expect(await failedResponse.text()).toBe('Something went wrong!');
   expect((await store.getInvite(RELIC_ID, inviteId))?.status).toBe('open');
   expect(
     (await store.getInviteClaimIndex(RELIC_ID, invitee.identityId!))?.inviteIds
@@ -2791,9 +2815,21 @@ test('a storage failure before revocation commit retains the claimed wrap', asyn
     }
     return update(id, change);
   };
-  await expect(
-    send(`/api/relics/${RELIC_ID}/revocations`, post(revocation, owner.cookie))
-  ).rejects.toThrow('epoch write unavailable');
+  // Reverse the former rejection assertion: the boundary returns a generic 500.
+  const failedResponse = await app.fetch(
+    new Request(`${ORIGIN}/api/relics/${RELIC_ID}/revocations`, {
+      ...post(revocation, owner.cookie),
+      headers: {
+        'content-type': 'application/json',
+        cookie: owner.cookie,
+        'x-forwarded-for': '198.51.100.30, 130.211.0.1',
+      },
+    })
+  );
+  expect(fail).toBe(false);
+  expect(failedResponse.status).toBe(500);
+  expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+  expect(await failedResponse.text()).toBe('Something went wrong!');
   expect(
     (await store.getInvite(RELIC_ID, first.inviteId))?.claimWraps
   ).toHaveLength(1);

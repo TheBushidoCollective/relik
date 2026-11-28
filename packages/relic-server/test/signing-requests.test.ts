@@ -786,9 +786,12 @@ test('ambiguous CAS failure does not cancel a request that actually opened', asy
   const { a, make } = await setup(store);
   const request = await make();
   store.failAfterCommit = true;
-  await expect(a.fetch(post(request))).rejects.toThrow(
-    'response lost after commit'
-  );
+  // Reverse the former rejection assertion: the boundary returns a generic 500.
+  const failedResponse = await a.fetch(post(request));
+  expect(store.failAfterCommit).toBe(false);
+  expect(failedResponse.status).toBe(500);
+  expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+  expect(await failedResponse.text()).toBe('Something went wrong!');
   expect((await store.getRelic(RELIC_ID))?.signingOpen?.requestId).toBe(
     request.request.statement.request_id
   );
@@ -832,9 +835,12 @@ test('ambiguous creation CAS preserves a request completed before the error retu
   const { a, make } = await setup(store);
   const request = await make();
   store.failAfterCommit = true;
-  await expect(a.fetch(post(request))).rejects.toThrow(
-    'response lost after completion'
-  );
+  // Reverse the former rejection assertion: the boundary returns a generic 500.
+  const failedResponse = await a.fetch(post(request));
+  expect(store.failAfterCommit).toBe(false);
+  expect(failedResponse.status).toBe(500);
+  expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+  expect(await failedResponse.text()).toBe('Something went wrong!');
   const requestId = request.request.statement.request_id;
   expect((await store.getSigningRequest(RELIC_ID, requestId))?.status).toBe(
     'complete'

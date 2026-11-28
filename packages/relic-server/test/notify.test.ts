@@ -1607,9 +1607,14 @@ describe('change notices and relic_share', () => {
       };
 
       const auth = { authorization: 'Bearer operator-secret' };
-      await expect(
-        app.fetch(req(`/api/relics/${id}`, { method: 'DELETE', headers: auth }))
-      ).rejects.toThrow('Simulated GCS transient error during share sweep');
+      // Reverse the former rejection assertion: the boundary returns a generic 500.
+      const failedResponse = await app.fetch(
+        req(`/api/relics/${id}`, { method: 'DELETE', headers: auth })
+      );
+      expect(failOnce).toBe(false);
+      expect(failedResponse.status).toBe(500);
+      expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+      expect(await failedResponse.text()).toBe('Something went wrong!');
 
       expect(await app.store.getTombstone(id)).toBeDefined();
       expect((await app.store.listShares(id)).length).toBe(2);

@@ -66,8 +66,10 @@ module "usercontent" {
   env = merge(local.origin_env, {
     NODE_ENV = "production"
 
-    RELIC_GCS_BUCKET = var.bucket_name
-    RELIC_GCS_PREFIX = local.ciphertext_prefix
+    RELIC_GCS_BUCKET           = var.bucket_name
+    RELIC_GCS_PREFIX           = local.ciphertext_prefix
+    RELIC_TRUSTED_PROXY_HOPS   = tostring(var.usercontent_trusted_proxy_hops)
+    RELIC_ACCEPT_ERROR_REPORTS = "false"
   })
 
   max_instances = 2

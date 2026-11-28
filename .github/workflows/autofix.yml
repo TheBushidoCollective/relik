@@ -1,0 +1,34 @@
+name: autofix error report
+
+on:
+  workflow_call:
+    inputs:
+      issue:
+        required: true
+        type: number
+      fingerprint:
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  sandbox:
+    if: github.ref == 'refs/heads/main' && github.repository == 'TheBushidoCollective/relik' && vars.ERROR_REPORTS_MODE == 'live' && vars.AUTOFIX_MODE == 'on'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/autofix-sandbox.yml
+    with:
+      issue: ${{ inputs.issue }}
+      fingerprint: ${{ inputs.fingerprint }}
+  propose:
+    needs: sandbox
+    if: github.ref == 'refs/heads/main' && github.repository == 'TheBushidoCollective/relik' && vars.ERROR_REPORTS_MODE == 'live' && vars.AUTOFIX_MODE == 'on'
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/autofix-propose.yml
+    with:
+      issue: ${{ inputs.issue }}
+      fingerprint: ${{ inputs.fingerprint }}

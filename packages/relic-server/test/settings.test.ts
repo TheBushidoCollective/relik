@@ -291,12 +291,15 @@ describe('live settings', () => {
   test('a failed GCS sweep leaves the private expiry unchanged', async () => {
     const fake = fakeGcs();
     const id = generateRelicId();
+    let patchFailed = false;
     const failingFetch = async (
       input: RequestInfo | URL,
       init?: RequestInit
     ) => {
-      if (init?.method === 'PATCH')
+      if (init?.method === 'PATCH') {
+        patchFailed = true;
         return new Response('failure', { status: 500 });
+      }
       return fake.fetch(input, init);
     };
     const store = gcsStore({
@@ -307,14 +310,17 @@ describe('live settings', () => {
     });
     await store.putRelic(await row(id, true));
     const app = createApp({ store, now: () => now });
-    await expect(
-      app.fetch(
-        request(`/api/relics/${id}/settings`, {
-          publish_token: token,
-          settings: { ttl_days: 2 },
-        })
-      )
-    ).rejects.toThrow();
+    // Reverse the former rejection assertion: the boundary returns a generic 500.
+    const failedResponse = await app.fetch(
+      request(`/api/relics/${id}/settings`, {
+        publish_token: token,
+        settings: { ttl_days: 2 },
+      })
+    );
+    expect(patchFailed).toBe(true);
+    expect(failedResponse.status).toBe(500);
+    expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+    expect(await failedResponse.text()).toBe('Something went wrong!');
     expect((await store.getRelic(id))?.expiresAt).toBe(now + 86400000);
   });
   test('a second sweep catches an object written after the first sweep', async () => {
@@ -436,18 +442,23 @@ describe('live settings', () => {
     });
     const name = `tenant/m/signing/${id}/req/request.json`;
     expect(fake.objects.get(name)?.customTime).toBeUndefined();
+    let casFailed = false;
     store.updateRelic = async () => {
+      casFailed = true;
       throw new Error('injected CAS failure');
     };
     const app = createApp({ store, now: () => now });
-    await expect(
-      app.fetch(
-        request(`/api/relics/${id}/settings`, {
-          publish_token: token,
-          settings: { ttl_days: 1 },
-        })
-      )
-    ).rejects.toThrow('injected CAS failure');
+    // Reverse the former rejection assertion: the boundary returns a generic 500.
+    const failedResponse = await app.fetch(
+      request(`/api/relics/${id}/settings`, {
+        publish_token: token,
+        settings: { ttl_days: 1 },
+      })
+    );
+    expect(casFailed).toBe(true);
+    expect(failedResponse.status).toBe(500);
+    expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+    expect(await failedResponse.text()).toBe('Something went wrong!');
     expect((await store.getRelic(id))?.expiresAt).toBeUndefined();
     expect(fake.objects.get(name)?.customTime).toBeUndefined();
   });
@@ -490,7 +501,12 @@ describe('live settings', () => {
           settings: { ttl_days: 1 },
         })
       );
-    await expect(set()).rejects.toThrow('injected sweep failure');
+    // Reverse the former rejection assertion: the boundary returns a generic 500.
+    const failedResponse = await set();
+    expect(fail).toBe(false);
+    expect(failedResponse.status).toBe(500);
+    expect(failedResponse.headers.get('content-type')).toBe('text/plain');
+    expect(await failedResponse.text()).toBe('Something went wrong!');
     expect((await store.getRelic(id))?.expiresAt).toBe(now + 86400000);
     expect((await set()).status).toBe(200);
     expect(fake.objects.get(name)?.customTime).toBe(

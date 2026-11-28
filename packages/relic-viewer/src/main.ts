@@ -181,6 +181,7 @@ import { installSkippedConfirmations } from './skipped-confirmations.ts';
 import { describeLinkRequest, LinkConfirmGate } from './open-link-confirm.ts';
 import { armFileDrop } from './drop-anywhere.ts';
 import { openPublisher } from './publish-entry.ts';
+import { installErrorReporter, reportViewerError } from './error-report.ts';
 import {
   armUploadButtons,
   ensureUploadButton,
@@ -13605,7 +13606,8 @@ export async function boot(
           () => void runOpen(deadResume)
         );
       }
-    } catch {
+    } catch (error) {
+      reportViewerError(error);
       plate.remove();
       renderDead(
         {
@@ -13630,6 +13632,11 @@ if (typeof document !== 'undefined') {
   // register-sw.js reads this once the page has loaded: a viewer module whose
   // graph failed to fetch never reaches this line.
   document.documentElement.dataset['viewerBooted'] = '1';
+  installErrorReporter(
+    window,
+    document.getElementById('relic-root'),
+    (...args) => window.fetch(...args)
+  );
   void boot();
   // Any page that runs this bundle takes a dropped file, or a file chosen with
   // the bar's Upload button, as a new relic. The publish page is left out

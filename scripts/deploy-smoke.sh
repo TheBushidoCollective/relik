@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ ! ${EXPECTED_REVISION:-} =~ ^[0-9a-f]{40}$ ]]; then
+  echo "EXPECTED_REVISION must be set to a 40-character lowercase git SHA" >&2
+  exit 1
+fi
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/relik-deploy-smoke.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 # The owned domain, through the load balancer. The run.app host is no
@@ -23,6 +27,10 @@ grep -q '"ok"' "$scratch/health"
 echo "the shell serves and does not leak a referrer"
 curl -fsS -D "$scratch/h" -o "$scratch/relic-shell" "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
 grep -qi '^referrer-policy: no-referrer' "$scratch/h"
+if ! grep -Fq "data-revision=\"$EXPECTED_REVISION\"" "$scratch/relic-shell"; then
+  echo "shell data-revision does not match EXPECTED_REVISION" >&2
+  exit 1
+fi
 viewer_url=$(grep -Eo '/assets/viewer\.js\?v=[a-zA-Z0-9_-]+' "$scratch/relic-shell" | head -n 1)
 test -n "$viewer_url"
 echo "shell viewer: $viewer_url"
@@ -52,6 +60,7 @@ echo "the published disclosure is readable before anybody publishes"
 curl -fsS -o "$scratch/policy" "$SERVICE/policy"
 grep -q 'Your browser never sends the' "$scratch/policy"
 grep -q 'A cover image, unencrypted' "$scratch/policy"
+grep -Fq 'Scrubbed reports may become public issues in the Relik issue tracker.' "$scratch/policy"
 echo "a browser navigating to the policy gets the markdown player, not a relic"
 curl -fsS -H 'accept: text/html' -o "$scratch/policy-page" "$SERVICE/policy"
 grep -q 'data-view="document" data-document="/policy"' "$scratch/policy-page"

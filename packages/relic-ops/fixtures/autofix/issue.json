@@ -1,0 +1,15 @@
+{
+  "number": 1,
+  "author": {
+    "login": "github-actions[bot]",
+    "id": 41898282,
+    "type": "Bot"
+  },
+  "title": "Error report: TypeError in server GET /health [d4422451ab9deb8c]",
+  "body": "<!-- relik-error-report:begin -->\nThis report contains only allowlisted diagnostic fields. Counts are lower bounds.\n\n| Field | Value |\n| --- | --- |\n| Source | server |\n| Class | TypeError |\n| Route | GET /health |\n| Occurrences in the last 7 days | at least 1 |\n| Builds seen | `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` |\n\nFrames from the newest build:\n- `packages/relic-server/src/app.ts:10:1`\n\n```json\n{\n  \"v\": 1,\n  \"fingerprint\": \"d4422451ab9deb8c\",\n  \"source\": \"server\",\n  \"errorClass\": \"TypeError\",\n  \"route\": \"GET /health\",\n  \"builds\": [\n    {\n      \"revision\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n      \"frames\": [\n        {\n          \"file\": \"packages/relic-server/src/app.ts\",\n          \"line\": 10,\n          \"column\": 1\n        }\n      ]\n    }\n  ],\n  \"count7d\": 1\n}\n```\n<!-- relik-error-report:end -->",
+  "state": "open",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "closedAt": null,
+  "labels": ["error-report", "source:server"],
+  "locked": true
+}

@@ -1,0 +1,80 @@
+name: propose autofix
+
+on:
+  workflow_call:
+    inputs:
+      issue:
+        required: true
+        type: number
+      fingerprint:
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  propose:
+    if: github.ref == 'refs/heads/main' && github.repository == 'TheBushidoCollective/relik' && vars.ERROR_REPORTS_MODE == 'live' && vars.AUTOFIX_MODE == 'on'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: autofix-patch-${{ inputs.fingerprint }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/autofix-safe
+      - uses: actions/download-artifact@v4
+        with:
+          name: autofix-result-${{ inputs.fingerprint }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/autofix-result
+      - name: Validate patch and test evidence as data
+        env:
+          ISSUE: ${{ inputs.issue }}
+          FINGERPRINT: ${{ inputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          node packages/relic-ops/bin/autofix-check-patch.ts verify "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-safe/metadata.json"
+          node packages/relic-ops/bin/autofix-pr-body.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-result/result.json" \
+            "$ISSUE" "$FINGERPRINT" "$GITHUB_RUN_ID" "$RUNNER_TEMP/pr-title" "$RUNNER_TEMP/pr-body" "$RUNNER_TEMP/pr-security"
+          export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1
+          git -c core.hooksPath=/dev/null apply --check "$RUNNER_TEMP/autofix-safe/patch.diff"
+          git -c core.hooksPath=/dev/null apply --index "$RUNNER_TEMP/autofix-safe/patch.diff"
+      - name: Push one new branch and open a ready PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINGERPRINT: ${{ inputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          [[ "$FINGERPRINT" =~ ^[0-9a-f]{16}$ ]]
+          branch="autofix/error-$FINGERPRINT"
+          if [[ "$(cat "$RUNNER_TEMP/pr-security")" == yes ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/labels/needs-security-review" >/dev/null
+          fi
+          prior="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=all&head=TheBushidoCollective%3Aautofix%2Ferror-$FINGERPRINT&per_page=100" --jq '[.[][] | select(.head.repo.full_name == "TheBushidoCollective/relik" and (.user.type == "Bot" or (.performed_via_github_app.id? // 0) > 0) and (.state == "open" or (.state == "closed" and .merged_at == null)))] | length')"
+          [[ "$prior" == 0 ]]
+          git -c core.hooksPath=/dev/null -c user.name=github-actions -c user.email=41898282+github-actions\[bot\]@users.noreply.github.com commit -m "Fix error report $FINGERPRINT" >/dev/null
+          auth_config="$RUNNER_TEMP/autofix-git-auth"
+          trap 'rm -f -- "$auth_config"' EXIT
+          python3 - "$auth_config" <<'PY'
+          import base64, os, pathlib, sys
+          token = base64.b64encode(('x-access-token:' + os.environ['GH_TOKEN']).encode()).decode()
+          pathlib.Path(sys.argv[1]).write_text('[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic ' + token + '\n')
+          pathlib.Path(sys.argv[1]).chmod(0o600)
+          PY
+          GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$auth_config" GIT_ATTR_NOSYSTEM=1 \
+            git -c core.hooksPath=/dev/null push --force-with-lease="refs/heads/$branch:" origin "HEAD:refs/heads/$branch" >/dev/null
+          if [[ "$(cat "$RUNNER_TEMP/pr-security")" == yes ]]; then
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" --title "$(cat "$RUNNER_TEMP/pr-title")" --body-file "$RUNNER_TEMP/pr-body" --label needs-security-review
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" --title "$(cat "$RUNNER_TEMP/pr-title")" --body-file "$RUNNER_TEMP/pr-body"
+          fi
