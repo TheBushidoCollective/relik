@@ -6,11 +6,75 @@ import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { sandboxPolicy } from '../../../relic-server/src/sandbox-policy.ts';
 import { isRecord } from '../../../relic-format/src/guards.ts';
-import { connectPipe } from '../../src/cover/cdp.ts';
+import {
+  type CdpConnection,
+  CdpError,
+  connectPipe,
+} from '../../src/cover/cdp.ts';
 import {
   chromeRequired,
   findHeadlessShell,
 } from '../../../relic-viewer/test/headless-shell.ts';
+
+type FrameProbe = 'rendered' | 'pending' | 'gone';
+
+export async function probeHtmlEntryFrame(
+  cdp: CdpConnection,
+  session: string,
+  frameSessions: readonly string[]
+): Promise<FrameProbe> {
+  const probe = "document.body?.textContent.includes('HTML entry')===true";
+  const evaluatedTrue = (response: Record<string, unknown>): boolean => {
+    const inner = response['result'];
+    return isRecord(inner) && inner['value'] === true;
+  };
+  const own = frameSessions[0];
+  if (own !== undefined) {
+    const result = await cdp.send(
+      'Runtime.evaluate',
+      { expression: probe, returnByValue: true },
+      own
+    );
+    return evaluatedTrue(result) ? 'rendered' : 'pending';
+  }
+
+  const tree = await cdp.send('Page.getFrameTree', {}, session);
+  const root = tree['frameTree'];
+  const children = isRecord(root) ? root['childFrames'] : undefined;
+  const child: unknown = Array.isArray(children) ? children[0] : undefined;
+  const frame = isRecord(child) ? child['frame'] : undefined;
+  const frameId = isRecord(frame) ? frame['id'] : undefined;
+  if (typeof frameId !== 'string') return 'pending';
+
+  let world: Record<string, unknown>;
+  try {
+    world = await cdp.send(
+      'Page.createIsolatedWorld',
+      { frameId, worldName: 'v2-proof' },
+      session
+    );
+  } catch (error) {
+    if (
+      error instanceof CdpError &&
+      error.method === 'Page.createIsolatedWorld' &&
+      error.code === -32602 &&
+      error.message === 'No frame for given id found'
+    ) {
+      return 'gone';
+    }
+    throw error;
+  }
+  const result = await cdp.send(
+    'Runtime.evaluate',
+    {
+      contextId: world['executionContextId'],
+      expression: probe,
+      returnByValue: true,
+    },
+    session
+  );
+  return evaluatedTrue(result) ? 'rendered' : 'pending';
+}
 
 export async function runFolderStage(
   stage: 'markdown-links' | 'html-entry'
@@ -228,22 +292,6 @@ export async function runFolderStage(
       // A sandboxed frame is in the page's frame tree when it shares the
       // page's process, and is its own target when the browser isolates it
       // (full Chrome does, headless shell does not). Accept either.
-      const evaluatedTrue = (response: Record<string, unknown>): boolean => {
-        const inner = response['result'];
-        return isRecord(inner) && inner['value'] === true;
-      };
-      const firstChildFrameId = (
-        tree: Record<string, unknown>
-      ): string | undefined => {
-        const root = tree['frameTree'];
-        const children = isRecord(root) ? root['childFrames'] : undefined;
-        const child: unknown = Array.isArray(children)
-          ? children[0]
-          : undefined;
-        const frame = isRecord(child) ? child['frame'] : undefined;
-        const id = isRecord(frame) ? frame['id'] : undefined;
-        return typeof id === 'string' ? id : undefined;
-      };
       const frameSessions: string[] = [];
       const stopEvents = cdp.onEvent((event) => {
         if (event.method !== 'Target.attachedToTarget') return;
@@ -261,45 +309,22 @@ export async function runFolderStage(
         { autoAttach: true, waitForDebuggerOnStart: false, flatten: true },
         session
       );
-      const probe = "document.body?.textContent.includes('HTML entry')===true";
-      const rendersInFrame = async (): Promise<boolean> => {
-        const own = frameSessions[0];
-        if (own !== undefined)
-          return evaluatedTrue(
-            await cdp.send(
-              'Runtime.evaluate',
-              { expression: probe, returnByValue: true },
-              own
-            )
-          );
-        const frameId = firstChildFrameId(
-          await cdp.send('Page.getFrameTree', {}, session)
-        );
-        if (frameId === undefined) return false;
-        const world = await cdp.send(
-          'Page.createIsolatedWorld',
-          { frameId, worldName: 'v2-proof' },
-          session
-        );
-        return evaluatedTrue(
-          await cdp.send(
-            'Runtime.evaluate',
-            {
-              contextId: world['executionContextId'],
-              expression: probe,
-              returnByValue: true,
-            },
-            session
-          )
-        );
-      };
       let rendered = false;
+      let frameGone = false;
       for (let attempt = 0; attempt < 500 && !rendered; attempt++) {
-        rendered = await rendersInFrame();
+        const result = await probeHtmlEntryFrame(cdp, session, frameSessions);
+        frameGone ||= result === 'gone';
+        rendered = result === 'rendered';
         if (!rendered) await Bun.sleep(20);
       }
       stopEvents();
-      assert.equal(rendered, true, 'HTML entry renders in the sandbox');
+      assert.equal(
+        rendered,
+        true,
+        frameGone
+          ? 'HTML entry frame disappeared before its isolated world could be created'
+          : 'HTML entry renders in the sandbox'
+      );
       assert.equal(
         requests.filter(
           (path) => path.endsWith('/style.css') || path.endsWith('/a.png')

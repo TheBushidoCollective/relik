@@ -443,6 +443,49 @@ describe('cover-render', () => {
     // Verify close was called
     expect(launchedChrome?.closeCount).toBe(1);
   });
+  test('observes the load event rejection after navigation fails', async () => {
+    const fakeCdp = new FakeCdpConnection('');
+    const load = Promise.withResolvers<CdpEvent>();
+    fakeCdp.waitForEvent = () => load.promise;
+    const send = fakeCdp.send.bind(fakeCdp);
+    fakeCdp.send = (method, params, sessionId) =>
+      method === 'Page.navigate'
+        ? Promise.reject(new Error('navigation failed'))
+        : send(method, params, sessionId);
+
+    const renderer = chromeCoverRenderer(
+      {
+        chromePath: '/dummy/chrome',
+        ffmpegPath: undefined,
+        assetDir: tempAssetDir,
+        deadlineMs: 10000,
+      },
+      {
+        discoverChrome: async () => ({
+          kind: 'found',
+          path: '/dummy/chrome',
+          source: 'default',
+        }),
+        launchChrome: async () => new FakeRunningChrome(fakeCdp),
+      }
+    );
+    const outcome = await renderer({
+      filename: 'doc.md',
+      mimetype: 'text/markdown',
+      rendererClass: 'markdown',
+      bytes: new TextEncoder().encode('# Heading\n'),
+    });
+    expect(outcome).toMatchObject({
+      status: 'skipped',
+      reason: 'render_failed',
+      detail: 'navigation failed',
+    });
+
+    load.reject(new Error('load event rejected after navigation failure'));
+    const flush = Promise.withResolvers<void>();
+    setImmediate(flush.resolve);
+    await flush.promise;
+  });
 
   test('asserts JPEG fallback when PNG exceeds size cap', async () => {
     const oversizedPng = makeOversizedPng();

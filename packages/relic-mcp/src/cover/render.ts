@@ -205,16 +205,17 @@ export function chromeCoverRenderer(
           );
 
           // Navigate
-          const loadPromise = cdp.waitForEvent('Page.loadEventFired', {
-            sessionId,
-            timeoutMs: PAGE_LOAD_TIMEOUT_MS,
-          });
-          await cdp.send(
-            'Page.navigate',
-            { url: 'https://cover.relic.invalid/index.html' },
-            sessionId
-          );
-          await loadPromise;
+          await Promise.all([
+            cdp.waitForEvent('Page.loadEventFired', {
+              sessionId,
+              timeoutMs: PAGE_LOAD_TIMEOUT_MS,
+            }),
+            cdp.send(
+              'Page.navigate',
+              { url: 'https://cover.relic.invalid/index.html' },
+              sessionId
+            ),
+          ]);
 
           // Protocol check
           const protoCheck = (await cdp.send(
