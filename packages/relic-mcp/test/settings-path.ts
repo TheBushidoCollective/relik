@@ -350,6 +350,7 @@ try {
   );
 
   await goto(owner.browser, privateRelik.relicUrl);
+  await waitForState(owner.browser, ['unlock'], 'owner settings unlock');
   await click(owner.browser, '[data-action="private-unlock"]');
   await waitForOpened(owner.browser, 'owner settings');
   await owner.browser.waitForSelector('[data-action="open-settings"]', 25000);
