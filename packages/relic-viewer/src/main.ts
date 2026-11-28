@@ -1678,6 +1678,8 @@ export function sandboxFrame(
     const type = (event.data as { type?: unknown } | null)?.type;
     if (type === 'relic:sandbox-ready') {
       if (!handshake.onReady()) return;
+      // The shim installs its file-drag listener before announcing readiness.
+      frame.setAttribute('data-file-drag-ready', '');
       if (pendingPayload !== undefined) post(pendingPayload, pendingTransfer);
       pendingPayload = undefined;
       pendingTransfer = [];
@@ -1828,6 +1830,7 @@ export function sandboxFrame(
     // No payload here. The payload waits for the frame's own ready message, and
     // a later load means the document changed, which FrameHandshake records.
     handshake.onLoad();
+    if (handshake.navigated) frame.removeAttribute('data-file-drag-ready');
     frame.dispatchEvent(
       new CustomEvent('relic:frame-navigation', { bubbles: true })
     );
@@ -1842,6 +1845,7 @@ export function sandboxFrame(
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      frame.removeAttribute('data-file-drag-ready');
       pendingPayload = undefined;
       pendingTransfer = [];
       visibility?.disconnect();
