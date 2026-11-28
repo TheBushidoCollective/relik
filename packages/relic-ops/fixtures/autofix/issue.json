@@ -10,9 +10,6 @@
   "state": "open",
   "createdAt": "2026-01-01T00:00:00Z",
   "closedAt": null,
-  "labels": [
-    "error-report",
-    "source:server"
-  ],
+  "labels": ["error-report", "source:server"],
   "locked": true
 }
