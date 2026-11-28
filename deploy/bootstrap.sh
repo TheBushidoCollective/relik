@@ -200,13 +200,39 @@ say "Letting ${REPO}'s production environment impersonate the deployer"
 # attribute.repository_id, which let any job in the repository with
 # id-token: write, on any branch, act as the deployer. Only a job that runs in
 # the `production` environment carries this subject, and that environment can
-# deploy from main only. The subject names the repository as GitHub spells it
-# when the token is minted, so a repository rename needs this script rerun.
-DEPLOYER_SUBJECT="repo:${REPO}:environment:production"
+# deploy from main only. The subject is whatever this repository's OIDC `sub`
+# claim actually spells. TheBushidoCollective uses immutable subjects, which
+# put the numeric owner and repository IDs into the claim
+# (repo:Owner@<owner id>/name@<repo id>), so a name-only subject never
+# matches. Read the real prefix from the repository's OIDC setting; override
+# it with SUBJECT_PREFIX only if the API cannot be read.
+if [ -z "${SUBJECT_PREFIX:-}" ]; then
+  OIDC_SUB="$(gh api "repos/${REPO}/actions/oidc/customization/sub")"
+  if [ "$(echo "${OIDC_SUB}" | jq -r '.use_immutable_subject // false')" = "true" ]; then
+    SUBJECT_PREFIX="$(echo "${OIDC_SUB}" | jq -r '.sub_claim_prefix // ""')"
+  elif [ "$(echo "${OIDC_SUB}" | jq -r '.use_default // false')" = "true" ]; then
+    SUBJECT_PREFIX="repo:${REPO}"
+  fi
+fi
+case "${SUBJECT_PREFIX:-}" in
+  repo:*) ;;
+  *) echo "FAILED: cannot determine the repository's OIDC subject prefix; set SUBJECT_PREFIX" >&2; exit 1 ;;
+esac
+DEPLOYER_SUBJECT="${SUBJECT_PREFIX}:environment:production"
 g iam service-accounts add-iam-policy-binding "${DEPLOYER_EMAIL}" \
   --role=roles/iam.workloadIdentityUser \
   --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/subject/${DEPLOYER_SUBJECT}" \
   >/dev/null
+
+# The name-based subject from the first version of this pin never matched an
+# immutable-subject token. Drop it when it differs from the real one.
+NAME_SUBJECT="repo:${REPO}:environment:production"
+if [ "${NAME_SUBJECT}" != "${DEPLOYER_SUBJECT}" ]; then
+  g iam service-accounts remove-iam-policy-binding "${DEPLOYER_EMAIL}" \
+    --role=roles/iam.workloadIdentityUser \
+    --member="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/subject/${NAME_SUBJECT}" \
+    >/dev/null 2>&1 || true
+fi
 
 REPO_WIDE_MEMBER="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository_id/${REPO_ID}"
 if [ "${RETIRE_REPO_WIDE:-0}" = "1" ] && [ "${RESTORE_REPO_WIDE:-0}" != "1" ]; then
