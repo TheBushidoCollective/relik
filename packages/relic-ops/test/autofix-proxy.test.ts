@@ -1,15 +1,135 @@
 import { expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 
 const proxy = new URL('../bin/autofix-proxy.py', import.meta.url).pathname;
-const python = `import importlib.util, socket, sys, threading, time\ns=importlib.util.spec_from_file_location('proxy',sys.argv[1]); p=importlib.util.module_from_spec(s); s.loader.exec_module(p)\nassert 0 < p.MAX_CONNECTIONS <= 32\nassert 0 < p.MAX_CONNECTION_BYTES <= 64*1024*1024\nassert 0 < p.HANDSHAKE_TIMEOUT <= 30 and 0 < p.IDLE_TIMEOUT <= 60\nserver=p.Server(('127.0.0.1',0),p.Handler); thread=threading.Thread(target=server.serve_forever,daemon=True); thread.start()\nclients=[]\ntry:\n for i in range(p.MAX_CONNECTIONS):\n  c=socket.create_connection(server.server_address,timeout=1); c.sendall(b'C'); clients.append(c)\n for _ in range(100):\n  if server.slots._value == 0: break\n  time.sleep(.01)\n assert server.slots._value == 0\n extra=socket.create_connection(server.server_address,timeout=1); extra.settimeout(2); extra.sendall(b'C')\n try: closed=extra.recv(1)==b''\n except ConnectionResetError: closed=True\n assert closed\n extra.close()\nfinally:\n for c in clients: c.close()\n server.shutdown(); server.server_close(); thread.join()\n`;
+const python = `
+import importlib.util
+import queue
+import socket
+import sys
+import threading
+
+spec = importlib.util.spec_from_file_location('proxy', sys.argv[1])
+proxy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(proxy)
+
+assert 0 < proxy.MAX_CONNECTIONS <= 32
+assert 0 < proxy.MAX_CONNECTION_BYTES <= 64 * 1024 * 1024
+assert 0 < proxy.HANDSHAKE_TIMEOUT <= 30
+assert 0 < proxy.IDLE_TIMEOUT <= 60
+
+started = queue.Queue()
+finished = queue.Queue()
+release = threading.Event()
+
+class HoldingHandler:
+    def __init__(self, request, address, server):
+        started.put(None)
+        release.wait()
+
+class ObservedServer(proxy.Server):
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            finished.put(None)
+
+if len(sys.argv) > 2 and sys.argv[2] == '--accept-overflow':
+    original = proxy.Server.process_request
+    def accept_overflow(self, request, address):
+        if self.slots._value == 0:
+            return
+        original(self, request, address)
+    proxy.Server.process_request = accept_overflow
+elif len(sys.argv) > 2 and sys.argv[2] == '--lose-release':
+    import socketserver
+    proxy.Server.process_request_thread = socketserver.ThreadingTCPServer.process_request_thread
+
+server = ObservedServer(('127.0.0.1', 0), HoldingHandler)
+assert server.server_address[0] == '127.0.0.1'
+assert server.server_address[1] != 0
+peers = []
+requests = []
+try:
+    for _ in range(proxy.MAX_CONNECTIONS):
+        peer, request = socket.socketpair()
+        peers.append(peer)
+        requests.append(request)
+        server.process_request(request, ('127.0.0.1', 0))
+    for _ in range(proxy.MAX_CONNECTIONS):
+        started.get()
+
+    peer, request = socket.socketpair()
+    peers.append(peer)
+    requests.append(request)
+    server.process_request(request, ('127.0.0.1', 0))
+    assert request.fileno() == -1, 'overflow connection was not rejected'
+    assert peer.recv(1) == b'', 'rejected peer did not receive EOF'
+
+    release.set()
+    for _ in range(proxy.MAX_CONNECTIONS):
+        finished.get()
+    release.clear()
+
+    peer, request = socket.socketpair()
+    peers.append(peer)
+    requests.append(request)
+    server.process_request(request, ('127.0.0.1', 0))
+    assert request.fileno() != -1, 'released slot was not reusable'
+    started.get()
+    release.set()
+    finished.get()
+finally:
+    release.set()
+    for sock in peers + requests:
+        sock.close()
+    server.server_close()
+`;
+
+function diagnostic(result: SpawnSyncReturns<string>): string {
+  return `Python status: ${result.status}; signal: ${result.signal}; error: ${result.error?.message ?? 'none'}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
+}
 test('host proxy bounds admission, byte budgets and deadlines', () => {
   const result = spawnSync('python3', ['-c', python, proxy], {
     encoding: 'utf8',
     env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
     timeout: 10_000,
   });
-  expect(result.status).toBe(0);
+  expect(result.status, diagnostic(result)).toBe(0);
+});
+
+test('failed subprocess assertions retain both Python output streams', () => {
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      "import sys; print('stdout-fixture'); print('stderr-fixture', file=sys.stderr); sys.exit(1)",
+    ],
+    { encoding: 'utf8' }
+  );
+  let message = '';
+  try {
+    expect(result.status, diagnostic(result)).toBe(0);
+  } catch (error) {
+    message = String(error);
+  }
+  expect(message).toContain('stdout-fixture');
+  expect(message).toContain('stderr-fixture');
+});
+
+test('admission probe rejects broken saturation and release behavior', () => {
+  for (const [mutation, message] of [
+    ['--accept-overflow', 'overflow connection was not rejected'],
+    ['--lose-release', 'released slot was not reusable'],
+  ] as const) {
+    const result = spawnSync('python3', ['-c', python, proxy, mutation], {
+      encoding: 'utf8',
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+      timeout: 10_000,
+    });
+    expect(result.status, diagnostic(result)).not.toBe(0);
+    expect(result.stderr, diagnostic(result)).toContain(message);
+  }
 });
 
 test('proxy stops over-budget streams and enforces handshake and idle deadlines', () => {
@@ -36,14 +156,22 @@ p.socket.create_connection=lambda *_args,**_kwargs:upstream
 p.select.select=lambda _r,_w,_e,delay:(delays.append(delay) or [],[],[])
 handler=object.__new__(p.Handler); handler.request=client; handler.handle()
 assert delays==[p.IDLE_TIMEOUT]
-try: p.exact(Sock(b'x'),1,p.time.monotonic()-1)
+clock=[100.0]
+p.time.monotonic=lambda:clock[0]
+fast=Sock(b'ok')
+assert p.exact(fast,2,101.0)==b'ok' and fast.timeouts==[1.0]
+class SlowSock(Sock):
+ def recv(self,n):
+  clock[0]+=0.6
+  return super().recv(1)
+try: p.exact(SlowSock(b'abc'),3,101.0)
 except TimeoutError: pass
-else: raise AssertionError('expired handshake accepted')
+else: raise AssertionError('absolute handshake deadline was not enforced')
 `;
   const result = spawnSync('python3', ['-c', script, proxy], {
     encoding: 'utf8',
     env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
     timeout: 10_000,
   });
-  expect(result.status).toBe(0);
+  expect(result.status, diagnostic(result)).toBe(0);
 });
