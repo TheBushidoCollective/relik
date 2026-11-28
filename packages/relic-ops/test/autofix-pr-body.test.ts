@@ -31,6 +31,8 @@ test('body starts with the bot-check limitation, exact verified hash, run link a
       tests: [path],
       baselineFailures: 1,
       passed: 1,
+      originalPackages: ['relic-viewer'],
+      originalPassed: 5,
     })}\n`
   );
   const run = spawnSync(
@@ -56,6 +58,7 @@ test('body starts with the bot-check limitation, exact verified hash, run link a
   expect(first).toContain('must not merge');
   expect(first).toContain('full CI');
   expect(first).not.toContain('Full verify passed');
+  expect(output).toContain('Original pre-patch tests');
   expect(first).toContain(
     'https://github.com/TheBushidoCollective/relik/actions/runs/12345'
   );

@@ -22,23 +22,42 @@ try {
   );
   checkPatch(patch);
   const db = new Database(dbPath, { readonly: true, strict: true });
-  let rows: unknown[];
+  const values: unknown[] = [];
+  let foundCredentials = false;
   try {
     db.exec('PRAGMA query_only = ON; PRAGMA trusted_schema = OFF');
-    rows = db.query('SELECT data FROM auth_credentials').all();
+    const tables = db
+      .query("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all();
+    if (tables.length > 128) throw new Error('database');
+    for (const table of tables) {
+      if (
+        !table ||
+        typeof table !== 'object' ||
+        !('name' in table) ||
+        typeof table.name !== 'string'
+      )
+        throw new Error('database');
+      const name = `"${table.name.replaceAll('"', '""')}"`;
+      const rows = db.query(`SELECT * FROM ${name}`).all();
+      if (table.name === 'auth_credentials') {
+        const row = rows[0];
+        foundCredentials =
+          rows.length === 1 &&
+          !!row &&
+          typeof row === 'object' &&
+          'data' in row &&
+          typeof row.data === 'string' &&
+          row.data.length > 0;
+      }
+      values.push(...rows);
+    }
   } finally {
     db.close();
   }
-  if (
-    rows.length !== 1 ||
-    typeof rows[0] !== 'object' ||
-    rows[0] === null ||
-    !('data' in rows[0]) ||
-    typeof rows[0].data !== 'string' ||
-    !rows[0].data
-  )
-    throw new Error('database');
-  if (hasCredential(patch, [rows[0].data])) throw new Error('credential');
+  if (!foundCredentials) throw new Error('database');
+  values.push(await readFile(dbPath));
+  if (hasCredential(patch, values)) throw new Error('credential');
 } catch {
   process.stderr.write('Autofix patch refused\n');
   process.exitCode = 1;

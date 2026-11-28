@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { GitAuthority } from '../src/entries.ts';
-import type { Issue } from '../src/github.ts';
+import { isOwnedAutofixPull, type Issue } from '../src/github.ts';
 import { issueInput } from '../src/issue-input.ts';
 import { makePrompt } from '../src/prompt.ts';
 
@@ -48,6 +48,7 @@ try {
     !Array.isArray(pulls) ||
     pulls.length >= 100 ||
     pulls.some((pull: unknown) => {
+      if (!isOwnedAutofixPull(pull, fingerprint)) return false;
       if (
         !pull ||
         typeof pull !== 'object' ||

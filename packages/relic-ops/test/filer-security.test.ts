@@ -143,7 +143,7 @@ describe('filer provenance and stored-region authority', () => {
     );
     assert.equal(plan.candidates.length, 1);
     assert.equal(plan.candidates[0]?.issue, null);
-    await applyPlan(plan, github, 'live');
+    await applyPlan(plan, github, 'live', { runId: '123456', now });
     assert.deepEqual(github.issues.slice(0, foreign.length), before);
   });
 
@@ -367,6 +367,14 @@ describe('filer provenance and stored-region authority', () => {
     assert.ok(
       plan.actions.every((action) => !('issue' in action) || action.issue !== 2)
     );
+    const reserved = await applyPlan(plan, memory, 'live', {
+      runId: '123456',
+      now,
+      filerAuthor: alternate,
+    });
+    assert.equal(reserved[0]?.issue, 1);
+    assert.ok(memory.issues[0]?.body.includes('run=123456'));
+    assert.ok(!memory.issues[1]?.body.includes('relik-autofix-reservation'));
   });
 
   test('uses the pinned author by default and validates environment overrides', () => {

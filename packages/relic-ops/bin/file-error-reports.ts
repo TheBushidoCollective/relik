@@ -98,7 +98,14 @@ const plan = await planReports(checked.entries, github, {
   known,
   filerAuthor,
 });
-const candidates = await applyPlan(plan, github, mode);
+const candidates = await applyPlan(
+  plan,
+  github,
+  mode,
+  process.env.GITHUB_RUN_ID
+    ? { runId: process.env.GITHUB_RUN_ID, now, filerAuthor }
+    : undefined
+);
 const summary = JSON.stringify(
   {
     mode,

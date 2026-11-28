@@ -55,6 +55,40 @@ export function isFilerAuthor(
   );
 }
 
+/** A same-name fork or human-created PR cannot claim an autofix dispatch. */
+export function isOwnedAutofixPull(
+  value: unknown,
+  fingerprint: string
+): boolean {
+  if (
+    !/^[0-9a-f]{16}$/.test(fingerprint) ||
+    !value ||
+    typeof value !== 'object' ||
+    !('head' in value) ||
+    !value.head ||
+    typeof value.head !== 'object' ||
+    !('ref' in value.head) ||
+    value.head.ref !== `autofix/error-${fingerprint}` ||
+    !('repo' in value.head) ||
+    !value.head.repo ||
+    typeof value.head.repo !== 'object' ||
+    !('full_name' in value.head.repo) ||
+    value.head.repo.full_name !== 'TheBushidoCollective/relik'
+  )
+    return false;
+  const author = 'user' in value ? decodeAuthor(value.user) : null;
+  const app =
+    'performed_via_github_app' in value ? value.performed_via_github_app : null;
+  return (
+    author?.type === 'Bot' ||
+    (typeof app === 'object' &&
+      app !== null &&
+      'id' in app &&
+      Number.isSafeInteger(app.id) &&
+      (app.id as number) > 0)
+  );
+}
+
 export interface Issue {
   number: number;
   author: IssueAuthor | null;
@@ -85,6 +119,7 @@ export interface GitHub {
   createIssue(title: string, body: string, labels: string[]): Promise<Issue>;
   updateIssue(number: number, body: string): Promise<void>;
   addLabels(number: number, labels: string[]): Promise<void>;
+  removeLabel(number: number, label: string): Promise<void>;
   lockIssue(number: number): Promise<void>;
 }
 
@@ -254,15 +289,7 @@ export class GitHubRest implements GitHub {
         throw new Error('Malformed GitHub pull request');
       const match = /^autofix\/error-([0-9a-f]{16})$/.exec(value.head.ref);
       if (!match?.[1]) continue;
-      if (
-        !('repo' in value.head) ||
-        typeof value.head.repo !== 'object' ||
-        value.head.repo === null ||
-        !('full_name' in value.head.repo) ||
-        typeof value.head.repo.full_name !== 'string'
-      )
-        throw new Error('Malformed GitHub pull request');
-      if (value.head.repo.full_name !== 'TheBushidoCollective/relik') continue;
+      if (!isOwnedAutofixPull(value, match[1])) continue;
       if (
         !('created_at' in value) ||
         typeof value.created_at !== 'string' ||
@@ -328,6 +355,11 @@ export class GitHubRest implements GitHub {
 
   async addLabels(number: number, labels: string[]): Promise<void> {
     await this.call(`/issues/${number}/labels`, 'POST', { labels });
+  }
+
+  async removeLabel(number: number, label: string): Promise<void> {
+    if (label !== 'autofix') throw new Error('Invalid autofix label');
+    await this.call(`/issues/${number}/labels/autofix`, 'DELETE');
   }
 
   async lockIssue(number: number): Promise<void> {
@@ -400,6 +432,12 @@ export class MemoryGitHub implements GitHub {
           this.now(),
         ]);
     }
+  }
+  async removeLabel(number: number, label: string): Promise<void> {
+    if (label !== 'autofix') throw new Error('Invalid autofix label');
+    this.writes++;
+    const issue = this.issue(number);
+    issue.labels = issue.labels.filter((value) => value !== label);
   }
   async lockIssue(number: number): Promise<void> {
     this.writes++;

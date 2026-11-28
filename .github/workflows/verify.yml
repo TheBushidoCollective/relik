@@ -4,6 +4,9 @@ on:
   pull_request:
   workflow_call:
 
+permissions:
+  contents: read
+
 # Deliberately not `push: branches: [main]`.
 #
 # The deploy workflow calls this one as its gate, so a push to main used to
@@ -25,6 +28,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: jdx/mise-action@v2
         with:
@@ -292,6 +297,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Prepare large relic proof receipt
         run: |
@@ -376,6 +383,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: jdx/mise-action@v2
         with:
@@ -465,6 +474,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Prepare image smoke receipt
         run: |

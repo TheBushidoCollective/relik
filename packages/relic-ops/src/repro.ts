@@ -5,6 +5,16 @@ export interface TestRun {
   errors: number;
 }
 
+export function passesOriginalTests(result: TestRun): boolean {
+  return (
+    result.exitCode === 0 &&
+    result.failed === 0 &&
+    result.errors === 0 &&
+    Number.isSafeInteger(result.passed) &&
+    result.passed >= 1
+  );
+}
+
 /** A process error is not evidence that a regression assertion failed. */
 export async function proveRegression(
   tests: readonly string[],

@@ -63,6 +63,8 @@ try {
       'tests',
       'baselineFailures',
       'passed',
+      'originalPackages',
+      'originalPassed',
     ]) ||
     result.status !== 'pass' ||
     result.sha256 !== createHash('sha256').update(bytes).digest('hex') ||
@@ -71,6 +73,13 @@ try {
     !Number.isSafeInteger(result.baselineFailures) ||
     (result.baselineFailures as number) < 1 ||
     !Number.isSafeInteger(result.passed) ||
+    !Array.isArray(result.originalPackages) ||
+    JSON.stringify(result.originalPackages) !==
+      JSON.stringify(
+        [...new Set(summary.files.map((path) => path.split('/')[1]!))].sort()
+      ) ||
+    !Number.isSafeInteger(result.originalPassed) ||
+    (result.originalPassed as number) < 1 ||
     (result.passed as number) < 1
   )
     throw new Error('proof');
@@ -95,7 +104,8 @@ try {
     'Targeted tests:',
     ...summary.tests.map((path) => `- \`${path}\``),
     '',
-    'The regression test failed against main and passed with this patch.',
+    `Original pre-patch tests: replay reported ${result.originalPassed} passing across ${(result.originalPackages as string[]).join(', ')}.`,
+    'Agent-authored regression tests: replay reported failure on main and success with this patch.',
     'A human must review and merge this PR. It will not merge automatically.',
     '',
     `Closes #${number}`,

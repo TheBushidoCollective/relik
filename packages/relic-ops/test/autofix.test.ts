@@ -5,7 +5,7 @@ import { issueTitle, renderRegion } from '../src/render.ts';
 import { issueInput } from '../src/issue-input.ts';
 import { makePrompt } from '../src/prompt.ts';
 import { checkPatch, hasCredential } from '../src/patch-policy.ts';
-import { proveRegression } from '../src/repro.ts';
+import { passesOriginalTests, proveRegression } from '../src/repro.ts';
 
 const report = (
   await Bun.file(new URL('../fixtures/reports.json', import.meta.url)).json()
@@ -145,6 +145,14 @@ describe('untrusted patch boundary', () => {
       'packages/relic-server/src/a.db-shm',
       'packages/relic-server/src/a.db-wal',
       'packages/relic-viewer/src/../x.ts',
+      'packages/relic-server/src/.gitattributes',
+      'packages/relic-server/src/deep/.gitignore',
+      'packages/relic-server/src/.gitmodules',
+      'packages/relic-server/src/.gitkeep',
+      'packages/relic-server/src/.github-extra/config.ts',
+      'packages/relic-server/src/.editorconfig',
+      'packages/relic-server/test/test.patch',
+      'packages/relic-server/test/test.diff',
     ]) {
       expect(() => checkPatch(patch(path))).toThrow();
     }
@@ -193,6 +201,59 @@ describe('untrusted patch boundary', () => {
       hasCredential(patch(src, '', 'old', `ghp_${'x'.repeat(36)}`), [])
     ).toBe(true);
   });
+  test('rejects encoded, fragmented and reversed credential windows', () => {
+    const value = 'aB4dE6gH8jK2mN5pQ7sT9vW3yZ';
+    const rot13 = value.replace(/[A-Za-z]/g, (char) =>
+      String.fromCharCode(
+        char.charCodeAt(0) + (char.toLowerCase() <= 'm' ? 13 : -13)
+      )
+    );
+    const rot47 = value.replace(/[!-~]/g, (char) =>
+      String.fromCharCode(33 + ((char.charCodeAt(0) - 33 + 47) % 94))
+    );
+    const encoded = [
+      Buffer.from(value).toString('base64'),
+      Buffer.from(value).toString('base64url'),
+      Buffer.from(value).toString('hex'),
+      [...value].map((char) => `%${char.charCodeAt(0).toString(16)}`).join(''),
+      [...value].reverse().join(''),
+      rot13,
+      rot47,
+      Buffer.from(value).toString('hex').toUpperCase(),
+      [...Buffer.from(value).toString('base64')].reverse().join(''),
+      [...Buffer.from(value).toString('hex')].reverse().join(''),
+      [...Buffer.from(value)]
+        .map(
+          (byte, index) =>
+            `%${index % 2 ? byte.toString(16).toUpperCase() : byte.toString(16)}`
+        )
+        .join(''),
+      [...Buffer.from(value).toString('hex')].join("' + '"),
+      [...value].join("' + '"),
+      value.slice(2, 18),
+      Buffer.from(`x${value}`).toString('base64'),
+      Buffer.from(`xy${value}`).toString('base64'),
+    ];
+    for (const variant of encoded) {
+      expect(variant.includes(value)).toBe(false);
+      expect(hasCredential(variant, [value])).toBe(true);
+    }
+  });
+  test('rejects non-ASCII, oversized and high-entropy added lines', async () => {
+    for (const value of [
+      'café',
+      'x'.repeat(201),
+      'A7b9C2d4E6f8G1h3J5k7',
+      'A'.repeat(32),
+    ])
+      expect(() => checkPatch(patch(src, '', 'old', value))).toThrow();
+    const pinned = (
+      await Bun.file(
+        new URL('../../../.github/omp-context.pin', import.meta.url)
+      ).text()
+    ).trim();
+    expect(() => checkPatch(patch(src, '', 'old', pinned))).not.toThrow();
+  });
 });
 
 describe('regression proof', () => {
@@ -213,5 +274,19 @@ describe('regression proof', () => {
       )
     ).toBe(false);
     expect(await proveRegression([], async () => fails)).toBe(false);
+  });
+  test('requires original pre-patch tests to pass with the fixed source', () => {
+    expect(
+      passesOriginalTests({ exitCode: 0, failed: 0, errors: 0, passed: 5 })
+    ).toBe(true);
+    expect(
+      passesOriginalTests({ exitCode: 1, failed: 1, errors: 0, passed: 4 })
+    ).toBe(false);
+    expect(
+      passesOriginalTests({ exitCode: 0, failed: 0, errors: 1, passed: 5 })
+    ).toBe(false);
+    expect(
+      passesOriginalTests({ exitCode: 0, failed: 0, errors: 0, passed: 0 })
+    ).toBe(false);
   });
 });

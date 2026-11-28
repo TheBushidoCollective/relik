@@ -27,6 +27,9 @@ on:
       - '**.md'
       - 'docs/**'
 
+permissions:
+  contents: read
+
 # A newer push to the same pull request supersedes the run in flight. Each
 # push to main keeps its own report.
 concurrency:
@@ -41,6 +44,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: jdx/mise-action@v2
         with:

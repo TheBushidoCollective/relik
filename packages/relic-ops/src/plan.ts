@@ -21,6 +21,15 @@ import {
 const DAY = 86_400_000;
 const MAX_PER_SOURCE = 5;
 const MAX_AUTOFIX = 3;
+export const MAX_CLIENT_AUTOFIX = 1;
+export const CLIENT_AUTOFIX_MIN_COUNT = 5;
+export const CLIENT_AUTOFIX_MIN_BUILDS = 2;
+export const CLIENT_AUTOFIX_MIN_AGE_MS = 6 * 60 * 60 * 1000;
+// Three serial matrix entries can each use the sandbox, test and proposer deadlines.
+export const AUTOFIX_RESERVATION_TTL_MS = (3 * (70 + 70 + 10) + 30) * 60_000;
+const RESERVATION_PREFIX = '<!-- relik-autofix-reservation:';
+const RESERVATION =
+  /<!-- relik-autofix-reservation:v1 run=([1-9]\d{0,19}) at=(\d{1,16}) -->/g;
 const BLOCK_CLOSED_UNMERGED_AUTOFIX = true;
 const MAX_FINGERPRINTS = 50;
 
@@ -51,6 +60,29 @@ interface Group {
   data: IssueData;
   entries: ValidEntry[];
   last: string;
+}
+
+function reservation(
+  body: string
+): { runId: string; at: number; marker: string } | null | 'invalid' {
+  const matches = [...body.matchAll(RESERVATION)];
+  const occurrences = body.split(RESERVATION_PREFIX).length - 1;
+  if (occurrences !== matches.length || matches.length > 1) return 'invalid';
+  const match = matches[0];
+  if (!match) return null;
+  const at = Number(match[2]);
+  return Number.isSafeInteger(at) && at > 0
+    ? { runId: match[1]!, at, marker: match[0] }
+    : 'invalid';
+}
+
+function setReservation(body: string, runId: string, now: number): string {
+  const current = reservation(body);
+  if (current === 'invalid') throw new Error('Invalid autofix reservation');
+  const marker = `<!-- relik-autofix-reservation:v1 run=${runId} at=${now} -->`;
+  return current === null
+    ? `${body}\n${marker}`
+    : body.replace(current.marker, marker);
 }
 
 function aggregate(entries: readonly ValidEntry[]): Group[] {
@@ -195,20 +227,47 @@ export async function planReports(
     if (client || !server) clientCreated++;
   }
   let autofixUsed = 0;
+  let clientAutofixUsed = 0;
   const unavailable = new Set<string>();
+  const pending = new Set<number>();
   if (options.autofix === 'on') {
     const history = await github.autofixHistory();
     const labelCounts = new Map<string, number>();
     const prCounts = new Map<string, number>();
+    const sources = new Map<string, 'server' | 'client'>();
     for (const issue of filerIssues) {
-      const fingerprint =
-        parseRegion(issue.body)?.fingerprint ?? `issue:${issue.number}`;
-      const recent = (await github.autofixLabelTimes(issue.number)).filter(
-        (time) => {
-          const created = Date.parse(time);
-          return created >= options.now - DAY && created <= options.now;
-        }
-      ).length;
+      const parsed = parseRegion(issue.body);
+      const fingerprint = parsed?.fingerprint ?? `issue:${issue.number}`;
+      const server =
+        issue.labels.includes('source:server') || parsed?.source === 'server';
+      const client =
+        issue.labels.includes('source:viewer') ||
+        issue.labels.includes('source:mcp') ||
+        parsed?.source === 'viewer' ||
+        parsed?.source === 'mcp';
+      if (server !== client)
+        sources.set(fingerprint, server ? 'server' : 'client');
+      const events = await github.autofixLabelTimes(issue.number);
+      const marker = reservation(issue.body);
+      const lastEvent = events.reduce(
+        (latest, time) => Math.max(latest, Date.parse(time) || 0),
+        0
+      );
+      const reservedAt =
+        marker && marker !== 'invalid'
+          ? marker.at
+          : issue.labels.includes('autofix')
+            ? lastEvent || Date.parse(issue.createdAt)
+            : 0;
+      if (
+        marker === 'invalid' ||
+        (reservedAt && options.now - reservedAt < AUTOFIX_RESERVATION_TTL_MS)
+      )
+        pending.add(issue.number);
+      const recent = events.filter((time) => {
+        const created = Date.parse(time);
+        return created >= options.now - DAY && created <= options.now;
+      }).length;
       if (recent)
         labelCounts.set(
           fingerprint,
@@ -226,11 +285,14 @@ export async function planReports(
     for (const fingerprint of new Set([
       ...labelCounts.keys(),
       ...prCounts.keys(),
-    ]))
-      autofixUsed += Math.max(
+    ])) {
+      const used = Math.max(
         labelCounts.get(fingerprint) ?? 0,
         prCounts.get(fingerprint) ?? 0
       );
+      autofixUsed += used;
+      if (sources.get(fingerprint) !== 'server') clientAutofixUsed += used;
+    }
   }
   const all = aggregate(entries).filter(
     (group) => !blocked.has(group.data.fingerprint)
@@ -299,8 +361,17 @@ export async function planReports(
       options.autofix === 'on' &&
       autofixUsed < MAX_AUTOFIX &&
       !unavailable.has(data.fingerprint) &&
+      (data.source === 'server' ||
+        (clientAutofixUsed < MAX_CLIENT_AUTOFIX &&
+          data.count7d >= CLIENT_AUTOFIX_MIN_COUNT &&
+          (data.builds.length >= CLIENT_AUTOFIX_MIN_BUILDS ||
+            group.entries.some(
+              (entry) =>
+                options.now - Date.parse(entry.timestamp) >=
+                CLIENT_AUTOFIX_MIN_AGE_MS
+            )))) &&
       (issue === undefined ||
-        (issue.state === 'open' && !issue.labels.includes('autofix')))
+        (issue.state === 'open' && !pending.has(issue.number)))
     ) {
       candidates.push({
         fingerprint: data.fingerprint,
@@ -308,6 +379,7 @@ export async function planReports(
         source: data.source,
       });
       autofixUsed++;
+      if (data.source !== 'server') clientAutofixUsed++;
     }
   }
   // A seven-day count must decay to zero when the last hit ages out.
@@ -346,9 +418,18 @@ export async function planReports(
 export async function applyPlan(
   plan: Plan,
   github: GitHub,
-  mode: 'dry-run' | 'live'
+  mode: 'dry-run' | 'live',
+  context?: { runId: string; now: number; filerAuthor?: IssueAuthor }
 ): Promise<Candidate[]> {
   if (mode === 'dry-run') return [];
+  if (
+    plan.candidates.length &&
+    (!context ||
+      !/^[1-9]\d{0,19}$/.test(context.runId) ||
+      !Number.isSafeInteger(context.now) ||
+      context.now <= 0)
+  )
+    throw new Error('Autofix reservation requires a run id and time');
   const labels = new Set<string>();
   for (const action of plan.actions) {
     if (action.kind === 'create' || action.kind === 'labels')
@@ -377,7 +458,30 @@ export async function applyPlan(
     if (issue === undefined) throw new Error('Autofix candidate has no issue');
     return { ...candidate, issue };
   });
-  for (const candidate of candidates)
-    await github.addLabels(candidate.issue, ['autofix']);
+  if (candidates.length) {
+    const issues = new Map(
+      (await github.listIssues()).map((issue) => [issue.number, issue])
+    );
+    for (const candidate of candidates) {
+      const issue = issues.get(candidate.issue);
+      const data = issue ? parseRegion(issue.body) : null;
+      if (
+        !issue ||
+        !isFilerAuthor(issue.author, context?.filerAuthor) ||
+        issue.state !== 'open' ||
+        data === null ||
+        data.fingerprint !== candidate.fingerprint ||
+        issue.title !== issueTitle(data)
+      )
+        throw new Error('Autofix reservation issue refused');
+      await github.updateIssue(
+        issue.number,
+        setReservation(issue.body, context!.runId, context!.now)
+      );
+      if (issue.labels.includes('autofix'))
+        await github.removeLabel(issue.number, 'autofix');
+      await github.addLabels(issue.number, ['autofix']);
+    }
+  }
   return candidates;
 }

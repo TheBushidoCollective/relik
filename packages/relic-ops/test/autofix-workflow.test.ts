@@ -48,18 +48,17 @@ test('main-ref test job never runs patched code on its host', () => {
 test('replay wrapper refuses mutations that expose the host or credentials', () => {
   expect(() => guardReplaySource(replaySource)).not.toThrow();
   const mutants = [
-    replaySource.replace(
-      "'--network',\n          'none'",
-      "'--network',\n          'host'"
-    ),
-    replaySource.replace(
-      "'--env',\n          'LANG=C.UTF-8'",
-      "'--env',\n          'GITHUB_TOKEN=x'"
-    ),
+    replaySource.replace(/('--network',\s*)'none'/, "$1'host'"),
+    replaySource.replace(/('--env',\s*)'LANG=C.UTF-8'/, "$1'GITHUB_TOKEN=x'"),
     replaySource.replace("'--read-only'", "'--privileged'"),
     replaySource.replace("'docker',", "'bash',"),
     replaySource.replace('! -S /var/run/docker.sock', 'true'),
     replaySource.replace('! command -v sudo', 'true'),
+    replaySource.replace('passesOriginalTests(originalResult)', 'true'),
+    replaySource.replace('constants.O_NOFOLLOW', '0'),
+    replaySource.replace('constants.O_NONBLOCK', '0'),
+    replaySource.replace("'ls-files'", "'status'"),
+    replaySource.replace('originalPackages.every(', 'originalPackages.some('),
   ];
   for (const mutant of mutants) {
     expect(mutant).not.toBe(replaySource);
@@ -210,6 +209,82 @@ test('read-only test job rejects setup-action caches', () => {
   const changed = before + after;
   expect(changed).not.toBe(sandbox);
   expect(() => guard(reusable, caller, changed)).toThrow();
+});
+
+test('filer trigger, permissions, checkout and matrix reservation predicate are guarded', () => {
+  const changes = [
+    caller.replace('  schedule:\n', '  pull_request_target:\n  schedule:\n'),
+    caller.replace('      contents: read', '      contents: write'),
+    caller.replace(
+      "    if: github.ref == 'refs/heads/main'\n",
+      "    if: github.ref == 'refs/heads/main'\n    environment: production\n"
+    ),
+    caller.replace(`ref: \${{ github.sha }}`, `ref: \${{ github.head_ref }}`),
+    caller.replace(
+      "vars.ERROR_REPORTS_MODE == 'live' && (inputs.mode",
+      'true && (inputs.mode'
+    ),
+  ];
+  for (const changed of changes) {
+    expect(changed).not.toBe(caller);
+    expect(() => guard(reusable, changed)).toThrow();
+  }
+});
+
+test('privileged checkout, scan root and disposable git objects are guarded', () => {
+  const changes = [
+    sandbox.replace(`ref: \${{ github.sha }}`, `ref: \${{ github.head_ref }}`),
+    sandbox.replace(
+      '      - name: Extract and scan untrusted patch\n',
+      `      - name: Extract and scan untrusted patch\n        working-directory: \${{ runner.temp }}/autofix-work\n`
+    ),
+    sandbox.replace(
+      'GIT_OBJECT_DIRECTORY="$RUNNER_TEMP/autofix-objects"',
+      'GIT_OBJECT_DIRECTORY="$GITHUB_WORKSPACE/.git/objects"'
+    ),
+    sandbox.replace(
+      'GIT_ALTERNATE_OBJECT_DIRECTORIES="$GITHUB_WORKSPACE/.git/objects"',
+      'GIT_ALTERNATE_OBJECT_DIRECTORIES=/tmp'
+    ),
+    sandbox.replace(
+      `          FIXTURE: \${{ inputs.fixture }}\n        run: |\n          set -euo pipefail\n          mkdir -m 700 "$RUNNER_TEMP/autofix-safe"`,
+      `          FIXTURE: \${{ inputs.fixture }}\n          GITHUB_WORKSPACE: /tmp/agent\n        run: |\n          set -euo pipefail\n          mkdir -m 700 "$RUNNER_TEMP/autofix-safe"`
+    ),
+    sandbox.replace(
+      '          base="$(cat "$RUNNER_TEMP/autofix-base")"',
+      '          cd "$RUNNER_TEMP/autofix-work"\n          base="$(cat "$RUNNER_TEMP/autofix-base")"'
+    ),
+    sandbox.replace(
+      'export GIT_TERMINAL_PROMPT=0',
+      'export GIT_TERMINAL_PROMPT=1'
+    ),
+    sandbox.replace('read-tree "$base" 2>/dev/null', 'read-tree "$base"'),
+    sandbox.replace(
+      'rm -rf -- "$RUNNER_TEMP/autofix-work" "$RUNNER_TEMP/autofix-objects"',
+      'true'
+    ),
+    sandbox.replaceAll(
+      "|| { echo 'Autofix cleanup refused' >&2; exit 1; }",
+      '|| true'
+    ),
+    sandbox.replaceAll('--backend=copyfile', '--backend=hardlink'),
+  ];
+  for (const [index, changed] of changes.entries()) {
+    expect(changed).not.toBe(sandbox);
+    let refused = false;
+    try {
+      guard(reusable, caller, changed);
+    } catch {
+      refused = true;
+    }
+    expect(refused, `mutation ${index} was accepted`).toBe(true);
+  }
+  const changed = proposer.replace(
+    `ref: \${{ github.sha }}`,
+    `ref: \${{ github.head_ref }}`
+  );
+  expect(changed).not.toBe(proposer);
+  expect(() => guard(reusable, caller, sandbox, changed)).toThrow();
 });
 
 test('canary has no proposer, repository writes or path into proposal', () => {

@@ -171,6 +171,8 @@ test('fake bundle, fake container and trusted scanner retain no fixture credenti
       tests: [testPath],
       baselineFailures: 1,
       passed: 1,
+      originalPackages: ['relic-viewer'],
+      originalPassed: 5,
     })
   );
   const title = join(temp, 'title');

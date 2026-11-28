@@ -341,7 +341,7 @@ describe('filing and grammar', () => {
     });
     assert.deepEqual(await applyPlan(plan, github, 'dry-run'), []);
     assert.equal(github.writes, 0);
-    await applyPlan(plan, github, 'live');
+    await applyPlan(plan, github, 'live', { runId: '123456', now: NOW });
     const writes = github.writes;
     assert.equal(github.issues.length, 3);
     assert.ok(
@@ -473,7 +473,7 @@ describe('filing and grammar', () => {
       authority,
     });
     expect(() => assert.equal(unsafeAutofix.candidates.length, 3)).toThrow();
-    await applyPlan(plan, github, 'live');
+    await applyPlan(plan, github, 'live', { runId: '123456', now: NOW });
     const existing = new Set(
       github.issues.map(
         (issue) => issue.title.match(/\[([0-9a-f]{16})\]$/)?.[1]

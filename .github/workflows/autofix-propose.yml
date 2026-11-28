@@ -60,7 +60,7 @@ jobs:
           if [[ "$(cat "$RUNNER_TEMP/pr-security")" == yes ]]; then
             gh api "repos/$GITHUB_REPOSITORY/labels/needs-security-review" >/dev/null
           fi
-          prior="$(gh pr list --repo "$GITHUB_REPOSITORY" --state all --head "$branch" --limit 100 --json state,mergedAt --jq '[.[] | select(.state == "OPEN" or (.state == "CLOSED" and .mergedAt == null))] | length')"
+          prior="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=all&head=TheBushidoCollective%3Aautofix%2Ferror-$FINGERPRINT&per_page=100" --jq '[.[][] | select(.head.repo.full_name == "TheBushidoCollective/relik" and (.user.type == "Bot" or (.performed_via_github_app.id? // 0) > 0) and (.state == "open" or (.state == "closed" and .merged_at == null)))] | length')"
           [[ "$prior" == 0 ]]
           git -c core.hooksPath=/dev/null -c user.name=github-actions -c user.email=41898282+github-actions\[bot\]@users.noreply.github.com commit -m "Fix error report $FINGERPRINT" >/dev/null
           auth_config="$RUNNER_TEMP/autofix-git-auth"

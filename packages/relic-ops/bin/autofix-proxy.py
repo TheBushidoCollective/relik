@@ -4,13 +4,23 @@ import select
 import socket
 import socketserver
 import sys
+import threading
+import time
 
 PROVIDER = 'daily-cloudcode-pa.googleapis.com'
+MAX_CONNECTIONS = 8
+MAX_CONNECTION_BYTES = 32 * 1024 * 1024
+HANDSHAKE_TIMEOUT = 10
+IDLE_TIMEOUT = 30
 
 
-def exact(stream, count):
+def exact(stream, count, deadline):
     result = bytearray()
     while len(result) < count:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('handshake expired')
+        stream.settimeout(remaining)
         chunk = stream.recv(count - len(result))
         if not chunk:
             raise ValueError('incomplete')
@@ -69,35 +79,43 @@ def valid_sni(record):
 class Handler(socketserver.BaseRequestHandler):
     def handle(self):
         client = self.request
-        client.settimeout(20)
+        deadline = time.monotonic() + HANDSHAKE_TIMEOUT
         upstream = None
         try:
             request = bytearray()
             while not request.endswith(b'\r\n\r\n'):
-                request.extend(exact(client, 1))
+                request.extend(exact(client, 1, deadline))
                 if len(request) > 8192:
                     return
             first = bytes(request).split(b'\r\n', 1)[0]
             if first not in (f'CONNECT {PROVIDER}:443 HTTP/1.1'.encode(), f'CONNECT {PROVIDER}:443 HTTP/1.0'.encode()):
                 return
             client.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
-            header = exact(client, 5)
+            header = exact(client, 5, deadline)
             size = int.from_bytes(header[3:5], 'big')
             if size > 18_432:
                 return
-            hello = header + exact(client, size)
+            hello = header + exact(client, size, deadline)
             if not valid_sni(hello):
                 return
-            upstream = socket.create_connection((PROVIDER, 443), timeout=20)
-            upstream.settimeout(20)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            upstream = socket.create_connection((PROVIDER, 443), timeout=remaining)
+            upstream.settimeout(IDLE_TIMEOUT)
+            client.settimeout(IDLE_TIMEOUT)
             upstream.sendall(hello)
+            transferred = len(request) + len(hello)
             while True:
-                ready, _, _ = select.select([client, upstream], [], [], 60)
+                ready, _, _ = select.select([client, upstream], [], [], IDLE_TIMEOUT)
                 if not ready:
                     return
                 for source in ready:
-                    data = source.recv(65536)
+                    data = source.recv(min(65536, MAX_CONNECTION_BYTES - transferred + 1))
                     if not data:
+                        return
+                    transferred += len(data)
+                    if transferred > MAX_CONNECTION_BYTES:
                         return
                     (upstream if source is client else client).sendall(data)
         except (OSError, ValueError):
@@ -110,6 +128,26 @@ class Handler(socketserver.BaseRequestHandler):
 class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = False
     daemon_threads = True
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
     def handle_error(self, request, client_address):
         pass
 

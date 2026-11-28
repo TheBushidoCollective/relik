@@ -14,10 +14,9 @@ Success prints `ERROR_REPORT_SERVER_PATH_OK`, `ERROR_REPORT_VIEWER_PATH_OK`, `ER
 1. Keep `ERROR_REPORTS_MODE=dry-run` and `AUTOFIX_MODE=off`. Confirm the logging sink, dedicated bucket, reader account and main-ref Workload Identity binding are deployed.
 2. Run the `error reports` workflow on main in dry-run mode. Confirm the file job authenticates and reads the dedicated view, the step summary shows accepted and dropped counts, and no issue or label write occurs. A quiet bucket does not prove a report reached it.
 3. When a legitimate report exists, confirm its log record is visible to this identity and that the dry-run plan contains only allowlisted report fields. Do not create a production error or test issue to manufacture a record.
-4. After that read check, set `ERROR_REPORTS_LIVE_SINCE` to the intended RFC 3339 cutoff and explicitly set `ERROR_REPORTS_MODE=live`. Records before the cutoff are ignored. The first live run creates missing fixed labels as needed and is capped at five server and five client issues per rolling 24 hours.
-5. Audit an issue with `GITHUB_TOKEN=<read-token> bun packages/relic-ops/bin/audit-issue.ts <issue-number>`. `ERROR_REPORT_ISSUE_AUDIT_OK` proves the filer-owned region matches the allowlist grammar, not that the logged error is reproducible.
+4. When a filer-authenticated issue exists, audit it with `GITHUB_TOKEN=<read-token> bun packages/relic-ops/bin/audit-issue.ts <issue-number>`. `ERROR_REPORT_ISSUE_AUDIT_OK` proves the filer-owned region matches the allowlist grammar, not that the logged error is reproducible.
 
-The current workflow only files issues and emits a capped autofix candidate list. It does not run an autofix job.
+The live matrix can start autofix jobs. Keep `AUTOFIX_MODE=off` until the [autofix operations](docs/spec/service.md#autofix-operations) prerequisites, canary, and residual-risk acceptance are complete. That section is the activation sequence.
 
 # Deployment smoke safety
 

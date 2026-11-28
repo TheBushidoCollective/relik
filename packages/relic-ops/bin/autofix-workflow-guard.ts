@@ -36,6 +36,25 @@ function exactPath(step: ObjectMap, paths: string[]): void {
   );
 }
 
+function guardTrustedCheckout(job: ObjectMap): void {
+  requireIt(!('defaults' in job) && !('env' in job));
+  const all = steps(job);
+  for (const step of all) {
+    requireIt(!('working-directory' in step));
+    if (step.env !== undefined) {
+      const env = object(step.env);
+      requireIt(!('GITHUB_WORKSPACE' in env) && !('RUNNER_TEMP' in env));
+    }
+  }
+  const checkouts = all.filter((step) => step.uses === 'actions/checkout@v4');
+  requireIt(checkouts.length === 1);
+  const checkout = object(checkouts[0]!.with);
+  requireIt(
+    checkout.ref === `\${{ github.sha }}` &&
+      checkout['persist-credentials'] === false
+  );
+}
+
 /** Reject unsafe workflow variants; test mutations exercise each boundary. */
 export function guardWorkflows(
   orchestratorYaml: string,
@@ -49,6 +68,8 @@ export function guardWorkflows(
   const runner = object(Bun.YAML.parse(sandboxYaml));
   const proposal = object(Bun.YAML.parse(proposerYaml));
   const canary = object(Bun.YAML.parse(canaryYaml));
+  for (const workflow of [orchestrator, caller, runner, proposal, canary])
+    requireIt(!('defaults' in workflow));
   for (const workflow of [orchestrator, runner, proposal]) {
     requireIt(Object.keys(object(workflow.on)).join(',') === 'workflow_call');
     requireIt(same(workflow.permissions, {}));
@@ -91,6 +112,8 @@ export function guardWorkflows(
   requireIt(
     same(test.permissions, { contents: 'read' }) && test.needs === 'sandbox'
   );
+  guardTrustedCheckout(sandbox);
+  guardTrustedCheckout(test);
   const sandboxSteps = steps(sandbox);
   requireIt(
     sandboxSteps.map((step) => step.name ?? step.uses ?? step.id).join('|') ===
@@ -131,6 +154,47 @@ export function guardWorkflows(
       scan.run.includes('autofix-scan.ts') &&
       scan.run.includes('autofix-check-canary.ts')
   );
+  requireIt(
+    scan.run.includes('GIT_TERMINAL_PROMPT=0') &&
+      scan.run.includes(
+        'GIT_OBJECT_DIRECTORY="$RUNNER_TEMP/autofix-objects"'
+      ) &&
+      scan.run.includes(
+        'GIT_ALTERNATE_OBJECT_DIRECTORIES="$GITHUB_WORKSPACE/.git/objects"'
+      ) &&
+      scan.run.includes('read-tree "$base" 2>/dev/null') &&
+      scan.run.includes('add -A -- . >/dev/null 2>&1') &&
+      scan.run.includes(
+        "2>/dev/null || { echo 'Autofix patch extraction refused'"
+      ) &&
+      scan.run.includes(
+        'trap \'rm -rf -- "$RUNNER_TEMP/autofix-work" "$RUNNER_TEMP/autofix-objects"'
+      )
+  );
+  requireIt(
+    cleanup.if === 'always()' &&
+      typeof cleanup.run === 'string' &&
+      cleanup.run.includes(
+        'rm -rf -- "$RUNNER_TEMP/autofix-work" "$RUNNER_TEMP/autofix-objects"'
+      ) &&
+      cleanup.run.includes("|| { echo 'Autofix cleanup refused' >&2; exit 1; }")
+  );
+  const install = stepByName(
+    sandbox,
+    'Install trusted dependencies and build sandbox'
+  );
+  requireIt(
+    typeof install.run === 'string' &&
+      install.run.includes('export GIT_TERMINAL_PROMPT=0') &&
+      (install.run.match(/--backend=copyfile/g) ?? []).length === 2 &&
+      install.run.includes(
+        'GIT_OBJECT_DIRECTORY="$RUNNER_TEMP/autofix-objects"'
+      ) &&
+      install.run.includes(
+        'GIT_ALTERNATE_OBJECT_DIRECTORIES="$GITHUB_WORKSPACE/.git/objects"'
+      )
+  );
+  requireIt(!/\bcd\s+["']?\$RUNNER_TEMP\/autofix-work/.test(scan.run));
   requireIt(
     !/(?:^|[;&|]|\n)\s*(?:bun|node|bash|sh|python3|source|eval)\s+["']?\$RUNNER_TEMP\/autofix-work/.test(
       scan.run
@@ -224,6 +288,7 @@ export function guardWorkflows(
   requireIt(
     same(proposer.permissions, { contents: 'write', 'pull-requests': 'write' })
   );
+  guardTrustedCheckout(proposer);
   for (const step of steps(proposer)) {
     if (typeof step.uses === 'string')
       requireIt(
@@ -232,6 +297,7 @@ export function guardWorkflows(
         )
       );
     if (typeof step.run !== 'string') continue;
+    requireIt(!/\bcd\s/.test(step.run));
     requireIt(
       !/\b(?:bun|npm|npx|yarn|pnpm|make|bash|sh|source|eval|docker)\b/.test(
         step.run
@@ -247,6 +313,29 @@ export function guardWorkflows(
       !/OMP_VAULT|ACTIONS_ID_TOKEN|google-github-actions\/auth/.test(step.run)
     );
   }
+  requireIt(same(caller.permissions, {}));
+  requireIt(
+    Object.keys(object(caller.on)).sort().join(',') ===
+      'schedule,workflow_dispatch'
+  );
+  const file = object(object(caller.jobs).file);
+  requireIt(
+    file.if === "github.ref == 'refs/heads/main'" && !('environment' in file)
+  );
+  requireIt(
+    same(file.permissions, {
+      contents: 'read',
+      issues: 'write',
+      'pull-requests': 'read',
+      'id-token': 'write',
+    })
+  );
+  guardTrustedCheckout(file);
+  const filingEnv = object(stepByName(file, 'Validate and file reports').env);
+  requireIt(
+    filingEnv.AUTOFIX_MODE ===
+      `\${{ vars.ERROR_REPORTS_MODE == 'live' && (inputs.mode || vars.ERROR_REPORTS_MODE || 'dry-run') == 'live' && (vars.AUTOFIX_MODE || 'off') || 'off' }}`
+  );
   const call = object(object(caller.jobs).autofix);
   requireIt(
     typeof call.if === 'string' &&
@@ -288,8 +377,8 @@ export function guardWorkflows(
 export function guardReplaySource(source: string): void {
   requireIt((source.match(/\bspawnSync\s*\(/g) ?? []).length === 1);
   requireIt(/spawnSync\(\s*'docker'/.test(source));
-  requireIt((source.match(/\bexecFileSync\s*\(/g) ?? []).length === 2);
-  requireIt((source.match(/execFileSync\(\s*'git'/g) ?? []).length === 2);
+  requireIt((source.match(/\bexecFileSync\s*\(/g) ?? []).length === 4);
+  requireIt((source.match(/execFileSync\(\s*'git'/g) ?? []).length === 4);
   for (const pattern of [
     /'--network',\s*'none'/,
     /'--read-only'/,
@@ -302,6 +391,16 @@ export function guardReplaySource(source: string): void {
     /exec timeout --kill-after=5s 300s bun test/,
   ])
     requireIt(pattern.test(source));
+  for (const required of [
+    "'ls-files'",
+    'originalPackages.every(',
+    'sourceIncludes',
+    'passesOriginalTests(originalResult)',
+    'constants.O_NOFOLLOW',
+    'constants.O_NONBLOCK',
+    'stat.isFile()',
+  ])
+    requireIt(source.includes(required));
   requireIt((source.match(/'--env'/g) ?? []).length === 2);
   requireIt(
     source.includes("'HOME=/home/agent'") && source.includes("'LANG=C.UTF-8'")
@@ -309,4 +408,64 @@ export function guardReplaySource(source: string): void {
   requireIt(
     !/'--privileged'|'--network=host'|dst=\/var\/run\/docker\.sock/.test(source)
   );
+}
+
+/** The credentialed fixer may execute only under the isolated launcher. */
+export function guardLauncherSource(source: string): void {
+  for (const required of [
+    'docker network create --internal "$network"',
+    'sudo iptables -I INPUT 1 -s "$subnet" -j "$chain"',
+    'timeout --kill-after=5s 45m docker run',
+    '--network "$network"',
+    '--log-driver=none',
+    '--read-only --cap-drop ALL',
+    '--security-opt no-new-privileges',
+    '--pids-limit 256',
+    '--ulimit fsize=1048576:1048576',
+    'src=$agent,dst=$agent,readonly',
+    '! -S /var/run/docker.sock',
+    '! command -v sudo',
+    '[[ $$ == 1',
+    '/tmp/agent-output 2>&1',
+    'rm -f /tmp/agent-output',
+    "' >/dev/null 2>&1",
+  ])
+    requireIt(source.includes(required));
+  requireIt(
+    !/--env\s+["']?(?:ACTIONS_|GITHUB_TOKEN|GH_TOKEN|OMP_VAULT_)/.test(source)
+  );
+  requireIt(
+    !/--privileged|--network[= ]host|src=\/var\/run\/docker\.sock/.test(source)
+  );
+}
+
+/** PR code may not inherit a write or OIDC token from repository defaults. */
+export function guardPullRequestWorkflow(yaml: string): void {
+  const workflow = object(Bun.YAML.parse(yaml));
+  const triggers = object(workflow.on);
+  requireIt(!('pull_request_target' in triggers));
+  const permissions = object(workflow.permissions);
+  if (!('pull_request' in triggers)) return;
+  requireIt(permissions.contents === 'read');
+  for (const [name, value] of Object.entries(permissions))
+    requireIt(
+      (value === 'read' || value === 'none') &&
+        !(name === 'id-token' && value !== 'none')
+    );
+  for (const value of Object.values(object(workflow.jobs))) {
+    const job = object(value);
+    if (job.permissions !== undefined)
+      for (const [name, access] of Object.entries(object(job.permissions)))
+        requireIt(
+          (access === 'read' || access === 'none') &&
+            !(name === 'id-token' && access !== 'none')
+        );
+    if (job.steps === undefined) continue;
+    for (const step of steps(job))
+      if (
+        typeof step.uses === 'string' &&
+        step.uses.startsWith('actions/checkout@')
+      )
+        requireIt(object(step.with)['persist-credentials'] === false);
+  }
 }

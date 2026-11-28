@@ -5,6 +5,7 @@ import {
   DEFAULT_FILER_AUTHOR,
   GitHubRest,
   MemoryGitHub,
+  isOwnedAutofixPull,
   type Issue,
 } from '../src/github.ts';
 import { applyPlan, planReports } from '../src/plan.ts';
@@ -86,7 +87,10 @@ test('live output labels only its candidates and the same issue cannot be dispat
   expect(plan.candidates).toHaveLength(1);
   expect(await applyPlan(plan, github, 'dry-run')).toEqual([]);
   expect(github.issues).toHaveLength(0);
-  const dispatched = await applyPlan(plan, github, 'live');
+  const dispatched = await applyPlan(plan, github, 'live', {
+    runId: '123456',
+    now,
+  });
   expect(dispatched).toHaveLength(1);
   expect(github.issues[0]?.labels).toContain('autofix');
   const again = await planReports(input, github, options);
@@ -250,6 +254,7 @@ test('REST reads exact branch and PR names, excludes forks and preserves closed 
             ref: `autofix/error-${fp}`,
             repo: { full_name: 'TheBushidoCollective/relik' },
           },
+          user: DEFAULT_FILER_AUTHOR,
           created_at: time,
           state: 'closed',
           merged_at: null,
@@ -259,6 +264,24 @@ test('REST reads exact branch and PR names, excludes forks and preserves closed 
             ref: `autofix/error-${fp}`,
             repo: { full_name: 'somebody/fork' },
           },
+          user: { login: 'outsider', id: 99, type: 'User' },
+          created_at: time,
+          state: 'open',
+          merged_at: null,
+        },
+        {
+          head: { ref: `autofix/error-${fp}`, repo: null },
+          user: { login: 'outsider', id: 99, type: 'User' },
+          created_at: time,
+          state: 'open',
+          merged_at: null,
+        },
+        {
+          head: {
+            ref: `autofix/error-${fp}`,
+            repo: { full_name: 'TheBushidoCollective/relik' },
+          },
+          user: { login: 'human', id: 98, type: 'User' },
           created_at: time,
           state: 'open',
           merged_at: null,
@@ -282,6 +305,41 @@ test('REST reads exact branch and PR names, excludes forks and preserves closed 
   ]);
 });
 
+test('only same-repository bot or GitHub App authored PRs own autofix history', () => {
+  const fp = fingerprintOf(fixture);
+  const head = {
+    ref: `autofix/error-${fp}`,
+    repo: { full_name: 'TheBushidoCollective/relik' },
+  };
+  const bot = { head, user: DEFAULT_FILER_AUTHOR };
+  expect(isOwnedAutofixPull(bot, fp)).toBe(true);
+  expect(
+    isOwnedAutofixPull({ ...bot, head: { ...head, repo: null } }, fp)
+  ).toBe(false);
+  expect(
+    isOwnedAutofixPull(
+      { ...bot, head: { ...head, repo: { full_name: 'other/fork' } } },
+      fp
+    )
+  ).toBe(false);
+  expect(
+    isOwnedAutofixPull(
+      { ...bot, user: { login: 'human', id: 44, type: 'User' } },
+      fp
+    )
+  ).toBe(false);
+  expect(
+    isOwnedAutofixPull(
+      {
+        ...bot,
+        user: { login: 'human', id: 44, type: 'User' },
+        performed_via_github_app: { id: 123 },
+      },
+      fp
+    )
+  ).toBe(true);
+});
+
 test('a foreign issue cannot be labeled or passed as fixer input', async () => {
   const foreign = issueFor(fixture, 9, {
     login: 'someone',
@@ -290,7 +348,10 @@ test('a foreign issue cannot be labeled or passed as fixer input', async () => {
   });
   const github = new MemoryGitHub([foreign], () => time);
   const plan = await planReports(entries([fixture]), github, options);
-  const dispatched = await applyPlan(plan, github, 'live');
+  const dispatched = await applyPlan(plan, github, 'live', {
+    runId: '123456',
+    now,
+  });
   expect(dispatched).toHaveLength(1);
   expect(dispatched[0]?.issue).not.toBe(foreign.number);
   expect(
