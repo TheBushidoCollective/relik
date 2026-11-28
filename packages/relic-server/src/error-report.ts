@@ -14,6 +14,11 @@ const MAX_BUILDS_PER_FINGERPRINT = 8;
 const EMISSION_INTERVAL_MS = 600_000;
 const CLIENT_LIFETIME_MS = 86_400_000;
 const MAX_COUNT = 1_000_000;
+const MAX_EMISSIONS_PER_WINDOW = {
+  server: 256,
+  viewer: 256,
+  mcp: 64,
+} as const;
 
 interface BuildEntry {
   report: ErrorReport;
@@ -44,6 +49,13 @@ export function createErrorReporter(options: {
   const serverEntries = new Map<string, Entry>();
   const viewerEntries = new Map<string, Entry>();
   const mcpEntries = new Map<string, Entry>();
+  // These windows are independent of the evictable aggregation maps. Each
+  // emitted fingerprint/build occupies a slot until its suppression expires.
+  const recentEmissions = {
+    server: new Map<string, number>(),
+    viewer: new Map<string, number>(),
+    mcp: new Map<string, number>(),
+  };
 
   function flush(fingerprint: string, build: BuildEntry, at: number): void {
     if (build.pending === 0) return;
@@ -51,6 +63,19 @@ export function createErrorReporter(options: {
     // Recheck at the output boundary even when the caller supplied a typed object.
     const valid = parseLoggedReport(report);
     if (valid === null) return;
+    const recent = recentEmissions[report.source];
+    for (const [key, expiresAt] of recent) {
+      if (at < expiresAt) break;
+      recent.delete(key);
+    }
+    const key = `${fingerprint}:${report.revision}`;
+    if (
+      recent.has(key) ||
+      recent.size >= MAX_EMISSIONS_PER_WINDOW[report.source]
+    )
+      return;
+    // Reserve before writing so a throwing sink cannot bypass the bound.
+    recent.set(key, at + EMISSION_INTERVAL_MS);
     emit(
       JSON.stringify({
         severity: 'ERROR',
@@ -92,11 +117,13 @@ export function createErrorReporter(options: {
 
   // Prefer evicting the least frequent entry, breaking ties by oldest arrival.
   function victim<T extends { readonly firstSeen: number; total: number }>(
-    entries: Map<string, T>
+    entries: Map<string, T>,
+    eligible?: (value: T) => boolean
   ): string | undefined {
     let key: string | undefined;
     let selected: T | undefined;
     for (const [candidate, value] of entries) {
+      if (eligible !== undefined && !eligible(value)) continue;
       if (
         selected === undefined ||
         value.total < selected.total ||
@@ -109,6 +136,17 @@ export function createErrorReporter(options: {
     return key;
   }
 
+  function noPendingBuilds(entry: Entry): boolean {
+    for (const build of entry.builds.values()) {
+      if (build.pending > 0) return false;
+    }
+    return true;
+  }
+
+  function noPendingCount(build: BuildEntry): boolean {
+    return build.pending === 0;
+  }
+
   function record(report: ErrorReport): void {
     if (options.revision === undefined) return;
     const at = now();
@@ -116,7 +154,7 @@ export function createErrorReporter(options: {
       for (const [fingerprint, entry] of entries) {
         if (at - entry.firstSeen >= CLIENT_LIFETIME_MS) {
           flushEntry(fingerprint, entry, at);
-          entries.delete(fingerprint);
+          if (noPendingBuilds(entry)) entries.delete(fingerprint);
         }
       }
     }
@@ -132,28 +170,27 @@ export function createErrorReporter(options: {
     let entry = entries.get(fingerprint);
     if (entry === undefined) {
       if (entries.size >= capacity) {
-        const oldest = victim(entries);
-        if (oldest !== undefined) {
-          flushEntry(oldest, entries.get(oldest)!, at);
-          entries.delete(oldest);
-        }
+        flushDue(at);
+        const oldest = victim(entries, noPendingBuilds);
+        if (oldest === undefined) return;
+        flushEntry(oldest, entries.get(oldest)!, at);
+        entries.delete(oldest);
       }
       entry = { firstSeen: at, total: 0, builds: new Map() };
       entries.set(fingerprint, entry);
     }
-    entry.total = Math.min(MAX_COUNT, entry.total + report.count);
     let build = entry.builds.get(report.revision);
     if (build === undefined) {
       if (entry.builds.size >= MAX_BUILDS_PER_FINGERPRINT) {
-        const oldest = victim(entry.builds);
-        if (oldest !== undefined) {
-          try {
-            flush(fingerprint, entry.builds.get(oldest)!, at);
-          } catch {
-            // Eviction still bounds memory if the sink has failed.
-          }
-          entry.builds.delete(oldest);
+        flushDue(at);
+        const oldest = victim(entry.builds, noPendingCount);
+        if (oldest === undefined) return;
+        try {
+          flush(fingerprint, entry.builds.get(oldest)!, at);
+        } catch {
+          // Eviction still bounds memory if the sink has failed.
         }
+        entry.builds.delete(oldest);
       }
       build = {
         report,
@@ -173,6 +210,7 @@ export function createErrorReporter(options: {
       build.pending = Math.min(MAX_COUNT, build.pending + report.count);
       build.total = Math.min(MAX_COUNT, build.total + report.count);
     }
+    entry.total = Math.min(MAX_COUNT, entry.total + report.count);
     flushDue(at);
   }
 

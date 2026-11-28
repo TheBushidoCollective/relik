@@ -612,7 +612,7 @@ describe('classification and grouping', () => {
     ).toBe('Other');
   });
 
-  test('uses the exact fingerprint wire string and ignores revision and positions', () => {
+  test('continuity: runtime fingerprint wire string ignores revision and positions', () => {
     const base = {
       ...report(),
       frames: [

@@ -112,6 +112,38 @@ function parsed(lines: string[]): Array<{
   return lines.map((line) => JSON.parse(line));
 }
 
+function residentViewerFlood(factory: typeof createErrorReporter): number[][] {
+  const lines: string[] = [];
+  let at = 0;
+  const reporter = factory({
+    revision: REVISION,
+    now: () => at,
+    emit: (line) => lines.push(line),
+  });
+  reporter.client(viewer());
+  reporter.client(viewer());
+  let sent = 0;
+  for (const route of MCP_ROUTES) {
+    for (const errorClass of ERROR_CLASSES) {
+      const report = { ...mcp(), route, errorClass };
+      reporter.client(report);
+      reporter.client(report);
+      reporter.client(report);
+      if (++sent === 64) break;
+    }
+    if (sent === 64) break;
+  }
+  reporter.client(viewer());
+  const counts = () =>
+    parsed(lines)
+      .filter((event) => event.report.source === 'viewer')
+      .map((event) => event.report.count);
+  const before = counts();
+  at = 600_000;
+  reporter.client(viewer());
+  return [before, counts()];
+}
+
 describe('uncaught server boundary', () => {
   test('scrubs throwing asset and store errors from responses and logs', async () => {
     const error = new Error(CANARIES.join(' '));
@@ -445,6 +477,84 @@ describe('error report endpoint', () => {
     );
   });
 
+  for (const scope of ['ip', 'instance'] as const) {
+    test(`exhausted ${scope} quota refuses before reading viewer assets`, async () => {
+      const source = memoryAssets({ 'viewer.js': 'a\n'.repeat(7) });
+      let reads = 0;
+      const { app } = setup({
+        config: {
+          revision: REVISION,
+          errorReportRateLimit: {
+            limit: scope === 'ip' ? 1 : 10,
+            windowSeconds: 3600,
+          },
+          errorReportGlobalRateLimit: {
+            limit: scope === 'instance' ? 1 : 10,
+            windowSeconds: 3600,
+          },
+        },
+        assets: {
+          async get(path) {
+            reads++;
+            return source.get(path);
+          },
+        },
+      });
+      expect((await app.fetch(post(mcp()))).status).toBe(204);
+      const ip = scope === 'instance' ? '198.51.100.2' : '198.51.100.1';
+      expect((await app.fetch(post(viewer(), { ip }))).status).toBe(429);
+      expect(reads).toBe(0);
+    });
+  }
+
+  test('viewer asset bounds are cached per serving revision across requests', async () => {
+    const source = memoryAssets({ 'viewer.js': 'abc\n'.repeat(7) });
+    let reads = 0;
+    const { app, lines } = setup({
+      assets: {
+        async get(path) {
+          reads++;
+          return source.get(path);
+        },
+      },
+    });
+    expect((await app.fetch(post(viewer()))).status).toBe(204);
+    expect((await app.fetch(post(viewer()))).status).toBe(204);
+    expect(reads).toBe(1);
+    expect(parsed(lines)[0]?.report.frames).toEqual(viewer().frames);
+  });
+
+  test('concurrent requests recheck quotas after asynchronous viewer asset work', async () => {
+    const source = memoryAssets({ 'viewer.js': 'abc\n'.repeat(7) });
+    const ready = Promise.withResolvers<void>();
+    const unblock = Promise.withResolvers<void>();
+    let reads = 0;
+    const { app } = setup({
+      config: {
+        revision: REVISION,
+        errorReportRateLimit: { limit: 1, windowSeconds: 3600 },
+        errorReportGlobalRateLimit: { limit: 1, windowSeconds: 3600 },
+      },
+      assets: {
+        async get(path) {
+          reads++;
+          ready.resolve();
+          await unblock.promise;
+          return source.get(path);
+        },
+      },
+    });
+    const first = app.fetch(post(viewer()));
+    await ready.promise;
+    try {
+      expect((await app.fetch(post(mcp()))).status).toBe(204);
+    } finally {
+      unblock.resolve();
+    }
+    expect((await first).status).toBe(429);
+    expect(reads).toBe(1);
+  });
+
   test('instance quota survives overlapping IP windows at global rollover', async () => {
     let time = 0;
     const { app } = setup({
@@ -622,7 +732,7 @@ describe('error report endpoint', () => {
     );
   });
 
-  test('direct trusted ingress ignores spoofed leading forwarded IPs', async () => {
+  test('continuity: direct trusted ingress ignores spoofed leading forwarded IPs', async () => {
     const { app } = setup({
       config: {
         revision: REVISION,
@@ -668,6 +778,170 @@ describe('error report endpoint', () => {
 });
 
 describe('aggregation', () => {
+  test('evicted fingerprints stay suppressed until their emission window expires', () => {
+    const { reporter, lines, clock } = setup();
+    const reports: ErrorReport[] = [];
+    for (const route of VIEWER_ROUTES) {
+      for (const errorClass of ERROR_CLASSES) {
+        reports.push({ ...viewer(), route, errorClass });
+        if (reports.length === 201) break;
+      }
+      if (reports.length === 201) break;
+    }
+    expect(reports).toHaveLength(201);
+    for (const report of reports) reporter.client(report);
+    const before = lines.length;
+    reporter.client(reports[0]!);
+    expect(lines).toHaveLength(before);
+    clock(600_000);
+    reporter.client(reports[0]!);
+    expect(parsed(lines).at(-1)?.report.count).toBe(2);
+  });
+
+  test('per-source emission windows bound unique churn without consuming server capacity', () => {
+    const { reporter, lines } = setup();
+    const reports: ErrorReport[] = [];
+    for (const file of ['assets/viewer.js', 'assets/register-sw.js']) {
+      for (const route of VIEWER_ROUTES) {
+        for (const errorClass of ERROR_CLASSES) {
+          reports.push({
+            ...viewer(),
+            route,
+            errorClass,
+            frames: [{ file, line: 1, column: 0 }],
+          });
+          if (reports.length === 300) break;
+        }
+        if (reports.length === 300) break;
+      }
+      if (reports.length === 300) break;
+    }
+    expect(reports).toHaveLength(300);
+    for (const report of reports) reporter.client(report);
+    expect(
+      parsed(lines).filter((event) => event.report.source === 'viewer').length
+    ).toBeLessThanOrEqual(256);
+    reporter.server(new Error(''), 'GET', '/health');
+    expect(
+      parsed(lines).filter((event) => event.report.source === 'server')
+    ).toHaveLength(1);
+  });
+
+  test('server emission window caps unique churn', () => {
+    const { reporter, lines } = setup();
+    for (let i = 0; i < 300; i += 1) {
+      const error = new Error('');
+      error.stack = `Error\n    at safe (/srv/packages/relic-server/src/file${i}.ts:1:0)`;
+      reporter.server(error, 'GET', '/health');
+    }
+    expect(lines).toHaveLength(256);
+  });
+
+  test('MCP emission window caps unique churn', () => {
+    const { reporter, lines } = setup();
+    let sent = 0;
+    for (const route of MCP_ROUTES) {
+      for (const errorClass of ERROR_CLASSES) {
+        reporter.client({ ...mcp(), route, errorClass });
+        if (++sent === 150) break;
+      }
+      if (sent === 150) break;
+    }
+    expect(sent).toBe(150);
+    expect(lines).toHaveLength(64);
+  });
+
+  test('unknown MCP newcomers cannot evict residents with pending counts', () => {
+    const { reporter, lines, clock } = setup();
+    const reports: ErrorReport[] = [];
+    for (const route of MCP_ROUTES) {
+      for (const errorClass of ERROR_CLASSES) {
+        reports.push({ ...mcp(), route, errorClass });
+        if (reports.length === 33) break;
+      }
+      if (reports.length === 33) break;
+    }
+    expect(reports).toHaveLength(33);
+    for (const report of reports.slice(0, 32)) {
+      reporter.client(report);
+      reporter.client(report);
+    }
+    expect(lines).toHaveLength(32);
+    reporter.client({ ...reports[32]!, revision: '999.0.0' });
+    expect(lines).toHaveLength(32);
+    clock(600_000);
+    reporter.client(reports[0]!);
+    const first = parsed(lines).filter(
+      (event) =>
+        event.report.source === 'mcp' &&
+        event.report.route === reports[0]!.route &&
+        event.report.errorClass === reports[0]!.errorClass
+    );
+    expect(first.map((event) => event.report.count)).toEqual([1, 2]);
+  });
+
+  test('unknown MCP builds cannot evict pending counts for the same fingerprint', () => {
+    const { reporter, lines, clock } = setup();
+    for (let i = 0; i < 8; i += 1) {
+      const report = { ...mcp(), revision: `1.0.${i}` };
+      reporter.client(report);
+      reporter.client(report);
+    }
+    expect(lines).toHaveLength(8);
+    reporter.client({ ...mcp(), revision: '999.0.0' });
+    expect(lines).toHaveLength(8);
+    clock(600_000);
+    reporter.client({ ...mcp(), revision: '1.0.0' });
+    expect(
+      parsed(lines)
+        .filter((event) => event.report.revision === '1.0.0')
+        .map((event) => event.report.count)
+    ).toEqual([1, 2]);
+  });
+
+  test('resident viewer pending counts and cadence survive an MCP fingerprint flood', () => {
+    expect(residentViewerFlood(createErrorReporter)).toEqual([[1], [1, 3]]);
+  });
+
+  test('viewer isolation control rejects a shared evicting client pool', async () => {
+    const path = new URL('../src/error-report.ts', import.meta.url).pathname;
+    const source = await Bun.file(path).text();
+    const separate = 'const mcpEntries = new Map<string, Entry>();';
+    const protect = 'const oldest = victim(entries, noPendingBuilds);';
+    expect(source).toContain(separate);
+    expect(source).toContain(protect);
+    const broken = source
+      .replace(separate, 'const mcpEntries = viewerEntries;')
+      .replace(protect, 'const oldest = victim(entries);');
+    const built = await Bun.build({
+      entrypoints: [path],
+      target: 'bun',
+      plugins: [
+        {
+          name: 'shared-client-pool-negative-control',
+          setup(build) {
+            build.onLoad({ filter: /error-report\.ts$/ }, (args) =>
+              args.path === path
+                ? { contents: broken, loader: 'ts' }
+                : undefined
+            );
+          },
+        },
+      ],
+    });
+    expect(built.success).toBe(true);
+    const output = built.outputs[0];
+    if (output === undefined) throw new Error('mutant bundle missing');
+    const url = `data:text/javascript;base64,${Buffer.from(await output.arrayBuffer()).toString('base64')}`;
+    // The mutant exists only in this runtime-generated bundle.
+    const mutant = (await import(url)) as {
+      createErrorReporter: typeof createErrorReporter;
+    };
+    expect(residentViewerFlood(mutant.createErrorReporter)).not.toEqual([
+      [1],
+      [1, 3],
+    ]);
+  });
   test('emits first occurrences, batches later hits after 600 seconds and flushes other due fingerprints', () => {
     const { reporter, lines, clock } = setup();
     reporter.client(viewer());
@@ -689,7 +963,7 @@ describe('aggregation', () => {
     ]);
   });
 
-  test('MCP saturation cannot occupy viewer or server fingerprint pools', () => {
+  test('continuity: MCP flood still permits viewer and server reports', () => {
     const { reporter, lines } = setup();
     const reports: ErrorReport[] = [];
     for (const route of MCP_ROUTES) {
@@ -703,7 +977,7 @@ describe('aggregation', () => {
     for (const report of reports) reporter.client(report);
     const before = lines.length;
     reporter.client(reports[0]!);
-    expect(lines).toHaveLength(before + 1);
+    expect(lines).toHaveLength(before);
     reporter.client(viewer());
     const error = new Error('');
     error.stack =
@@ -717,8 +991,8 @@ describe('aggregation', () => {
     noCanaries(lines);
   });
 
-  test('viewer pool replaces the oldest low-count fingerprint and flushes pending hits', () => {
-    const { reporter, lines } = setup();
+  test('viewer pool preserves pending hits and admits a newcomer after the window', () => {
+    const { reporter, lines, clock } = setup();
     const reports: ErrorReport[] = [];
     for (const route of VIEWER_ROUTES) {
       for (const errorClass of ERROR_CLASSES) {
@@ -734,15 +1008,24 @@ describe('aggregation', () => {
     }
     expect(lines).toHaveLength(200);
     reporter.client(reports[200]!);
-    expect(lines).toHaveLength(202);
+    expect(lines).toHaveLength(200);
+    clock(600_000);
+    reporter.client(reports[200]!);
+    expect(lines).toHaveLength(401);
     expect(parsed(lines)[200]!.report).toEqual(reports[0]!);
-    expect(parsed(lines)[201]!.report).toEqual(reports[200]!);
+    expect(parsed(lines)[400]!.report).toEqual(reports[200]!);
     reporter.client(reports[0]!);
-    expect(parsed(lines).at(-1)!.report).toEqual(reports[0]!);
+    expect(lines).toHaveLength(401);
+    clock(1_200_000);
+    reporter.client(reports[0]!);
+    expect(parsed(lines).at(-1)!.report).toEqual({
+      ...reports[0]!,
+      count: 2,
+    });
   });
 
   test('pool replacement keeps frequent fingerprints ahead of older low-count entries', () => {
-    const { reporter, lines } = setup();
+    const { reporter, lines, clock } = setup();
     const reports: ErrorReport[] = [];
     for (const route of VIEWER_ROUTES) {
       for (const errorClass of ERROR_CLASSES) {
@@ -759,25 +1042,36 @@ describe('aggregation', () => {
     reporter.client(reports[0]!);
     expect(lines).toHaveLength(before);
     reporter.client(reports[1]!);
-    expect(lines).toHaveLength(before + 1);
-    expect(parsed(lines).at(-1)!.report).toEqual(reports[1]!);
+    expect(lines).toHaveLength(before);
+    clock(600_000);
+    reporter.client(reports[1]!);
+    expect(parsed(lines).at(-1)!.report).toEqual({
+      ...reports[1]!,
+      count: 2,
+    });
   });
 
-  test('server pool replaces the oldest low-count fingerprint and flushes pending hits', () => {
-    const { reporter, lines } = setup();
+  test('server pool preserves pending hits and admits a newcomer after the window', () => {
+    const { reporter, lines, clock } = setup();
     for (let i = 0; i < 201; i += 1) {
       const error = new Error('');
       error.stack = `Error\n    at safe (/srv/packages/relic-server/src/file${i}.ts:1:0)`;
       reporter.server(error, 'GET', '/health');
       if (i < 200) reporter.server(error, 'GET', '/health');
     }
-    expect(lines).toHaveLength(202);
+    expect(lines).toHaveLength(200);
+    clock(600_000);
+    const newcomer = new Error('');
+    newcomer.stack =
+      'Error\n    at safe (/srv/packages/relic-server/src/file200.ts:1:0)';
+    reporter.server(newcomer, 'GET', '/health');
+    expect(lines).toHaveLength(401);
     const events = parsed(lines);
     expect(events[200]!.report.frames[0]!.file).toBe(
       'packages/relic-server/src/file0.ts'
     );
     expect(events[200]!.report.count).toBe(1);
-    expect(events[201]!.report.frames[0]!.file).toBe(
+    expect(events[400]!.report.frames[0]!.file).toBe(
       'packages/relic-server/src/file200.ts'
     );
   });
@@ -808,28 +1102,38 @@ describe('aggregation', () => {
     ]);
   });
 
-  test('bounded per-fingerprint builds flush pending counts before replacement', () => {
-    const { reporter, lines } = setup();
+  test('bounded per-fingerprint builds retain pending counts until replacement', () => {
+    const { reporter, lines, clock } = setup();
     for (let i = 0; i < 9; i += 1) {
       const report = { ...mcp(), revision: `1.0.${i}` };
       reporter.client(report);
       if (i < 8) reporter.client(report);
     }
+    expect(lines).toHaveLength(8);
+    clock(600_000);
+    reporter.client({ ...mcp(), revision: '1.0.8' });
     const first = parsed(lines).filter(
       (event) => event.report.revision === '1.0.0'
     );
     expect(first.map((event) => event.report.count)).toEqual([1, 1]);
+    expect(parsed(lines).at(-1)!.report.revision).toBe('1.0.8');
+    reporter.client({ ...mcp(), revision: '1.0.0' });
+    clock(1_200_000);
     reporter.client({ ...mcp(), revision: '1.0.0' });
     expect(parsed(lines).at(-1)!.report.revision).toBe('1.0.0');
+    expect(parsed(lines).at(-1)!.report.count).toBe(2);
   });
 
-  test('client expiry flushes pending hits and admits a fresh occurrence', () => {
+  test('continuity: client expiry flushes pending hits and retains fresh occurrences', () => {
     const { reporter, lines, clock } = setup();
     reporter.client(viewer());
     reporter.client(viewer());
     clock(86_400_000);
     reporter.client(viewer());
-    expect(parsed(lines).map((line) => line.report.count)).toEqual([1, 1, 1]);
+    expect(parsed(lines).map((line) => line.report.count)).toEqual([1, 1]);
+    clock(87_000_000);
+    reporter.client(viewer());
+    expect(parsed(lines).map((line) => line.report.count)).toEqual([1, 1, 2]);
   });
 
   test('never propagates a hostile exception, clock or sink failure', () => {

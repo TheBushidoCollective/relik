@@ -269,6 +269,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
     maxEntries: config.errorReportGlobalRateLimit.limit + 2,
   });
   let errorReportGlobalWindow: { count: number; resetAt: number } | undefined;
+  const viewerBounds = new Map<
+    string,
+    Promise<readonly number[] | undefined>
+  >();
   const limiter =
     options.limiter ??
     new RateLimiter({
@@ -573,6 +577,57 @@ export function createApp(options: AppOptions = {}): RelicApp {
     });
   }
 
+  function errorReportQuota(key: string, at: number): Response | undefined {
+    const perIp = errorReportLimiter.peek(key, config.errorReportRateLimit, at);
+    if (!perIp.allowed) {
+      return refuse('error_report_rate_limited', {
+        retry_after_seconds: perIp.retryAfterSeconds,
+      });
+    }
+    if (
+      errorReportGlobalWindow !== undefined &&
+      at < errorReportGlobalWindow.resetAt &&
+      errorReportGlobalWindow.count >= config.errorReportGlobalRateLimit.limit
+    ) {
+      return refuse('error_report_rate_limited', {
+        retry_after_seconds: Math.ceil(
+          (errorReportGlobalWindow.resetAt - at) / 1000
+        ),
+      });
+    }
+    return undefined;
+  }
+
+  async function viewerAssetBounds(
+    file: string
+  ): Promise<readonly number[] | undefined> {
+    // A running revision serves immutable assets. Cache only files that exist,
+    // and share an in-flight read rather than rereading or decoding the asset.
+    const key = `${config.revision}:${file}`;
+    const cached = viewerBounds.get(key);
+    if (cached !== undefined) return cached;
+    const pending = (async () => {
+      let text: string;
+      if (file === 'assets/register-sw.js') {
+        text = REGISTER_SW_JS;
+      } else {
+        const body = (await assets.get(file.slice('assets/'.length)))?.body;
+        if (body === undefined) return undefined;
+        text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+      }
+      return text.split(/\r\n|[\n\r\u2028\u2029]/u).map((line) => line.length);
+    })();
+    viewerBounds.set(key, pending);
+    try {
+      const bounds = await pending;
+      if (bounds === undefined) viewerBounds.delete(key);
+      return bounds;
+    } catch (error) {
+      viewerBounds.delete(key);
+      throw error;
+    }
+  }
+
   async function apiRoute(
     rest: readonly string[],
     request: Request,
@@ -610,31 +665,35 @@ export function createApp(options: AppOptions = {}): RelicApp {
         const candidate = parseClientReport(input);
         if (candidate === null) return refuse('invalid_error_report');
 
+        if (
+          candidate.source === 'viewer' &&
+          (config.revision === undefined ||
+            candidate.revision !== config.revision)
+        ) {
+          return refuse('invalid_error_report');
+        }
+        const key = rateLimitKey(
+          'error-report',
+          errorReportIp(request, config)
+        );
+        const earlyRefusal = errorReportQuota(key, clock());
+        if (earlyRefusal !== undefined) return earlyRefusal;
+
         let report = candidate;
         if (candidate.source === 'viewer') {
-          if (
-            config.revision === undefined ||
-            candidate.revision !== config.revision
-          ) {
-            return refuse('invalid_error_report');
-          }
-          const linesByFile = new Map<string, string[]>();
+          const linesByFile = new Map<string, readonly number[]>();
           for (const frame of candidate.frames) {
             if (linesByFile.has(frame.file)) continue;
-            const body =
-              frame.file === 'assets/register-sw.js'
-                ? new TextEncoder().encode(REGISTER_SW_JS)
-                : (await assets.get(frame.file.slice('assets/'.length)))?.body;
-            if (body === undefined) return refuse('invalid_error_report');
-            const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
-            linesByFile.set(frame.file, text.split(/\r\n|[\n\r\u2028\u2029]/u));
+            const bounds = await viewerAssetBounds(frame.file);
+            if (bounds === undefined) return refuse('invalid_error_report');
+            linesByFile.set(frame.file, bounds);
           }
           report = {
             ...candidate,
             frames: candidate.frames.filter((frame) => {
-              const line = linesByFile.get(frame.file)?.[frame.line - 1];
+              const length = linesByFile.get(frame.file)?.[frame.line - 1];
               // Stack columns are one-based; zero is allowed when unknown.
-              return line !== undefined && frame.column <= line.length + 1;
+              return length !== undefined && frame.column <= length + 1;
             }),
           };
         }
@@ -642,32 +701,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
         // No rejected input spends either budget. There is no await between
         // these checks and charges, so concurrent requests cannot overspend.
         const at = clock();
-        const key = rateLimitKey(
-          'error-report',
-          errorReportIp(request, config)
-        );
-        const perIp = errorReportLimiter.peek(
-          key,
-          config.errorReportRateLimit,
-          at
-        );
-        if (!perIp.allowed) {
-          return refuse('error_report_rate_limited', {
-            retry_after_seconds: perIp.retryAfterSeconds,
-          });
-        }
-        if (
-          errorReportGlobalWindow !== undefined &&
-          at < errorReportGlobalWindow.resetAt &&
-          errorReportGlobalWindow.count >=
-            config.errorReportGlobalRateLimit.limit
-        ) {
-          return refuse('error_report_rate_limited', {
-            retry_after_seconds: Math.ceil(
-              (errorReportGlobalWindow.resetAt - at) / 1000
-            ),
-          });
-        }
+        const finalRefusal = errorReportQuota(key, at);
+        if (finalRefusal !== undefined) return finalRefusal;
         errorReportLimiter.check(key, config.errorReportRateLimit, at);
         if (
           errorReportGlobalWindow === undefined ||
