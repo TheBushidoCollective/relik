@@ -17,9 +17,8 @@ import { proveRegression, type TestRun } from '../src/repro.ts';
 let scratch: string | undefined;
 try {
   if (
-    (process.argv.length !== 5 && process.argv.length !== 6) ||
-    process.argv[4] !== '--full-verify-passed' ||
-    (process.argv.length === 6 && process.argv[5] !== '--fixture') ||
+    (process.argv.length !== 4 && process.argv.length !== 5) ||
+    (process.argv.length === 5 && process.argv[4] !== '--fixture') ||
     !process.env.GITHUB_WORKSPACE ||
     !process.env.RUNNER_TEMP
   )
@@ -41,7 +40,7 @@ try {
     recursive: true,
     dereference: false,
   });
-  if (process.argv[5] === '--fixture') {
+  if (process.argv[4] === '--fixture') {
     const fixture = join(
       process.env.GITHUB_WORKSPACE,
       'packages/relic-ops/fixtures/autofix/canary.ts'
@@ -181,7 +180,6 @@ try {
       tests: summary.tests,
       baselineFailures: baselineResult.failed,
       passed: fixedResult.passed,
-      fullVerify: true,
     })}\n`,
     { mode: 0o600, flag: 'wx' }
   );

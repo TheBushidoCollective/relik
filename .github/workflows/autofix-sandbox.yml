@@ -194,36 +194,17 @@ jobs:
           mkdir -m 700 "$RUNNER_TEMP/autofix-safe"
           printf '%s' "$PATCH" | base64 -d > "$RUNNER_TEMP/autofix-safe/patch.diff"
           printf '%s' "$METADATA" | base64 -d > "$RUNNER_TEMP/autofix-safe/metadata.json"
-      - name: Verify exact patch and run full verify
+      - name: Verify patch and run targeted replay
         env:
           FIXTURE: ${{ inputs.fixture }}
         run: |
           set -euo pipefail
           bun packages/relic-ops/bin/autofix-check-patch.ts verify "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-safe/metadata.json"
-          git clone --no-local --no-hardlinks "$GITHUB_WORKSPACE" "$RUNNER_TEMP/autofix-verify-work" >/dev/null 2>&1
-          cd "$RUNNER_TEMP/autofix-verify-work"
-          bun install --frozen-lockfile >/dev/null
-          if [[ "$FIXTURE" == regression ]]; then
-            cp "$GITHUB_WORKSPACE/packages/relic-ops/fixtures/autofix/canary.ts" packages/relic-format/src/autofix-canary.ts
-            git add -f packages/relic-format/src/autofix-canary.ts
-          fi
-          git -c core.hooksPath=/dev/null apply --check "$RUNNER_TEMP/autofix-safe/patch.diff"
-          git -c core.hooksPath=/dev/null apply --index "$RUNNER_TEMP/autofix-safe/patch.diff"
-          env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_CACHE_URL -u ACTIONS_RESULTS_URL \
-            -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
-            -u GITHUB_TOKEN -u GH_TOKEN -u GITHUB_ENV -u GITHUB_OUTPUT -u GITHUB_STEP_SUMMARY \
-            env -i PATH="$PATH" HOME="$HOME" CI=true GITHUB_WORKSPACE="$PWD" \
-            mise exec node@24.15.0 -- mise run verify >/dev/null 2>&1
-      - name: Record fixed regression result without network
-        env:
-          FIXTURE: ${{ inputs.fixture }}
-        run: |
-          set -euo pipefail
           mkdir -m 700 "$RUNNER_TEMP/autofix-result"
           if [[ "$FIXTURE" == regression ]]; then
-            bun packages/relic-ops/bin/autofix-repro.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-result/result.json" --full-verify-passed --fixture
+            bun packages/relic-ops/bin/autofix-repro.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-result/result.json" --fixture
           else
-            bun packages/relic-ops/bin/autofix-repro.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-result/result.json" --full-verify-passed
+            bun packages/relic-ops/bin/autofix-repro.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-result/result.json"
           fi
       - name: Upload fixed test result only
         uses: actions/upload-artifact@v4

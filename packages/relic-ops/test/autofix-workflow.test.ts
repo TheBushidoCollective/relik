@@ -1,6 +1,9 @@
 import { expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
-import { guardWorkflows } from '../bin/autofix-workflow-guard.ts';
+import {
+  guardReplaySource,
+  guardWorkflows,
+} from '../bin/autofix-workflow-guard.ts';
 
 const reusable = await readFile(
   new URL('../../../.github/workflows/autofix.yml', import.meta.url),
@@ -22,6 +25,10 @@ const canary = await readFile(
   new URL('../../../.github/workflows/autofix-canary.yml', import.meta.url),
   'utf8'
 );
+const replaySource = await readFile(
+  new URL('../bin/autofix-repro.ts', import.meta.url),
+  'utf8'
+);
 const guard = (
   r = reusable,
   c = caller,
@@ -31,6 +38,33 @@ const guard = (
 ) => guardWorkflows(r, c, s, p, k);
 test('workflow permissions, artifact paths and trust boundaries are pinned', () => {
   expect(() => guard()).not.toThrow();
+});
+
+test('main-ref test job never runs patched code on its host', () => {
+  expect(sandbox).not.toContain('mise exec node@24.15.0 -- mise run verify');
+  expect(sandbox).not.toContain('cd "$RUNNER_TEMP/autofix-verify-work"');
+});
+
+test('replay wrapper refuses mutations that expose the host or credentials', () => {
+  expect(() => guardReplaySource(replaySource)).not.toThrow();
+  const mutants = [
+    replaySource.replace(
+      "'--network',\n          'none'",
+      "'--network',\n          'host'"
+    ),
+    replaySource.replace(
+      "'--env',\n          'LANG=C.UTF-8'",
+      "'--env',\n          'GITHUB_TOKEN=x'"
+    ),
+    replaySource.replace("'--read-only'", "'--privileged'"),
+    replaySource.replace("'docker',", "'bash',"),
+    replaySource.replace('! -S /var/run/docker.sock', 'true'),
+    replaySource.replace('! command -v sudo', 'true'),
+  ];
+  for (const mutant of mutants) {
+    expect(mutant).not.toBe(replaySource);
+    expect(() => guardReplaySource(mutant)).toThrow();
+  }
 });
 const mutations: Array<[string, (s: string) => string]> = [
   [
@@ -69,15 +103,35 @@ const mutations: Array<[string, (s: string) => string]> = [
   ],
   ['test cache', (s) => s.replaceAll('cache: false', 'cache: true')],
   [
-    'test cache token',
-    (s) => s.replace('-u ACTIONS_CACHE_URL', '-u NOT_THE_CACHE_URL'),
-  ],
-  [
-    'test artifact token',
+    'host executes patched tests',
     (s) =>
       s.replace(
-        '-u ACTIONS_RUNTIME_TOKEN -u ACTIONS_CACHE_URL',
-        '-u NOT_THE_RUNTIME_TOKEN -u ACTIONS_CACHE_URL'
+        '      - name: Verify patch and run targeted replay\n',
+        '      - name: Execute patch on host\n        run: bun packages/relic-viewer/test/evil.test.ts\n      - name: Verify patch and run targeted replay\n'
+      ),
+  ],
+  [
+    'host executes patched script in replay step',
+    (s) =>
+      s.replace(
+        '          mkdir -m 700 "$RUNNER_TEMP/autofix-result"\n',
+        '          mkdir -m 700 "$RUNNER_TEMP/autofix-result"\n          bun "$RUNNER_TEMP/autofix-work/packages/relic-viewer/src/evil.ts"\n'
+      ),
+  ],
+  [
+    'host executes patched script in scan step',
+    (s) =>
+      s.replace(
+        '          bun packages/relic-ops/bin/autofix-scan.ts ',
+        '          bun "$RUNNER_TEMP/autofix-work/packages/relic-viewer/src/evil.ts"\n          bun packages/relic-ops/bin/autofix-scan.ts '
+      ),
+  ],
+  [
+    'host executes patched script while restoring canary',
+    (s) =>
+      s.replace(
+        '          mkdir -m 700 "$RUNNER_TEMP/autofix-safe"\n',
+        '          mkdir -m 700 "$RUNNER_TEMP/autofix-safe"\n          bun "$RUNNER_TEMP/autofix-work/packages/relic-viewer/src/evil.ts"\n'
       ),
   ],
   [

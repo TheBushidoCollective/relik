@@ -63,10 +63,8 @@ try {
       'tests',
       'baselineFailures',
       'passed',
-      'fullVerify',
     ]) ||
     result.status !== 'pass' ||
-    result.fullVerify !== true ||
     result.sha256 !== createHash('sha256').update(bytes).digest('hex') ||
     !Array.isArray(result.tests) ||
     JSON.stringify(result.tests) !== JSON.stringify(summary.tests) ||
@@ -78,8 +76,9 @@ try {
     throw new Error('proof');
   const lines = [
     'GitHub automatic PR checks do not run for bot-created PRs.',
-    `Full verify passed for patch SHA-256 \`${result.sha256}\`: https://github.com/TheBushidoCollective/relik/actions/runs/${runId}`,
-    'A human must close and reopen the PR, or push to its branch, to start normal checks before merging.',
+    `Targeted regression replay passed for patch SHA-256 \`${result.sha256}\`: https://github.com/TheBushidoCollective/relik/actions/runs/${runId}`,
+    'A human must close and reopen the PR, or push to its branch, to start full CI on the PR ref.',
+    'A human must not merge until full CI is green.',
     '',
     `Fixes error report #${number} (${fingerprint}).`,
     '',

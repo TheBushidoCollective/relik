@@ -31,7 +31,6 @@ test('body starts with the bot-check limitation, exact verified hash, run link a
       tests: [path],
       baselineFailures: 1,
       passed: 1,
-      fullVerify: true,
     })}\n`
   );
   const run = spawnSync(
@@ -53,6 +52,10 @@ test('body starts with the bot-check limitation, exact verified hash, run link a
   const output = await readFile(body, 'utf8');
   const first = output.split('\n').slice(0, 9).join('\n');
   expect(first).toContain('automatic PR checks do not run');
+  expect(first).toContain('Targeted regression replay passed');
+  expect(first).toContain('must not merge');
+  expect(first).toContain('full CI');
+  expect(first).not.toContain('Full verify passed');
   expect(first).toContain(
     'https://github.com/TheBushidoCollective/relik/actions/runs/12345'
   );

@@ -92,6 +92,23 @@ export function guardWorkflows(
     same(test.permissions, { contents: 'read' }) && test.needs === 'sandbox'
   );
   const sandboxSteps = steps(sandbox);
+  requireIt(
+    sandboxSteps.map((step) => step.name ?? step.uses ?? step.id).join('|') ===
+      [
+        'actions/checkout@v4',
+        'jdx/mise-action@v2',
+        'Install trusted dependencies and build sandbox',
+        'Validate authenticated issue',
+        'google-github-actions/auth@v2',
+        'Fetch pinned context and credential',
+        'Prepare pinned context',
+        'Run isolated fixer',
+        'Extract and scan untrusted patch',
+        'Remove credential material',
+        'canary',
+        'Upload scanned patch only',
+      ].join('|')
+  );
   const fixer = stepByName(sandbox, 'Run isolated fixer');
   requireIt(
     !('env' in fixer) &&
@@ -113,6 +130,11 @@ export function guardWorkflows(
     typeof scan.run === 'string' &&
       scan.run.includes('autofix-scan.ts') &&
       scan.run.includes('autofix-check-canary.ts')
+  );
+  requireIt(
+    !/(?:^|[;&|]|\n)\s*(?:bun|node|bash|sh|python3|source|eval)\s+["']?\$RUNNER_TEMP\/autofix-work/.test(
+      scan.run
+    )
   );
   const upload = stepByName(sandbox, 'Upload scanned patch only');
   requireIt(
@@ -138,31 +160,62 @@ export function guardWorkflows(
   }
   const setup = testSteps.find((step) => step.uses === 'jdx/mise-action@v2');
   requireIt(setup && object(setup.with).cache === false);
-  const verify = stepByName(test, 'Verify exact patch and run full verify');
-  requireIt(typeof verify.run === 'string');
-  for (const variable of [
-    'ACTIONS_RUNTIME_TOKEN',
-    'ACTIONS_CACHE_URL',
-    'ACTIONS_RESULTS_URL',
-    'ACTIONS_ID_TOKEN_REQUEST_URL',
-    'ACTIONS_ID_TOKEN_REQUEST_TOKEN',
-    'GITHUB_TOKEN',
-    'GH_TOKEN',
-  ])
-    requireIt(verify.run.includes(`-u ${variable}`));
   requireIt(
-    verify.run.includes('env -i ') &&
-      verify.run.includes('mise exec node@24.15.0 -- mise run verify')
+    testSteps.map((step) => step.name ?? step.uses).join('|') ===
+      [
+        'actions/checkout@v4',
+        'jdx/mise-action@v2',
+        'Install trusted dependencies and build sandbox',
+        'actions/download-artifact@v4',
+        'Restore scanned canary patch',
+        'Verify patch and run targeted replay',
+        'Upload fixed test result only',
+      ].join('|')
   );
-  const result = stepByName(
-    test,
-    'Record fixed regression result without network'
+  const restore = stepByName(test, 'Restore scanned canary patch');
+  requireIt(restore.if === "inputs.fixture == 'regression'");
+  requireIt(
+    same(restore.env, {
+      PATCH: `\${{ needs.sandbox.outputs.patch }}`,
+      METADATA: `\${{ needs.sandbox.outputs.metadata }}`,
+    })
+  );
+  requireIt(typeof restore.run === 'string');
+  requireIt(
+    restore.run
+      .trim()
+      .split('\n')
+      .map((line) => line.trim())
+      .join('\n') ===
+      [
+        'set -euo pipefail',
+        'mkdir -m 700 "$RUNNER_TEMP/autofix-safe"',
+        'printf \'%s\' "$PATCH" | base64 -d > "$RUNNER_TEMP/autofix-safe/patch.diff"',
+        'printf \'%s\' "$METADATA" | base64 -d > "$RUNNER_TEMP/autofix-safe/metadata.json"',
+      ].join('\n')
+  );
+  const replay = stepByName(test, 'Verify patch and run targeted replay');
+  requireIt(same(replay.env, { FIXTURE: `\${{ inputs.fixture }}` }));
+  requireIt(typeof replay.run === 'string');
+  requireIt(
+    replay.run
+      .trim()
+      .split('\n')
+      .map((line) => line.trim())
+      .join('\n') ===
+      [
+        'set -euo pipefail',
+        'bun packages/relic-ops/bin/autofix-check-patch.ts verify "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-safe/metadata.json"',
+        'mkdir -m 700 "$RUNNER_TEMP/autofix-result"',
+        'if [[ "$FIXTURE" == regression ]]; then',
+        'bun packages/relic-ops/bin/autofix-repro.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-result/result.json" --fixture',
+        'else',
+        'bun packages/relic-ops/bin/autofix-repro.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/autofix-result/result.json"',
+        'fi',
+      ].join('\n')
   );
   const resultUpload = stepByName(test, 'Upload fixed test result only');
-  requireIt(
-    testSteps.indexOf(verify) < testSteps.indexOf(result) &&
-      testSteps.indexOf(result) < testSteps.indexOf(resultUpload)
-  );
+  requireIt(testSteps.indexOf(replay) < testSteps.indexOf(resultUpload));
   exactPath(resultUpload, [`\${{ runner.temp }}/autofix-result/result.json`]);
   const proposalJobs = object(proposal.jobs);
   requireIt(Object.keys(proposalJobs).join(',') === 'propose');
@@ -228,5 +281,32 @@ export function guardWorkflows(
       fingerprint: '0000000000000000',
       fixture: 'regression',
     })
+  );
+}
+
+/** The host may apply patch data, but only the networkless container runs tests. */
+export function guardReplaySource(source: string): void {
+  requireIt((source.match(/\bspawnSync\s*\(/g) ?? []).length === 1);
+  requireIt(/spawnSync\(\s*'docker'/.test(source));
+  requireIt((source.match(/\bexecFileSync\s*\(/g) ?? []).length === 2);
+  requireIt((source.match(/execFileSync\(\s*'git'/g) ?? []).length === 2);
+  for (const pattern of [
+    /'--network',\s*'none'/,
+    /'--read-only'/,
+    /'--cap-drop',\s*'ALL'/,
+    /'no-new-privileges'/,
+    /'--user'/,
+    /! -S \/var\/run\/docker\.sock/,
+    /! command -v sudo/,
+    /ACTIONS_\|GITHUB_TOKEN\$\|GH_TOKEN\$/,
+    /exec timeout --kill-after=5s 300s bun test/,
+  ])
+    requireIt(pattern.test(source));
+  requireIt((source.match(/'--env'/g) ?? []).length === 2);
+  requireIt(
+    source.includes("'HOME=/home/agent'") && source.includes("'LANG=C.UTF-8'")
+  );
+  requireIt(
+    !/'--privileged'|'--network=host'|dst=\/var\/run\/docker\.sock/.test(source)
   );
 }
