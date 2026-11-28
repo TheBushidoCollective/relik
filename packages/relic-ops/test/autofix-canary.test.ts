@@ -3,11 +3,14 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const promptTool = new URL('../bin/autofix-fixture.ts', import.meta.url)
-  .pathname;
-const policyTool = new URL('../bin/autofix-check-canary.ts', import.meta.url)
-  .pathname;
+const promptTool = fileURLToPath(
+  new URL('../bin/autofix-fixture.ts', import.meta.url)
+);
+const policyTool = fileURLToPath(
+  new URL('../bin/autofix-check-canary.ts', import.meta.url)
+);
 const source = 'packages/relic-format/src/autofix-canary.ts';
 const regression = 'packages/relic-format/test/autofix-canary.test.ts';
 let temp: string;

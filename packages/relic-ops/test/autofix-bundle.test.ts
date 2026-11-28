@@ -5,13 +5,14 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const checker = new URL('../bin/autofix-verify-bundle.py', import.meta.url)
-  .pathname;
-const list = new URL(
-  '../../../.github/omp-context-members.txt',
-  import.meta.url
-).pathname;
+const checker = fileURLToPath(
+  new URL('../bin/autofix-verify-bundle.py', import.meta.url)
+);
+const list = fileURLToPath(
+  new URL('../../../.github/omp-context-members.txt', import.meta.url)
+);
 let dir: string;
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'relik-bundle-test-'));
@@ -42,6 +43,25 @@ async function run(kind: string, wrongPin = false) {
   };
 }
 describe('pinned bundle boundary', () => {
+  test('pins the reviewed bundle and its unchanged eight-member allowlist', async () => {
+    const pin = await readFile(
+      new URL('../../../.github/omp-context.pin', import.meta.url),
+      'utf8'
+    );
+    expect(pin.trim()).toBe(
+      '9fa8832a5b1c8eb134d68b397bc07262c9719f20467eafb8c3dcffd57d1b4e92'
+    );
+    expect((await readFile(list, 'utf8')).trim().split('\n')).toEqual([
+      'bin/install-omp',
+      'bin/prepare-relik.sh',
+      'memory/relik/snapshot.db',
+      'projects/relik/RULES.md',
+      'projects/relik/bundle-files.txt',
+      'projects/relik/empty-agent.db',
+      'projects/relik/runtime.py',
+      'projects/relik/settings.json',
+    ]);
+  });
   test('extracts the exact allowlist only after hash verification', async () => {
     const { result, target } = await run('valid');
     expect(result.status).toBe(0);

@@ -4,9 +4,12 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 let dir: string;
-const script = new URL('../bin/autofix-pr-body.ts', import.meta.url).pathname;
+const script = fileURLToPath(
+  new URL('../bin/autofix-pr-body.ts', import.meta.url)
+);
 const path = 'packages/relic-viewer/test/regression.test.ts';
 const patch = `diff --git a/${path} b/${path}\nindex 3367afd..3e75765 100644\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
 const sha256 = createHash('sha256').update(patch).digest('hex');

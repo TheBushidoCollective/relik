@@ -15,7 +15,7 @@ const SECRET_PATTERNS = [
 
 // This digest is already public in .github/omp-context.pin.
 const ALLOWED_LONG_HASHES: Record<string, true> = {
-  fcc6fd42293e48d2fdbf96af04258c71d3fe9f03d5932e67a53a7a2e44f716bd: true,
+  '9fa8832a5b1c8eb134d68b397bc07262c9719f20467eafb8c3dcffd57d1b4e92': true,
 };
 const SECRET_WINDOW = 16;
 const MAX_CREDENTIAL_VALUE = 16_384;
@@ -37,11 +37,13 @@ function safePath(path: string): boolean {
         part !== '' &&
         part !== '.' &&
         !/^\.(?:git|editorconfig|omp)/i.test(part) &&
-        !/^omp-(?:agent|runtime)$/i.test(part)
+        !/^omp-(?:agent|runtime)(?:$|-)/i.test(part)
     ) &&
     !/^error-report/i.test(name) &&
     !/\.(?:patch|diff)$/i.test(name) &&
-    !/(?:\.db(?:-wal|-shm)?|\.sqlite(?:3)?(?:-wal|-shm)?)$/i.test(name) &&
+    !/(?:\.db(?:-wal|-shm|-journal)?|\.sqlite(?:3)?(?:-wal|-shm|-journal)?)$/i.test(
+      name
+    ) &&
     !/^(?:package\.json|bun\.lockb?|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml)$/i.test(
       name
     )

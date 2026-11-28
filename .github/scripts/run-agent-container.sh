@@ -8,10 +8,28 @@ prompt="$2"
 omp="$3"
 bun="$4"
 agent="$RUNNER_TEMP/omp-agent"
+agent_copy="$RUNNER_TEMP/omp-agent-writable"
 [[ "$work" == "$RUNNER_TEMP/autofix-work" && "$prompt" == "$RUNNER_TEMP/autofix-prompt" ]] || exit 1
 [[ "$omp" == "$RUNNER_TEMP/omp-18.12.6/omp" && -x "$omp" && -x "$bun" ]] || exit 1
 [[ -d "$work/.git" && -d "$agent" && -f "$prompt" ]] || exit 1
 [[ ! -L "$work" && ! -L "$agent" && ! -L "$prompt" ]] || exit 1
+
+# Verify the prepared host directory before copying it. Its config refers to
+# $agent, so the writable copy is mounted at that exact path in the container.
+clean_env=(env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN
+  -u ACTIONS_RUNTIME_TOKEN -u OMP_VAULT_ACCESS_TOKEN -u GOOGLE_APPLICATION_CREDENTIALS
+  -u CLOUDSDK_AUTH_ACCESS_TOKEN_FILE -u GITHUB_TOKEN -u GH_TOKEN
+  -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u ANTHROPIC_OAUTH_TOKEN)
+"${clean_env[@]}" python3 "$RUNNER_TEMP/omp-runtime/runtime.py" verify \
+  --agent-dir "$agent" --runtime-dir "$RUNNER_TEMP/omp-runtime" --require-credential
+[[ ! -e "$agent_copy" && ! -L "$agent_copy" ]] || { echo 'Autofix agent copy refused' >&2; exit 1; }
+mkdir -m 700 "$agent_copy"
+for name in RULES.md config.yml mnemopi.db agent.db; do
+  [[ -f "$agent/$name" && ! -L "$agent/$name" ]] || { echo 'Autofix agent copy refused' >&2; exit 1; }
+  chmod 0400 "$agent/$name"
+  install -m 0600 "$agent/$name" "$agent_copy/$name"
+done
+chmod 0500 "$agent"
 
 network="relik-autofix-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$"
 chain="RLK$$"
@@ -67,7 +85,7 @@ if ! timeout --kill-after=5s 45m docker run --rm --name "$container" \
   --ulimit fsize=1048576:1048576 --network "$network" \
   --tmpfs /tmp:rw,nosuid,nodev,size=256m --tmpfs /home/agent:rw,nosuid,nodev,size=128m \
   --mount "type=bind,src=$work,dst=/workspace" \
-  --mount "type=bind,src=$agent,dst=$agent,readonly" \
+  --mount "type=bind,src=$agent_copy,dst=$agent" \
   --mount "type=bind,src=$prompt,dst=/prompt,readonly" \
   --mount "type=bind,src=$omp,dst=/usr/local/bin/omp,readonly" \
   --mount "type=bind,src=$bun,dst=/usr/local/bin/bun,readonly" \

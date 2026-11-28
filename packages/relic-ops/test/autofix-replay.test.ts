@@ -10,8 +10,11 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const script = new URL('../bin/autofix-repro.ts', import.meta.url).pathname;
+const script = fileURLToPath(
+  new URL('../bin/autofix-repro.ts', import.meta.url)
+);
 const source = 'packages/relic-viewer/src/example.ts';
 const originalTest = 'packages/relic-viewer/test/existing.test.ts';
 const regressionTest = 'packages/relic-viewer/test/new.test.ts';

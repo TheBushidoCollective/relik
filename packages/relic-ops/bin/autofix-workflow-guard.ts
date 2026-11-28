@@ -122,7 +122,7 @@ export function guardWorkflows(
         'jdx/mise-action@v2',
         'Install trusted dependencies and build sandbox',
         'Validate authenticated issue',
-        'google-github-actions/auth@v2',
+        'Exchange vault identity',
         'Fetch pinned context and credential',
         'Prepare pinned context',
         'Run isolated fixer',
@@ -131,6 +131,47 @@ export function guardWorkflows(
         'canary',
         'Upload scanned patch only',
       ].join('|')
+  );
+  requireIt(
+    !sandboxSteps.some(
+      (step) =>
+        typeof step.uses === 'string' &&
+        step.uses.startsWith('google-github-actions/auth@')
+    )
+  );
+  const vault = stepByName(sandbox, 'Exchange vault identity');
+  requireIt(
+    Object.keys(vault).sort().join(',') === 'env,name,run' &&
+      same(vault.env, {
+        OMP_VAULT_WIF_PROVIDER: `\${{ vars.OMP_VAULT_WIF_PROVIDER }}`,
+      }) &&
+      vault.run === 'python3 .github/scripts/autofix-vault-token.py'
+  );
+  const fetchContext = stepByName(
+    sandbox,
+    'Fetch pinned context and credential'
+  );
+  requireIt(
+    Object.keys(fetchContext).sort().join(',') === 'env,name,run' &&
+      same(fetchContext.env, {
+        VAULT_BUCKET: `\${{ vars.OMP_VAULT_BUCKET }}`,
+      }) &&
+      typeof fetchContext.run === 'string' &&
+      fetchContext.run.trimEnd() ===
+        [
+          'set -euo pipefail',
+          'trap \'rm -f -- "$RUNNER_TEMP/autofix-curl.conf"\' EXIT',
+          '[[ "$VAULT_BUCKET" =~ ^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$ ]]',
+          'pin="$(tr -d \'\\n\' < .github/omp-context.pin)"',
+          '[[ "$pin" =~ ^[0-9a-f]{64}$ ]]',
+          'config="$RUNNER_TEMP/autofix-curl.conf"',
+          'curl --fail --silent --config "$config" --max-filesize 4194304 \\',
+          '  --output "$RUNNER_TEMP/relik-context.tar.gz" \\',
+          '  "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fcontext%2F$pin.tar.gz?alt=media" || { echo \'Vault download refused\' >&2; exit 1; }',
+          'curl --fail --silent --config "$config" --max-filesize 1048576 \\',
+          '  --output "$RUNNER_TEMP/relik-agent.db" \\',
+          '  "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fagent.db?alt=media" || { echo \'Vault download refused\' >&2; exit 1; }',
+        ].join('\n')
   );
   const fixer = stepByName(sandbox, 'Run isolated fixer');
   requireIt(
@@ -153,6 +194,11 @@ export function guardWorkflows(
     typeof scan.run === 'string' &&
       scan.run.includes('autofix-scan.ts') &&
       scan.run.includes('autofix-check-canary.ts')
+  );
+  requireIt(
+    scan.run.includes(
+      'autofix-scan.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/omp-agent/agent.db" "$RUNNER_TEMP/omp-agent-writable/agent.db"'
+    )
   );
   requireIt(
     scan.run.includes('GIT_TERMINAL_PROMPT=0') &&
@@ -178,6 +224,11 @@ export function guardWorkflows(
         'rm -rf -- "$RUNNER_TEMP/autofix-work" "$RUNNER_TEMP/autofix-objects"'
       ) &&
       cleanup.run.includes("|| { echo 'Autofix cleanup refused' >&2; exit 1; }")
+  );
+  requireIt(
+    cleanup.run.includes('rm -rf -- "$RUNNER_TEMP/omp-agent-writable"') &&
+      cleanup.run.includes('chmod u+w "$RUNNER_TEMP/omp-agent"') &&
+      cleanup.run.includes('"$RUNNER_TEMP/autofix-curl.conf"')
   );
   const install = stepByName(
     sandbox,
@@ -423,7 +474,14 @@ export function guardLauncherSource(source: string): void {
     '--security-opt no-new-privileges',
     '--pids-limit 256',
     '--ulimit fsize=1048576:1048576',
-    'src=$agent,dst=$agent,readonly',
+    'agent_copy="$RUNNER_TEMP/omp-agent-writable"',
+    'mkdir -m 700 "$agent_copy"',
+    'chmod 0400 "$agent/$name"',
+    'install -m 0600 "$agent/$name" "$agent_copy/$name"',
+    'chmod 0500 "$agent"',
+    '--mount "type=bind,src=$agent_copy,dst=$agent"',
+    'python3 "$RUNNER_TEMP/omp-runtime/runtime.py" verify',
+    '--agent-dir "$agent" --runtime-dir "$RUNNER_TEMP/omp-runtime" --require-credential',
     '! -S /var/run/docker.sock',
     '! command -v sudo',
     '[[ $$ == 1',
@@ -432,6 +490,20 @@ export function guardLauncherSource(source: string): void {
     "' >/dev/null 2>&1",
   ])
     requireIt(source.includes(required));
+  const verified = source.indexOf(
+    'python3 "$RUNNER_TEMP/omp-runtime/runtime.py" verify'
+  );
+  const copied = source.indexOf(
+    'install -m 0600 "$agent/$name" "$agent_copy/$name"'
+  );
+  const mounted = source.indexOf(
+    '--mount "type=bind,src=$agent_copy,dst=$agent"'
+  );
+  requireIt(verified >= 0 && copied > verified && mounted > copied);
+  requireIt(
+    !source.includes('--agent-dir "$agent_copy"') &&
+      !/src=\$agent(?:\/|,)/.test(source)
+  );
   requireIt(
     !/--env\s+["']?(?:ACTIONS_|GITHUB_TOKEN|GH_TOKEN|OMP_VAULT_)/.test(source)
   );

@@ -68,6 +68,46 @@ test('replay wrapper refuses mutations that expose the host or credentials', () 
 });
 const mutations: Array<[string, (s: string) => string]> = [
   [
+    'sandbox authentication action',
+    (s) =>
+      s.replace(
+        '      - name: Exchange vault identity\n',
+        '      - name: Exchange vault identity\n        uses: google-github-actions/auth@v2\n'
+      ),
+  ],
+  [
+    'untrusted vault exchange source',
+    (s) =>
+      s.replace(
+        'run: python3 .github/scripts/autofix-vault-token.py',
+        'run: python3 "$RUNNER_TEMP/autofix-work/.github/scripts/autofix-vault-token.py"'
+      ),
+  ],
+  [
+    'wrong vault provider',
+    (s) =>
+      s.replace(
+        `OMP_VAULT_WIF_PROVIDER: \${{ vars.OMP_VAULT_WIF_PROVIDER }}`,
+        `OMP_VAULT_WIF_PROVIDER: \${{ vars.WRONG_PROVIDER }}`
+      ),
+  ],
+  [
+    'vault credential printed',
+    (s) =>
+      s.replace(
+        '          config="$RUNNER_TEMP/autofix-curl.conf"\n',
+        '          config="$RUNNER_TEMP/autofix-curl.conf"\n          cat "$config"\n'
+      ),
+  ],
+  [
+    'vault credential cleanup removed',
+    (s) =>
+      s.replace(
+        '"$RUNNER_TEMP/autofix-curl.conf" "$RUNNER_TEMP/autofix-index"',
+        '"$RUNNER_TEMP/autofix-index"'
+      ),
+  ],
+  [
     'environment',
     (s) =>
       s.replace(
@@ -286,6 +326,21 @@ test('privileged checkout, scan root and disposable git objects are guarded', ()
   );
   expect(changed).not.toBe(proposer);
   expect(() => guard(reusable, caller, sandbox, changed)).toThrow();
+});
+
+test('workflow scans both original and final writable credentials and always cleans both', () => {
+  const original = '"$RUNNER_TEMP/omp-agent/agent.db"';
+  const writable = '"$RUNNER_TEMP/omp-agent-writable/agent.db"';
+  const copy = '"$RUNNER_TEMP/omp-agent-writable"';
+  expect(sandbox).toContain(`${original} ${writable}`);
+  expect(sandbox).toContain(`rm -rf -- ${copy}`);
+  for (const changed of [
+    sandbox.replace(`${original} ${writable}`, original),
+    sandbox.replace(`rm -rf -- ${copy}`, 'true'),
+  ]) {
+    expect(changed).not.toBe(sandbox);
+    expect(() => guard(reusable, caller, changed)).toThrow();
+  }
 });
 
 test('canary has no proposer, repository writes or path into proposal', () => {

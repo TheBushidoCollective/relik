@@ -77,34 +77,26 @@ jobs:
           else
             exit 1
           fi
-      - id: vault
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.OMP_VAULT_WIF_PROVIDER }}
-          service_account: ${{ vars.OMP_VAULT_WIF_SERVICE_ACCOUNT }}
-          token_format: access_token
-          create_credentials_file: false
+      - name: Exchange vault identity
+        env:
+          OMP_VAULT_WIF_PROVIDER: ${{ vars.OMP_VAULT_WIF_PROVIDER }}
+        run: python3 .github/scripts/autofix-vault-token.py
       - name: Fetch pinned context and credential
         env:
-          ACCESS_TOKEN: ${{ steps.vault.outputs.access_token }}
           VAULT_BUCKET: ${{ vars.OMP_VAULT_BUCKET }}
         run: |
           set -euo pipefail
-          umask 077
+          trap 'rm -f -- "$RUNNER_TEMP/autofix-curl.conf"' EXIT
           [[ "$VAULT_BUCKET" =~ ^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$ ]]
-          [[ "$ACCESS_TOKEN" =~ ^[A-Za-z0-9._-]+$ ]]
           pin="$(tr -d '\n' < .github/omp-context.pin)"
           [[ "$pin" =~ ^[0-9a-f]{64}$ ]]
           config="$RUNNER_TEMP/autofix-curl.conf"
-          trap 'rm -f -- "$config"' EXIT
-          printf 'header = "Authorization: Bearer %s"\n' "$ACCESS_TOKEN" > "$config"
-          unset ACCESS_TOKEN
-          curl --fail --silent --show-error --config "$config" --max-filesize 4194304 \
+          curl --fail --silent --config "$config" --max-filesize 4194304 \
             --output "$RUNNER_TEMP/relik-context.tar.gz" \
-            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fcontext%2F$pin.tar.gz?alt=media"
-          curl --fail --silent --show-error --config "$config" --max-filesize 1048576 \
+            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fcontext%2F$pin.tar.gz?alt=media" || { echo 'Vault download refused' >&2; exit 1; }
+          curl --fail --silent --config "$config" --max-filesize 1048576 \
             --output "$RUNNER_TEMP/relik-agent.db" \
-            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fagent.db?alt=media"
+            "https://storage.googleapis.com/storage/v1/b/$VAULT_BUCKET/o/relik%2Fagent.db?alt=media" || { echo 'Vault download refused' >&2; exit 1; }
       - name: Prepare pinned context
         run: |
           set -euo pipefail
@@ -134,7 +126,7 @@ jobs:
           git -c core.hooksPath=/dev/null --git-dir="$GITHUB_WORKSPACE/.git" --work-tree="$RUNNER_TEMP/autofix-work" add -A -- . >/dev/null 2>&1 || { echo 'Autofix patch extraction refused' >&2; exit 1; }
           git -c core.hooksPath=/dev/null --git-dir="$GITHUB_WORKSPACE/.git" --work-tree="$RUNNER_TEMP/autofix-work" \
             diff --cached --binary --no-ext-diff --no-textconv "$base" > "$RUNNER_TEMP/autofix-safe/patch.diff" 2>/dev/null || { echo 'Autofix patch extraction refused' >&2; exit 1; }
-          bun packages/relic-ops/bin/autofix-scan.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/omp-agent/agent.db"
+          bun packages/relic-ops/bin/autofix-scan.ts "$RUNNER_TEMP/autofix-safe/patch.diff" "$RUNNER_TEMP/omp-agent/agent.db" "$RUNNER_TEMP/omp-agent-writable/agent.db"
           if [[ "$FIXTURE" == regression ]]; then
             bun packages/relic-ops/bin/autofix-check-canary.ts "$RUNNER_TEMP/autofix-safe/patch.diff"
           fi
@@ -142,6 +134,15 @@ jobs:
       - name: Remove credential material
         if: always()
         run: |
+          if [[ -e "$RUNNER_TEMP/omp-agent-writable" || -L "$RUNNER_TEMP/omp-agent-writable" ]]; then
+            [[ -d "$RUNNER_TEMP/omp-agent-writable" && ! -L "$RUNNER_TEMP/omp-agent-writable" ]] || { echo 'Autofix cleanup refused' >&2; exit 1; }
+            chmod u+rwx "$RUNNER_TEMP/omp-agent-writable" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
+            chmod -R u+rwX "$RUNNER_TEMP/omp-agent-writable" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
+            rm -rf -- "$RUNNER_TEMP/omp-agent-writable" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
+          fi
+          if [[ -d "$RUNNER_TEMP/omp-agent" && ! -L "$RUNNER_TEMP/omp-agent" ]]; then
+            chmod u+w "$RUNNER_TEMP/omp-agent" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
+          fi
           rm -rf -- "$RUNNER_TEMP/omp-agent" "$RUNNER_TEMP/omp-runtime" "$GITHUB_WORKSPACE/.omp-agent-context" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
           rm -rf -- "$RUNNER_TEMP/autofix-work" "$RUNNER_TEMP/autofix-objects" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
           rm -f -- "$RUNNER_TEMP/relik-agent.db" "$RUNNER_TEMP/relik-context.tar.gz" "$RUNNER_TEMP/autofix-curl.conf" "$RUNNER_TEMP/autofix-index" >/dev/null 2>&1 || { echo 'Autofix cleanup refused' >&2; exit 1; }
