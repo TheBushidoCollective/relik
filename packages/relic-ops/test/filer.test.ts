@@ -720,7 +720,9 @@ describe('logging transport', () => {
       return Response.json(
         bodies.length === 1
           ? { entries: [log(fixtures.server)], nextPageToken: 'next' }
-          : { entries: [log(fixtures.viewer)] }
+          : bodies.length === 2
+            ? { entries: [] }
+            : { entries: [log(fixtures.viewer)] }
       );
     };
     const values = await readLogEntries(
@@ -730,6 +732,9 @@ describe('logging transport', () => {
     assert.equal(values.length, 2);
     assert.deepEqual(bodies[0]?.resourceNames, [LOG_VIEW]);
     assert.equal(bodies[1]?.pageToken, 'next');
+    assert.equal(bodies.length, 3);
+    assert.match(String(bodies[0]?.filter), /source="server"/);
+    assert.match(String(bodies[2]?.filter), /source="viewer"/);
     assert.equal(headers[0]?.get('x-goog-user-project'), null);
     assert.equal(headers[0]?.get('authorization'), 'Bearer fake-token');
     const failure = async () => new Response('denied', { status: 403 });

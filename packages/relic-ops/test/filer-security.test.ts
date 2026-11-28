@@ -386,7 +386,7 @@ describe('filer provenance and stored-region authority', () => {
   });
 });
 
-test('filer retains known MCP counts when unknown builds share the fingerprint', async () => {
+test('continuity after reporter fix: filer retains known MCP counts when unknown builds share the fingerprint', async () => {
   const emitted: string[] = [];
   let elapsed = 0;
   const reporter = createErrorReporter({

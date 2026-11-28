@@ -1,7 +1,11 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { GitAuthority, validateEntries } from '../src/entries.ts';
 import { filerAuthorFromEnv, GitHubRest, MemoryGitHub } from '../src/github.ts';
-import { CloudLoggingTransport, readLogEntries } from '../src/logging.ts';
+import {
+  CloudLoggingTransport,
+  LOG_ENTRY_LIMIT_PER_SOURCE,
+  readLogEntries,
+} from '../src/logging.ts';
 import { applyPlan, planReports } from '../src/plan.ts';
 
 const args = process.argv.slice(2);
@@ -60,11 +64,21 @@ const entries: unknown =
   input === 'cloud'
     ? await readLogEntries(
         new CloudLoggingTransport(process.env.GOOGLE_ACCESS_TOKEN ?? ''),
-        new Date(since).toISOString()
+        new Date(since).toISOString(),
+        {
+          onClientTruncated: (retained) =>
+            console.warn(
+              JSON.stringify({ clientEntriesTruncatedAt: retained })
+            ),
+        }
       )
     : JSON.parse(await readFile(input, 'utf8'));
-if (!Array.isArray(entries) || entries.length > 50_000)
-  throw new Error('Entries must be an array of at most 50000 records');
+const maxEntries =
+  input === 'cloud'
+    ? LOG_ENTRY_LIMIT_PER_SOURCE * 2
+    : LOG_ENTRY_LIMIT_PER_SOURCE;
+if (!Array.isArray(entries) || entries.length > maxEntries)
+  throw new Error(`Entries must be an array of at most ${maxEntries} records`);
 const authority = new GitAuthority();
 const known = authority.knownSets();
 const checked = validateEntries(entries, authority, {

@@ -12,7 +12,7 @@ import {
   parseLoggedReport,
 } from '@relic/format/error-report';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
-import { diskAssets } from '@relic/server/src/assets.ts';
+import { diskAssets, REGISTER_SW_JS } from '@relic/server/src/assets.ts';
 import { createErrorReporter } from '@relic/server/src/error-report.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import { connectPipe } from '../../relic-mcp/src/cover/cdp.ts';
@@ -96,13 +96,39 @@ function clean(value: string): void {
     assert.ok(!value.includes(canary), 'a canary reached a report');
 }
 
-function check(source: ErrorReport['source']): void {
+function requireViewerFrames(frames: ErrorReport['frames']): void {
+  assert.ok(frames.length > 0, 'missing bounded viewer frame');
+}
+
+async function check(source: ErrorReport['source']): Promise<void> {
   const line = logs
     .map((text) => JSON.parse(text) as { report: unknown; fingerprint: string })
     .find((entry) => parseLoggedReport(entry.report)?.source === source);
   assert.ok(line, `missing ${source} log`);
   const report = parseLoggedReport(line.report);
   assert.ok(report);
+  if (source === 'viewer') {
+    // One negative control proves the proof rejects an empty viewer stack.
+    assert.throws(
+      () => requireViewerFrames([]),
+      /missing bounded viewer frame/
+    );
+    requireViewerFrames(report.frames);
+    for (const frame of report.frames) {
+      let text = REGISTER_SW_JS;
+      if (frame.file !== 'assets/register-sw.js') {
+        const asset = await assets.get(frame.file.slice('assets/'.length));
+        assert.ok(asset, 'viewer frame asset is not served');
+        text = new TextDecoder('utf-8', { fatal: true }).decode(asset.body);
+      }
+      const line = text.split(/\r\n|[\n\r\u2028\u2029]/u)[frame.line - 1];
+      assert.ok(line !== undefined, 'viewer frame line exceeds served asset');
+      assert.ok(
+        frame.column <= line.length + 1,
+        'viewer frame column exceeds served asset'
+      );
+    }
+  }
   assert.equal(line.fingerprint, fingerprintOf(report));
   const body = renderRegion({
     v: 1,
@@ -129,7 +155,7 @@ async function serverPath(): Promise<void> {
   );
   assert.equal(response.status, 500);
   assert.equal(await response.text(), 'Something went wrong!');
-  check('server');
+  await check('server');
   console.log('ERROR_REPORT_SERVER_PATH_OK');
 }
 
@@ -223,7 +249,7 @@ async function viewerPath(): Promise<boolean> {
       i++
     )
       await Bun.sleep(50);
-    check('viewer');
+    await check('viewer');
     console.log('ERROR_REPORT_VIEWER_PATH_OK');
     return true;
   } finally {
@@ -277,7 +303,7 @@ async function mcpPath(): Promise<void> {
   assert.equal(exit, 1);
   assert.equal(stdout, '');
   clean(stderr);
-  check('mcp');
+  await check('mcp');
   console.log('ERROR_REPORT_MCP_PATH_OK');
 }
 
